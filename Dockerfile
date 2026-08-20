@@ -52,4 +52,11 @@ COPY --from=builder --chown=nextjs:nextjs /app/public ./public
 
 USER nextjs
 EXPOSE 3000
+
+# Native Docker healthcheck (mirrors docker-compose.yml's) so platforms
+# that build straight from this Dockerfile — EasyPanel, Coolify, plain
+# `docker run` — get container health status without needing Compose.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)).then((r)=>process.exit(r.ok||r.status<500?0:1)).catch(()=>process.exit(1))"
+
 CMD ["node", "server.js"]

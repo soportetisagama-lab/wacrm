@@ -53,6 +53,45 @@ docker build \
 docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
 ```
 
+## Deploying on EasyPanel
+
+EasyPanel builds straight from this `Dockerfile` (it does not read
+`docker-compose.yml`), so point it at your fork and it works out of
+the box:
+
+1. **Create App → Source**: select your Git repo/branch, build method
+   **Dockerfile**, and leave the Dockerfile path as `Dockerfile` (repo
+   root).
+2. **Build args** (App → Build): add the `NEXT_PUBLIC_*` values here —
+   they're inlined into the client bundle at build time, so changing
+   any of them later requires a rebuild, not just a restart:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_SITE_URL` (your EasyPanel domain, e.g.
+     `https://crm.yourdomain.com`)
+   - `NEXT_PUBLIC_APP_LOCALE` (optional, defaults to `en`)
+3. **Environment variables** (App → Environment): add the server-only
+   secrets — these are read at runtime, never baked into the image, so
+   changing them only needs a restart:
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `ENCRYPTION_KEY`
+   - `META_APP_SECRET`
+   - any optional vars you use (`AUTOMATION_CRON_SECRET`,
+     `META_APP_ID`, …) — see `.env.local.example`.
+4. **Domains** (App → Domains): map your domain to container port
+   `3000` (the image always listens on 3000 — `HOSTNAME=0.0.0.0` and
+   `PORT=3000` are already baked into the runtime stage). Enable HTTPS.
+5. Deploy. The image ships a Docker `HEALTHCHECK` (added for this),
+   so EasyPanel's health indicator reflects the app's actual status
+   without any extra config.
+
+Same caveat as below applies: nothing inside the container is
+scheduled, so if you use automation/flow Wait steps, point an
+external scheduler (EasyPanel's own cron jobs, or any HTTP-cron
+service) at `GET /api/automations/cron` and `GET /api/flows/cron` on
+your EasyPanel domain, sending `AUTOMATION_CRON_SECRET` in the
+`x-cron-secret` header.
+
 ## Notes
 
 - Database migrations under `supabase/` are **not** run by the
