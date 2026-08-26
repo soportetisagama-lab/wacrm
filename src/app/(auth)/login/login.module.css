@@ -1,0 +1,373 @@
+/* Scoped animations for the redesigned login screen (splash + background +
+ * card). Colors are pulled from the brand tokens in globals.css
+ * (--primary / --primary-hover / --foreground) via color-mix() so this
+ * file never hardcodes the brand blue — a future rebrand only touches
+ * globals.css. */
+
+/* ---- Page background ---- */
+
+.pageGradient {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      ellipse at 15% 20%,
+      color-mix(in srgb, var(--primary) 16%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 85% 15%,
+      color-mix(in srgb, var(--primary-hover) 12%, transparent) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at 50% 90%,
+      color-mix(in srgb, var(--primary) 10%, transparent) 0%,
+      transparent 55%
+    );
+}
+
+/* ---- Floating orbs ---- */
+
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  opacity: 0.5;
+  animation: orbFloat 12s ease-in-out infinite;
+}
+
+.orb1 {
+  width: 500px;
+  height: 500px;
+  top: -150px;
+  left: -100px;
+}
+
+.orb2 {
+  width: 400px;
+  height: 400px;
+  right: -80px;
+  bottom: -100px;
+  animation-delay: -4s;
+}
+
+.orb3 {
+  width: 300px;
+  height: 300px;
+  top: 40%;
+  left: 55%;
+  animation-delay: -8s;
+}
+
+@keyframes orbFloat {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(40px, -50px) scale(1.08);
+  }
+  66% {
+    transform: translate(-30px, 30px) scale(0.95);
+  }
+}
+
+/* ---- Dot grid drift ---- */
+
+.dotGrid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--foreground) 14%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 45px 45px;
+  animation: gridDrift 60s linear infinite;
+}
+
+@keyframes gridDrift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 450px 450px;
+  }
+}
+
+/* ---- Geometric shapes ---- */
+
+.geo {
+  position: absolute;
+  animation-name: geoSpin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.geo1 {
+  top: 8%;
+  left: 5%;
+  animation-duration: 18s;
+}
+
+.geo2 {
+  top: 15%;
+  right: 8%;
+  animation-duration: 24s;
+  animation-direction: reverse;
+}
+
+.geo3 {
+  bottom: 10%;
+  left: 10%;
+  animation-duration: 30s;
+}
+
+.geo4 {
+  bottom: 18%;
+  right: 5%;
+  animation-duration: 22s;
+  animation-direction: reverse;
+}
+
+.geo5 {
+  top: 50%;
+  left: 2%;
+  animation-duration: 26s;
+}
+
+@keyframes geoSpin {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.15);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* ---- Login card ---- */
+
+.cardEntrance {
+  animation: cardEntrance 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cardEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.96);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.shake {
+  animation: shake 0.6s ease;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15%,
+  45%,
+  75% {
+    transform: translateX(-7px);
+  }
+  30%,
+  60%,
+  90% {
+    transform: translateX(7px);
+  }
+}
+
+/* ---- Welcome splash ---- */
+
+.splash {
+  transition:
+    opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.splashExit {
+  opacity: 0;
+  transform: scale(1.06);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.splashBg {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 80% 70% at 50% 50%,
+    color-mix(in srgb, var(--primary) 16%, transparent) 0%,
+    transparent 65%
+  );
+}
+
+.splashGlow {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--primary) 34%, transparent) 0%,
+    transparent 70%
+  );
+  filter: blur(35px);
+  opacity: 0;
+  animation:
+    splashGlowIn 0.6s ease 0.8s forwards,
+    splashGlowPulse 2s ease-in-out 1.4s infinite alternate;
+}
+
+@keyframes splashGlowIn {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes splashGlowPulse {
+  from {
+    transform: scale(0.9);
+  }
+  to {
+    transform: scale(1.25);
+  }
+}
+
+.splashLogo {
+  opacity: 0;
+  filter: drop-shadow(
+    0 6px 22px color-mix(in srgb, var(--primary) 40%, transparent)
+  );
+  animation: splashLogoIn 0.8s cubic-bezier(0.34, 1.46, 0.64, 1) 0.7s forwards;
+}
+
+@keyframes splashLogoIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+    filter: blur(8px)
+      drop-shadow(0 0 30px color-mix(in srgb, var(--primary) 70%, transparent));
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0)
+      drop-shadow(
+        0 6px 22px color-mix(in srgb, var(--primary) 40%, transparent)
+      );
+  }
+  82% {
+    transform: scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.splashLine {
+  height: 3px;
+  width: 0;
+  margin-top: 16px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--primary),
+    var(--primary-hover),
+    var(--primary),
+    transparent
+  );
+  background-size: 300% 100%;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--primary) 70%, transparent);
+  animation:
+    splashLineGrow 0.5s ease 1.2s forwards,
+    splashLineShimmer 1.5s linear 1.7s infinite;
+}
+
+@keyframes splashLineGrow {
+  to {
+    width: 200px;
+  }
+}
+
+@keyframes splashLineShimmer {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 300% 0;
+  }
+}
+
+.splashDots {
+  opacity: 0;
+  animation: splashDotsIn 0.4s ease 1.3s forwards;
+}
+
+@keyframes splashDotsIn {
+  to {
+    opacity: 1;
+  }
+}
+
+.splashDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+  animation: splashDotPulse 1s ease-in-out infinite;
+}
+
+.splashDot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.splashDot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes splashDotPulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--primary) 25%, transparent);
+    transform: scale(1);
+    box-shadow: none;
+  }
+  50% {
+    background: var(--primary);
+    transform: scale(1.5);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 70%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb,
+  .dotGrid,
+  .geo,
+  .splashGlow,
+  .splashLogo,
+  .splashLine,
+  .splashDots,
+  .splashDot,
+  .cardEntrance,
+  .shake {
+    animation: none !important;
+  }
+
+  .splash {
+    transition: opacity 0.3s ease !important;
+  }
+}
