@@ -1,20 +1,19 @@
-"use client";
+'use client';
 
-import { Suspense, useState } from "react";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
+import { Suspense, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { CheckCircle, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+
+import { createClient } from '@/lib/supabase/client';
+import { Button } from '@/components/ui/button';
+import { AuthShell } from '@/components/auth/auth-shell';
+import { AuthCard } from '@/components/auth/auth-card';
+import { AuthLogoHeader } from '@/components/auth/auth-logo-header';
+import { AuthIconBadge } from '@/components/auth/auth-icon-badge';
+import { AuthInput } from '@/components/auth/auth-input';
+import { AuthSubmitButton } from '@/components/auth/auth-submit-button';
+import { AuthError } from '@/components/auth/auth-error';
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -33,12 +32,14 @@ function SignupPageInner() {
   // verification → redirect round-trip. `emailRedirectTo` below
   // points back at /join/<token> so the user lands on the redeem
   // step after verifying instead of being dropped on /dashboard.
-  const inviteToken = searchParams.get("invite");
+  const inviteToken = searchParams.get('invite');
 
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -49,12 +50,12 @@ function SignupPageInner() {
     setError(null);
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
+      setError('Las contraseñas no coinciden');
       return;
     }
 
     if (password.length < 6) {
-      setError("Password must be at least 6 characters");
+      setError('La contraseña debe tener al menos 6 caracteres');
       return;
     }
 
@@ -91,154 +92,152 @@ function SignupPageInner() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
-          <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
-            </div>
-            <CardTitle className="text-xl text-foreground">
-              Check your email
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              We&apos;ve sent a confirmation link to{" "}
-              <span className="text-foreground">{email}</span>. Please check your
-              inbox and click the link to verify your account.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
+      <AuthShell>
+        <AuthCard className="items-center text-center">
+          <div className="flex flex-col items-center">
+            <AuthIconBadge icon={CheckCircle} />
+            <h1 className="text-foreground mb-2 text-lg font-semibold">
+              Revisa tu email
+            </h1>
+            <p className="text-muted-foreground mb-8 text-sm">
+              Te enviamos un link de confirmación a{' '}
+              <span className="text-foreground">{email}</span>. Revisá tu
+              bandeja de entrada y hacé clic en el link para verificar tu
+              cuenta.
+            </p>
+          </div>
+          <Link
+            href={
+              inviteToken
+                ? `/login?invite=${encodeURIComponent(inviteToken)}`
+                : '/login'
+            }
+            className="block"
+          >
+            <Button
+              variant="outline"
+              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground h-12 w-full rounded-2xl"
             >
-              <Button
-                variant="outline"
-                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                Back to sign in
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+              Volver a iniciar sesión
+            </Button>
+          </Link>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
-            ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
-            )}
-          </div>
-          <CardTitle className="text-xl text-foreground">
-            {inviteToken ? "Create account & join" : "Create account"}
-          </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {inviteToken
-              ? "Verify your email, then accept the invitation to join your team."
-              : "Get started with Sagama Inox CRM"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSignup} className="flex flex-col gap-4">
-            {error && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {error}
-              </div>
-            )}
+    <AuthShell>
+      <AuthCard>
+        <AuthLogoHeader
+          title={inviteToken ? 'Crear cuenta y unirte' : 'Crear cuenta'}
+          subtitle={
+            inviteToken
+              ? 'Verifica tu email y luego acepta la invitación para unirte a tu equipo.'
+              : 'Completa tus datos para comenzar con Sagama Inox CRM'
+          }
+        />
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="fullName" className="text-muted-foreground">
-                Full name
-              </Label>
-              <Input
-                id="fullName"
-                type="text"
-                placeholder="John Doe"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
-              />
-            </div>
+        <form onSubmit={handleSignup} className="flex flex-col gap-4">
+          {error && <AuthError message={error} />}
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="email" className="text-muted-foreground">
-                Email
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
-              />
-            </div>
+          <AuthInput
+            icon={User}
+            id="fullName"
+            type="text"
+            autoComplete="name"
+            placeholder="Nombre completo"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+          />
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="text-muted-foreground">
-                Password
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="At least 6 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
-              />
-            </div>
+          <AuthInput
+            icon={Mail}
+            id="email"
+            type="email"
+            autoComplete="email"
+            placeholder="tu@ejemplo.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="confirmPassword" className="text-muted-foreground">
-                Confirm password
-              </Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                placeholder="Repeat your password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
-              />
-            </div>
+          <AuthInput
+            icon={Lock}
+            id="password"
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="new-password"
+            placeholder="Mínimo 6 caracteres"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            endAdornment={
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="text-muted-foreground hover:text-primary absolute top-1/2 right-3.5 -translate-y-1/2 transition-colors"
+                aria-label={
+                  showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'
+                }
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            }
+          />
 
-            <Button
-              type="submit"
-              disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {loading ? "Creating account..." : "Create account"}
-            </Button>
-          </form>
+          <AuthInput
+            icon={Lock}
+            id="confirmPassword"
+            type={showConfirmPassword ? 'text' : 'password'}
+            autoComplete="new-password"
+            placeholder="Confirmar contraseña"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            required
+            endAdornment={
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((v) => !v)}
+                className="text-muted-foreground hover:text-primary absolute top-1/2 right-3.5 -translate-y-1/2 transition-colors"
+                aria-label={
+                  showConfirmPassword
+                    ? 'Ocultar contraseña'
+                    : 'Mostrar contraseña'
+                }
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            }
+          />
 
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            Already have an account?{" "}
-            <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
-              className="text-primary hover:text-primary/80"
-            >
-              Sign in
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+          <AuthSubmitButton loading={loading} loadingLabel="Creando cuenta...">
+            Crear cuenta
+          </AuthSubmitButton>
+        </form>
+
+        <p className="text-muted-foreground mt-8 text-center text-sm">
+          ¿Ya tienes cuenta?{' '}
+          <Link
+            href={
+              inviteToken
+                ? `/login?invite=${encodeURIComponent(inviteToken)}`
+                : '/login'
+            }
+            className="text-primary hover:text-primary/80 font-medium"
+          >
+            Iniciar sesión
+          </Link>
+        </p>
+      </AuthCard>
+    </AuthShell>
   );
 }

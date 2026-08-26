@@ -1,8 +1,8 @@
-/* Scoped animations for the redesigned login screen (splash + background +
- * card). Colors are pulled from the brand tokens in globals.css
- * (--primary / --primary-hover / --foreground) via color-mix() so this
- * file never hardcodes the brand blue — a future rebrand only touches
- * globals.css. */
+/* Scoped animations shared by all three auth screens (login, signup,
+ * forgot-password): splash + background + card. Colors are pulled from
+ * the brand tokens in globals.css (--primary / --primary-hover /
+ * --foreground) via color-mix() so this file never hardcodes the brand
+ * blue — a future rebrand only touches globals.css. */
 
 /* ---- Page background ---- */
 
@@ -32,28 +32,28 @@
   position: absolute;
   border-radius: 9999px;
   filter: blur(80px);
-  opacity: 0.5;
+  opacity: 0.62;
   animation: orbFloat 12s ease-in-out infinite;
 }
 
 .orb1 {
-  width: 500px;
-  height: 500px;
-  top: -150px;
-  left: -100px;
+  width: 560px;
+  height: 560px;
+  top: -170px;
+  left: -120px;
 }
 
 .orb2 {
-  width: 400px;
-  height: 400px;
-  right: -80px;
-  bottom: -100px;
+  width: 460px;
+  height: 460px;
+  right: -90px;
+  bottom: -110px;
   animation-delay: -4s;
 }
 
 .orb3 {
-  width: 300px;
-  height: 300px;
+  width: 350px;
+  height: 350px;
   top: 40%;
   left: 55%;
   animation-delay: -8s;
@@ -134,6 +134,25 @@
   top: 50%;
   left: 2%;
   animation-duration: 26s;
+}
+
+.geo6 {
+  top: 4%;
+  left: 38%;
+  animation-duration: 34s;
+}
+
+.geo7 {
+  right: 38%;
+  bottom: 4%;
+  animation-duration: 30s;
+  animation-direction: reverse;
+}
+
+.geo8 {
+  top: 45%;
+  right: 4%;
+  animation-duration: 36s;
 }
 
 @keyframes geoSpin {

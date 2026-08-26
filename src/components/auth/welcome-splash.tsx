@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Image from 'next/image';
 
 import { cn } from '@/lib/utils';
-import styles from '@/app/(auth)/login/login.module.css';
+import styles from '@/components/auth/auth-visuals.module.css';
 
 // How long the splash holds fully visible before it starts fading, and how
 // long that fade transition takes — mirrors the timing of the original
@@ -42,8 +42,8 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
         <Image
           src="/branding/SAGAMA.png"
           alt="Sagama Inox"
-          width={2979}
-          height={960}
+          width={300}
+          height={93}
           priority
           className={cn('h-auto w-[220px] sm:w-[280px]', styles.splashLogo)}
         />
