@@ -1,0 +1,57 @@
+-- ============================================================
+-- 037_extend_account_roles.sql — new account_role_enum values
+--
+-- Extends account_role_enum with three new roles from the business
+-- role mapping agreed for the multi-team permissions work. The
+-- existing values (owner / admin / agent / viewer) are untouched —
+-- this migration only ADDS enum labels, which Postgres allows
+-- without rewriting the type or any dependent table/policy.
+--
+-- Business mapping (enforced in application code + RLS, not by the
+-- enum itself):
+--   Administrador -> owner       (unchanged — still unique per account,
+--                                  see idx_accounts_one_per_owner)
+--   Gerencia      -> gerencia    (new — account-wide operational
+--                                  read + assign, no settings access)
+--   Jefe de Línea -> jefe_linea  (new — scoped to "their line" per the
+--                                  product spec, but there is no teams/
+--                                  lines table yet. Until one exists,
+--                                  038/039 give jefe_linea the SAME
+--                                  account-wide scope as gerencia —
+--                                  see the comment on can_view_conversation
+--                                  in 039 for exactly what to change
+--                                  once a second Jefe de Línea needs a
+--                                  real per-team split.)
+--   ATC           -> atc         (new — account-wide assign, no
+--                                  settings access)
+--   Asesor        -> agent       (existing value, reused — narrowed in
+--                                  039 to only the conversations
+--                                  assigned to them)
+--
+-- Rank placement (see roleRank() in src/lib/auth/roles.ts, kept in
+-- lockstep with this): the three new roles sit BETWEEN 'agent' and
+-- 'admin' in the ordinal hierarchy used by is_account_member(). That
+-- placement is what lets every existing settings-class policy
+-- (tags/pipelines/whatsapp_config/message_templates/custom_fields —
+-- gated at 'admin') and every existing operational-write policy
+-- (contacts/deals/broadcasts/automations/flows — gated at 'agent')
+-- keep working for the new roles with ZERO SQL changes to those
+-- policies. Only conversations/messages/message_reactions (039) and
+-- the assignment column itself (038) need new, role-specific logic
+-- that a simple rank comparison can't express.
+--
+-- IMPORTANT (Postgres restriction): a value added by
+-- ALTER TYPE ... ADD VALUE cannot be referenced (compared, cast,
+-- used in an IN-list, etc.) in the SAME transaction that added it on
+-- Postgres versions before 12, and Supabase applies each migration
+-- file as one transaction. This file does ONLY the ADD VALUE
+-- statements — 038 and 039 are separate migration files/transactions,
+-- so by the time they reference 'gerencia' / 'jefe_linea' / 'atc' the
+-- values are already committed.
+--
+-- Idempotent — IF NOT EXISTS guards on each ADD VALUE.
+-- ============================================================
+
+ALTER TYPE account_role_enum ADD VALUE IF NOT EXISTS 'gerencia';
+ALTER TYPE account_role_enum ADD VALUE IF NOT EXISTS 'jefe_linea';
+ALTER TYPE account_role_enum ADD VALUE IF NOT EXISTS 'atc';

@@ -20,6 +20,16 @@ import { AuthError } from '@/components/auth/auth-error';
 // Supabase's own auth storage, untouched by this.
 const REMEMBER_KEY = 'wacrm.rememberedEmail';
 
+// Supabase returns this exact message for both a wrong email and a
+// wrong password (it deliberately doesn't say which, to avoid leaking
+// which emails are registered). Everything else falls through as-is.
+function translateAuthError(message: string): string {
+  if (message === 'Invalid login credentials') {
+    return 'Correo o contraseña incorrectos';
+  }
+  return message;
+}
+
 // The splash renders here, outside the `Suspense` boundary that guards
 // `useSearchParams`, so it appears instantly on every load instead of
 // waiting on the query string to resolve.
@@ -82,7 +92,7 @@ function LoginPageInner() {
     });
 
     if (error) {
-      setError(error.message);
+      setError(translateAuthError(error.message));
       setLoading(false);
       setShake(true);
       setTimeout(() => setShake(false), 600);
@@ -108,9 +118,7 @@ function LoginPageInner() {
       <AuthCard shake={shake}>
         <AuthLogoHeader
           subtitle={
-            inviteToken
-              ? 'Iniciá sesión para aceptar la invitación'
-              : 'Ingresá a tu cuenta para continuar'
+            inviteToken ? 'Iniciá sesión para aceptar la invitación' : undefined
           }
         />
 

@@ -1,13 +1,14 @@
 import Image from 'next/image';
 
 // Shared header for the "form" state of each auth screen: the Sagama
-// Inox wordmark, an optional bold heading, and a description line.
+// Inox wordmark, an optional bold heading, and an optional description
+// line.
 export function AuthLogoHeader({
   title,
   subtitle,
 }: {
   title?: string;
-  subtitle: string;
+  subtitle?: string;
 }) {
   return (
     <div className="mb-8 flex flex-col items-center gap-2 text-center">
@@ -17,12 +18,12 @@ export function AuthLogoHeader({
         width={862}
         height={134}
         priority
-        className="h-auto w-full max-w-[260px]"
+        className="h-auto w-full max-w-[380px]"
       />
       {title && (
         <h1 className="text-foreground text-lg font-semibold">{title}</h1>
       )}
-      <p className="text-muted-foreground text-sm">{subtitle}</p>
+      {subtitle && <p className="text-muted-foreground text-sm">{subtitle}</p>}
     </div>
   );
 }

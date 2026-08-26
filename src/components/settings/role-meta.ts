@@ -1,8 +1,11 @@
 import {
+  Briefcase,
   Crown,
+  Headphones,
   Shield,
   UserCog,
   UserIcon,
+  UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -17,6 +20,12 @@ import type { ChipVariant } from './settings-chip';
  *
  * `variant` drives the token-based <SettingsChip>; `className` is the
  * inline Tailwind string the Members tab applies to its own spans.
+ *
+ * The actual display TEXT comes from `useTranslations("Settings.roles")`
+ * at each call site, not from this file — `label` here is a plain
+ * English fallback/dev-facing name, kept for parity with the original
+ * shape. See messages/en.json + messages/ko.json for the real strings
+ * (Asesor / ATC / Jefe de Línea / Gerencia).
  */
 export const ROLE_META: Record<
   AccountRole,
@@ -33,6 +42,24 @@ export const ROLE_META: Record<
     label: 'admin',
     variant: 'admin',
     className: 'border-primary/40 bg-primary/10 text-primary',
+  },
+  gerencia: {
+    icon: Briefcase,
+    label: 'gerencia',
+    variant: 'gerencia',
+    className: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300',
+  },
+  jefe_linea: {
+    icon: UsersRound,
+    label: 'jefe_linea',
+    variant: 'jefe_linea',
+    className: 'border-teal-500/40 bg-teal-500/10 text-teal-300',
+  },
+  atc: {
+    icon: Headphones,
+    label: 'atc',
+    variant: 'atc',
+    className: 'border-orange-500/40 bg-orange-500/10 text-orange-300',
   },
   agent: {
     icon: UserCog,

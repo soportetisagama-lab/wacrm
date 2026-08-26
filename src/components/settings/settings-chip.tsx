@@ -11,11 +11,28 @@ import { cn } from '@/lib/utils';
  * are semantic accents, not neutrals, so they're intentionally not
  * tokenized. Neutrals stay on design tokens.
  */
-export type ChipVariant = 'owner' | 'admin' | 'ok' | 'warn' | 'muted';
+export type ChipVariant =
+  | 'owner'
+  | 'admin'
+  | 'gerencia'
+  | 'jefe_linea'
+  | 'atc'
+  | 'ok'
+  | 'warn'
+  | 'muted';
 
 const VARIANTS: Record<ChipVariant, string> = {
-  owner: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
+  owner:
+    'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
   admin: 'border-primary-soft-2 bg-primary-soft text-primary',
+  // gerencia/jefe_linea/atc get their own hues (not reused from
+  // owner/admin/ok/warn) so the Members roster can tell the 3 new
+  // roles apart from each other and from the existing ones at a glance.
+  gerencia:
+    'border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300',
+  jefe_linea:
+    'border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-300',
+  atc: 'border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-300',
   ok: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
   warn: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
   muted: 'border-border bg-muted text-muted-foreground',
@@ -35,7 +52,7 @@ export function SettingsChip({
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap [&_svg]:size-3.5',
         VARIANTS[variant],
-        className,
+        className
       )}
     >
       {children}
@@ -57,7 +74,7 @@ export function StatusDot({
       className={cn(
         'inline-block size-1.5 shrink-0 rounded-full',
         tone === 'ok' ? 'bg-emerald-500' : 'bg-muted-foreground',
-        className,
+        className
       )}
     />
   );

@@ -26,6 +26,29 @@
     );
 }
 
+/* Light mode washes the same percentages out almost to white (a light
+ * near-white background reads any low-alpha tint as barely-there,
+ * unlike a dark background where it pops). Bump the alpha so the brand
+ * blue is clearly visible — dark mode above is untouched. */
+html[data-mode='light'] .pageGradient {
+  background-image:
+    radial-gradient(
+      ellipse at 15% 20%,
+      color-mix(in srgb, var(--primary) 32%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 85% 15%,
+      color-mix(in srgb, var(--primary-hover) 26%, transparent) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at 50% 90%,
+      color-mix(in srgb, var(--primary) 22%, transparent) 0%,
+      transparent 55%
+    );
+}
+
 /* ---- Floating orbs ---- */
 
 .orb {
