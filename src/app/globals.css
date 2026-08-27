@@ -214,6 +214,69 @@ html[data-theme="rose"] {
   --sidebar-sub: #1c252e;
 }
 
+/* ---- HEADER: brand-locked surface ----
+ * The topbar is a fixed brand element too, same rationale as the
+ * SIDEBAR block above — independent of light/dark mode. */
+:root {
+  --header-bg: #247afa;
+  --header-bg-2: #1a63d6;
+}
+
+/* Notification bell — ring wobble on the icon, an expanding pulse ring
+ * behind the wrapper, and a bounce on the unread badge. Adapted 1:1
+ * from the reference navbar's timings/easings, just renamed. */
+@keyframes bell-ring {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(14deg);
+  }
+  20% {
+    transform: rotate(-12deg);
+  }
+  30% {
+    transform: rotate(10deg);
+  }
+  40% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
+  60% {
+    transform: rotate(-4deg);
+  }
+  70% {
+    transform: rotate(2deg);
+  }
+  80% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes ring-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+@keyframes badge-bounce {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
