@@ -66,10 +66,9 @@
  *      with `document.documentElement.dataset.theme`.
  *
  * The two compose: any accent works in either mode. Neutral
- * tokens (background / card / border / muted / sidebar surfaces /
- * neutral charts / radius) live in the MODE blocks below; accent
- * tokens (--primary*, --ring, --chart-1, --sidebar-primary*,
- * --sidebar-ring) live in the ACCENT blocks. They set disjoint
+ * tokens (background / card / border / muted / neutral charts /
+ * radius) live in the MODE blocks below; accent tokens (--primary*,
+ * --ring, --chart-1) live in the ACCENT blocks. They set disjoint
  * variables, so cascade order between them doesn't matter.
  *
  * `:root` carries the dark-mode + violet defaults so a visitor
@@ -77,11 +76,15 @@
  * layout.tsx replays the saved mode + accent before first paint.
  *
  * The three `--primary-*` extras (hover / soft / soft-2) feed
- * hovered primary buttons and tinted-primary surfaces (sidebar
- * active pill, validation badges).
+ * hovered primary buttons and tinted-primary surfaces (validation
+ * badges).
  *
  * Token shapes come straight from the design handoff at
  * project/Color Themes.html — change one, change the other.
+ *
+ * The primary nav sidebar sits outside both dimensions — it's a
+ * fixed brand surface (see the SIDEBAR block below), not part of
+ * the mode/accent system.
  * ============================================================ */
 
 /* ---- MODE: neutral surfaces ---- */
@@ -109,11 +112,6 @@ html[data-mode="dark"] {
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.16 0.01 260);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.28 0.01 260);
 }
 
 html[data-mode="light"] {
@@ -138,11 +136,6 @@ html[data-mode="light"] {
   --chart-4: oklch(0.8 0.04 260);
   --chart-5: oklch(0.87 0.03 260);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
 }
 
 /* ---- ACCENT: primary color ---- */
@@ -156,9 +149,6 @@ html[data-theme="violet"] {
   --primary-soft-2: oklch(0.603 0.207 259 / 0.22);
   --ring: oklch(0.603 0.207 259);
   --chart-1: oklch(0.603 0.207 259);
-  --sidebar-primary: oklch(0.603 0.207 259);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.603 0.207 259);
 }
 
 html[data-theme="emerald"] {
@@ -170,9 +160,6 @@ html[data-theme="emerald"] {
   --ring: oklch(0.62 0.16 162);
   --chart-1: oklch(0.62 0.16 162);
   --chart-2: oklch(0.7 0.14 195);
-  --sidebar-primary: oklch(0.62 0.16 162);
-  --sidebar-primary-foreground: oklch(0.16 0.02 162);
-  --sidebar-ring: oklch(0.62 0.16 162);
 }
 
 html[data-theme="cobalt"] {
@@ -184,9 +171,6 @@ html[data-theme="cobalt"] {
   --ring: oklch(0.585 0.2 254);
   --chart-1: oklch(0.585 0.2 254);
   --chart-2: oklch(0.7 0.15 220);
-  --sidebar-primary: oklch(0.585 0.2 254);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.585 0.2 254);
 }
 
 html[data-theme="amber"] {
@@ -198,9 +182,6 @@ html[data-theme="amber"] {
   --ring: oklch(0.745 0.16 65);
   --chart-1: oklch(0.745 0.16 65);
   --chart-2: oklch(0.7 0.15 35);
-  --sidebar-primary: oklch(0.745 0.16 65);
-  --sidebar-primary-foreground: oklch(0.18 0.03 65);
-  --sidebar-ring: oklch(0.745 0.16 65);
 }
 
 html[data-theme="rose"] {
@@ -212,9 +193,25 @@ html[data-theme="rose"] {
   --ring: oklch(0.645 0.22 16);
   --chart-1: oklch(0.645 0.22 16);
   --chart-2: oklch(0.7 0.18 340);
-  --sidebar-primary: oklch(0.645 0.22 16);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.645 0.22 16);
+}
+
+/* ---- SIDEBAR: brand-locked surface ----
+ * The primary nav is a fixed brand element (Sagama blue), independent
+ * of the MODE/ACCENT system above — it doesn't change with light/dark
+ * mode or the user's chosen accent color. --sidebar-accent-dim and
+ * --sidebar-sub aren't part of shadcn's default sidebar token set;
+ * they back the active-item tint and a future submenu background. */
+:root {
+  --sidebar: #162028;
+  --sidebar-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-accent: rgba(255, 255, 255, 0.05);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-accent-dim: rgba(36, 122, 250, 0.16);
+  --sidebar-primary: #247afa;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #247afa;
+  --sidebar-sub: #1c252e;
 }
 
 @layer base {

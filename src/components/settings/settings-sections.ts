@@ -39,7 +39,7 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export const DEFAULT_SECTION: SettingsSection = 'overview';
 
-/** Rail grouping. `adminOnly` items are hidden for non-admins. */
+/** Rail grouping. See `isSectionVisible` below for role-based hiding. */
 export interface SectionMeta {
   id: SettingsSection;
   label: string;
@@ -66,6 +66,41 @@ export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[
   { label: 'Account', group: 'account' },
   { label: 'Workspace', group: 'workspace' },
 ];
+
+/**
+ * Role-based visibility for a settings section. Pure and testable —
+ * callers get the two booleans from `useCan('edit-settings')` /
+ * `useCan('view-team-members')` and pass them in, rather than this
+ * module reaching for React context itself.
+ *
+ *  - `profile` / `security` / `appearance` (group 'account'): every
+ *    signed-in role sees these — they're per-user, not account-wide.
+ *  - `members`: visible to `canEditSettings` (owner/admin) OR
+ *    `canViewTeamMembers` (+gerencia/jefe_linea) — the one Workspace
+ *    item Gerencia/Jefe de Línea get without full settings access.
+ *  - Everything else (`overview` + the rest of Workspace — whatsapp,
+ *    templates, quick-replies, fields, deals, api): `canEditSettings`
+ *    only. Overview is a hub of links into those same sections, so it
+ *    rides the same gate rather than getting its own.
+ */
+export function isSectionVisible(
+  section: SettingsSection,
+  perms: { canEditSettings: boolean; canViewTeamMembers: boolean },
+): boolean {
+  if (section === 'members') {
+    return perms.canEditSettings || perms.canViewTeamMembers;
+  }
+  if (SECTION_META[section].group === 'account') return true;
+  return perms.canEditSettings;
+}
+
+/** `SETTINGS_SECTIONS`, filtered to what this role may see, in order. */
+export function visibleSections(perms: {
+  canEditSettings: boolean;
+  canViewTeamMembers: boolean;
+}): SettingsSection[] {
+  return SETTINGS_SECTIONS.filter((s) => isSectionVisible(s, perms));
+}
 
 function isSection(value: string | null): value is SettingsSection {
   return !!value && (SETTINGS_SECTIONS as readonly string[]).includes(value);

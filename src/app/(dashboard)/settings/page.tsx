@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
 import { useTheme } from '@/hooks/use-theme';
 import { SettingsRail } from '@/components/settings/settings-rail';
 import { SettingsOverview } from '@/components/settings/settings-overview';
@@ -20,6 +21,7 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import {
   resolveSection,
+  visibleSections,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
 
@@ -45,12 +47,22 @@ function SettingsPageInner() {
   const { defaultCurrency } = useAuth();
   const { mode } = useTheme();
   const t = useTranslations('Settings');
+  const canEditSettings = useCan('edit-settings');
+  const canViewTeamMembers = useCan('view-team-members');
 
   // The URL (`?tab=`) is the single source of truth for the active
   // section — deep-linkable, and it keeps the existing links in the
   // app sidebar/header working. Legacy tab values (tags, custom-fields)
   // resolve onto their new home; unknown/empty → the Overview landing.
-  const section = resolveSection(searchParams.get('tab'));
+  // If the resolved section isn't visible to this role (including
+  // someone typing `?tab=whatsapp` by hand), fall back to the first
+  // section they can actually see — the rail never links to a hidden
+  // section, so this only fires on a stale link or a deliberate guess.
+  const requestedSection = resolveSection(searchParams.get('tab'));
+  const allowed = visibleSections({ canEditSettings, canViewTeamMembers });
+  const section = allowed.includes(requestedSection)
+    ? requestedSection
+    : (allowed[0] ?? 'profile');
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());

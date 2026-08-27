@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
@@ -47,8 +48,8 @@ const ROLE_CHIP: Record<
   admin: {
     icon: Shield,
     labelKey: 'roleAdmin',
-    // Primary-tinted: significant but not as scarce as owner.
-    className: 'border-primary/40 bg-primary/10 text-primary',
+    // Brand-blue tinted: significant but not as scarce as owner.
+    className: 'border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary',
   },
   gerencia: {
     icon: Briefcase,
@@ -68,14 +69,14 @@ const ROLE_CHIP: Record<
   agent: {
     icon: UserCog,
     labelKey: 'roleAgent',
-    // Neutral slate: the operational default.
-    className: 'border-border bg-muted text-foreground',
+    // Neutral: the operational default.
+    className: 'border-white/15 bg-white/5 text-sidebar-foreground/80',
   },
   viewer: {
     icon: User,
     labelKey: 'roleViewer',
-    // Muted slate: read-only role; visually quieter than agent.
-    className: 'border-border bg-card text-muted-foreground',
+    // Muted: read-only role; visually quieter than agent.
+    className: 'border-white/10 bg-white/[0.03] text-sidebar-foreground/50',
   },
 };
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -96,6 +97,14 @@ interface NavItem {
    * Purely informational — doesn't affect routing or access.
    */
   beta?: boolean;
+  /**
+   * Optional sub-items (e.g. Settings sections). Rendered indented,
+   * icon-less, prefixed with "›" — the same treeview pattern used by
+   * the old AdminLTE-style sidebar this design is based on. No item
+   * currently sets this; it's here so a section can grow sub-navigation
+   * later without a rewrite.
+   */
+  children?: { href: string; labelKey: string }[];
 }
 
 const navItems: NavItem[] = [
@@ -110,7 +119,7 @@ const navItems: NavItem[] = [
   { href: '/agents', labelKey: 'aiAgents', icon: Bot },
 ];
 
-const bottomNavItems = [
+const bottomNavItems: NavItem[] = [
   { href: '/settings', labelKey: 'settings', icon: Settings },
 ];
 
@@ -163,6 +172,106 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     };
   }, [open, onClose]);
 
+  // Shared row renderer for both the main nav list and the bottom
+  // (Settings) list — same active/hover/badge treatment either way.
+  const renderNavItem = (item: NavItem) => {
+    const isActive =
+      pathname === item.href ||
+      (item.href !== '/dashboard' && pathname.startsWith(item.href));
+
+    const childActive =
+      item.children?.some(
+        (child) => pathname === child.href || pathname.startsWith(child.href)
+      ) ?? false;
+
+    const showUnreadDot =
+      item.href === '/inbox' && totalUnread > 0 && !isActive;
+
+    // Unlike the inbox dot, the notifications count stays visible
+    // even while the page is active — it reflects unread state
+    // (cleared by marking notifications read), not "currently
+    // viewing this section".
+    const showNotificationBadge =
+      item.href === '/notifications' && unreadNotifications > 0;
+
+    return (
+      <li key={item.href}>
+        <Link
+          href={item.href}
+          className={cn(
+            'group relative flex items-center gap-3 border-l-[3px] border-transparent px-4 py-2.5 text-xs font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
+            isActive || childActive
+              ? 'bg-[var(--sidebar-accent-dim)] text-sidebar-primary border-sidebar-primary'
+              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground hover:border-sidebar-primary/40'
+          )}
+        >
+          <item.icon
+            className={cn(
+              'h-4 w-4 shrink-0 transition-colors',
+              isActive || childActive
+                ? 'text-sidebar-primary'
+                : 'text-sidebar-foreground/60 group-hover:text-sidebar-foreground'
+            )}
+          />
+          <span className="flex-1 truncate">{t(item.labelKey as string)}</span>
+          {item.beta && (
+            <span
+              aria-label={t('beta')}
+              className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-300 normal-case"
+            >
+              {t('beta')}
+            </span>
+          )}
+          {showUnreadDot && (
+            <span
+              aria-label={t('unreadConversations', {
+                count: totalUnread,
+              })}
+              className="relative flex h-2 w-2 shrink-0"
+            >
+              <span className="bg-sidebar-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
+              <span className="bg-sidebar-primary relative inline-flex h-2 w-2 rounded-full" />
+            </span>
+          )}
+          {showNotificationBadge && (
+            <span
+              aria-label={t('unreadNotifications', {
+                count: unreadNotifications,
+              })}
+              className="bg-sidebar-primary text-sidebar-primary-foreground flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-semibold normal-case"
+            >
+              {unreadNotifications > 9 ? '9+' : unreadNotifications}
+            </span>
+          )}
+        </Link>
+        {item.children && item.children.length > 0 && (
+          <ul className="bg-[var(--sidebar-sub)]">
+            {item.children.map((child) => {
+              const isChildActive =
+                pathname === child.href || pathname.startsWith(child.href);
+              return (
+                <li key={child.href}>
+                  <Link
+                    href={child.href}
+                    className={cn(
+                      "flex items-center border-l-[3px] border-transparent py-3 pr-4 pl-[3.1rem] text-[11px] font-normal tracking-[0.08em] uppercase transition-colors duration-150",
+                      "before:content-['›'] before:mr-2 before:text-base before:leading-none before:text-white/20 before:transition-colors before:duration-150",
+                      isChildActive
+                        ? 'text-sidebar-primary border-sidebar-primary before:text-sidebar-primary'
+                        : 'text-sidebar-foreground/70 hover:bg-white/[0.03] hover:text-sidebar-foreground/90 hover:border-sidebar-primary/40 hover:before:text-sidebar-primary'
+                    )}
+                  >
+                    {t(child.labelKey as string)}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </li>
+    );
+  };
+
   return (
     <>
       {/* Backdrop — only exists on mobile and only when open. Clicking
@@ -183,129 +292,48 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       <aside
         className={cn(
           // Mobile: fixed drawer that slides in from the left.
-          'border-border bg-card fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r',
+          'bg-sidebar border-sidebar-border fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r',
           'transition-transform duration-200 ease-out will-change-transform',
           open ? 'translate-x-0' : '-translate-x-full',
           // Desktop: static, always visible — reset all the mobile framing.
-          'lg:static lg:z-0 lg:w-60 lg:translate-x-0 lg:transition-none'
+          'lg:static lg:z-0 lg:w-72 lg:translate-x-0 lg:transition-none'
         )}
         aria-label="Primary"
       >
-        {/* Logo row. On mobile we put a close button here; on desktop the
-            close button is hidden since the sidebar is always-visible. */}
-        <div className="border-border flex h-14 shrink-0 items-center justify-between gap-2 border-b px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="bg-primary text-primary-foreground flex h-8 w-8 items-center justify-center rounded-lg">
-              <MessageSquare className="h-4 w-4" />
-            </div>
-            <span className="text-foreground text-sm font-semibold">
-              {t('title')}
-            </span>
+        {/* Logo row — the Sagama wordmark, centered, with a mobile-only
+            close button overlaid on top so it doesn't skew the centering. */}
+        <div className="border-sidebar-border relative flex h-20 shrink-0 items-center justify-center border-b px-5">
+          <Link href="/dashboard" className="flex items-center justify-center">
+            <Image
+              src="/branding/SAGAMAMENU.png"
+              alt="Sagama Inox CRM"
+              width={882}
+              height={283}
+              priority
+              className="h-auto w-full max-w-[240px]"
+            />
           </Link>
           <button
             type="button"
             onClick={onClose}
             aria-label={t('closeMenu')}
-            className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-9 w-9 items-center justify-center rounded-md lg:hidden"
+            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground absolute top-1/2 right-3 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Main navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== '/dashboard' && pathname.startsWith(item.href));
+        <nav className="flex-1 overflow-y-auto py-3">
+          <ul className="flex flex-col">{navItems.map(renderNavItem)}</ul>
 
-              const showUnreadDot =
-                item.href === '/inbox' && totalUnread > 0 && !isActive;
+          <div className="border-sidebar-border my-3 border-t" />
 
-              // Unlike the inbox dot, the notifications count stays visible
-              // even while the page is active — it reflects unread state
-              // (cleared by marking notifications read), not "currently
-              // viewing this section".
-              const showNotificationBadge =
-                item.href === '/notifications' && unreadNotifications > 0;
-
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      // Taller on mobile so fingers can hit the row reliably (≥44px).
-                      'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
-                      isActive
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
-                    {item.beta && (
-                      <span
-                        aria-label={t('beta')}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-300 uppercase"
-                      >
-                        {t('beta')}
-                      </span>
-                    )}
-                    {showUnreadDot && (
-                      <span
-                        aria-label={t('unreadConversations', {
-                          count: totalUnread,
-                        })}
-                        className="relative flex h-2 w-2"
-                      >
-                        <span className="bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
-                        <span className="bg-primary relative inline-flex h-2 w-2 rounded-full" />
-                      </span>
-                    )}
-                    {showNotificationBadge && (
-                      <span
-                        aria-label={t('unreadNotifications', {
-                          count: unreadNotifications,
-                        })}
-                        className="bg-primary text-primary-foreground flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold"
-                      >
-                        {unreadNotifications > 9 ? '9+' : unreadNotifications}
-                      </span>
-                    )}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-
-          <div className="border-border my-4 border-t" />
-
-          <ul className="flex flex-col gap-1">
-            {bottomNavItems.map((item) => {
-              const isActive = pathname.startsWith(item.href);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
-                      isActive
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {t(item.labelKey as string)}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <ul className="flex flex-col">{bottomNavItems.map(renderNavItem)}</ul>
         </nav>
 
         {/* User section */}
-        <div className="border-border shrink-0 border-t p-3">
+        <div className="border-sidebar-border shrink-0 border-t p-3">
           {/* Account name display — surfaced only when the account
               name differs from the user's own name (see
               `showAccountStrip`). For a default solo account the two
@@ -313,7 +341,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               below; for renamed or shared accounts it tells the user
               which account they're acting in. */}
           {showAccountStrip && account?.name ? (
-            <div className="text-muted-foreground mb-2 flex items-center gap-2 px-3 text-xs">
+            <div className="text-sidebar-foreground/60 mb-2 flex items-center gap-2 px-1 text-xs">
               <UsersRound className="size-3.5 shrink-0" />
               {/* `title=` exposes the full name on hover when it
                   gets truncated (long account names + narrow
@@ -341,34 +369,38 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 : null}
             </div>
           ) : null}
+          {/* Credential-card style trigger: avatar on top, name + email
+              centered below, inside a bordered card that reads as an
+              ID badge rather than a plain menu row. */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="hover:bg-muted/60 focus:bg-muted/60 data-popup-open:bg-muted/60 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors focus:outline-none">
-              <Avatar className="size-8 shrink-0">
+            <DropdownMenuTrigger className="border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-lg border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2">
+              <Avatar className="after:rounded-xl size-16 shrink-0 rounded-xl">
                 {profile?.avatar_url ? (
                   <AvatarImage
                     src={profile.avatar_url}
                     alt={profile.full_name ?? t('defaultAvatar')}
+                    className="rounded-xl"
                   />
                 ) : null}
-                <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
+                <AvatarFallback className="bg-sidebar-primary/15 text-sidebar-primary rounded-xl text-lg font-semibold">
                   {profile?.full_name?.charAt(0)?.toUpperCase() ??
                     profile?.email?.charAt(0)?.toUpperCase() ??
                     'U'}
                 </AvatarFallback>
               </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="text-foreground truncate text-sm font-medium">
+              <div className="min-w-0 w-full">
+                <p className="text-sidebar-foreground truncate text-sm font-semibold">
                   {profile?.full_name ?? t('defaultUser')}
                 </p>
-                <p className="text-muted-foreground truncate text-xs">
+                <p className="text-sidebar-foreground/50 truncate text-xs">
                   {profile?.email ?? ''}
                 </p>
               </div>
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              align="end"
+              align="center"
               side="top"
-              sideOffset={6}
+              sideOffset={8}
               className="bg-popover text-popover-foreground ring-border min-w-56"
             >
               <DropdownMenuItem

@@ -69,7 +69,7 @@ the box:
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `NEXT_PUBLIC_SITE_URL` (your EasyPanel domain, e.g.
      `https://crm.yourdomain.com`)
-   - `NEXT_PUBLIC_APP_LOCALE` (optional, defaults to `en`)
+   - `NEXT_PUBLIC_APP_LOCALE` (optional, defaults to `es`)
 3. **Environment variables** (App → Environment): add the server-only
    secrets — these are read at runtime, never baked into the image, so
    changing them only needs a restart:

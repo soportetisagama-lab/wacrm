@@ -9,6 +9,7 @@ import {
   canSendMessages,
   canTransferOwnership,
   canViewOnly,
+  canViewTeamMembers,
   hasMinRole,
   isAccountRole,
   roleRank,
@@ -177,6 +178,16 @@ describe('capability predicates', () => {
     expect(canTransferOwnership('gerencia')).toBe(false);
     expect(canTransferOwnership('agent')).toBe(false);
     expect(canTransferOwnership('viewer')).toBe(false);
+  });
+
+  it('canViewTeamMembers: jefe_linea+ — atc/agent/viewer excluded', () => {
+    expect(canViewTeamMembers('owner')).toBe(true);
+    expect(canViewTeamMembers('admin')).toBe(true);
+    expect(canViewTeamMembers('gerencia')).toBe(true);
+    expect(canViewTeamMembers('jefe_linea')).toBe(true);
+    expect(canViewTeamMembers('atc')).toBe(false);
+    expect(canViewTeamMembers('agent')).toBe(false);
+    expect(canViewTeamMembers('viewer')).toBe(false);
   });
 
   it('canAssignConversations: owner/admin/gerencia/jefe_linea/atc only — agent and viewer excluded', () => {

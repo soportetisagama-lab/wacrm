@@ -149,6 +149,16 @@ export function canTransferOwnership(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin / gerencia / jefe_linea: may see the Team members
+ * settings section (read-only visibility into the roster) without the
+ * full admin-only settings access `canEditSettings` gates. atc / agent
+ * / viewer see none of Settings' Workspace group, including this one.
+ */
+export function canViewTeamMembers(role: AccountRole): boolean {
+  return hasMinRole(role, 'jefe_linea');
+}
+
+/**
  * Owner / admin / gerencia / jefe_linea / atc: may assign or
  * reassign a conversation's `assigned_agent_id`. Deliberately NOT a
  * `hasMinRole` check — agent (Asesor) must keep every other
