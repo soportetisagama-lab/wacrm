@@ -70,6 +70,24 @@ const nextConfig: NextConfig = {
   output: "standalone",
 
   /**
+   * Next.js 16.2.12 bug workaround: the `icon.png` file-convention
+   * route renders its own `<link rel="icon" href="/icon"/>` tag, but
+   * the static route it actually builds is served at `/icon.png` —
+   * `/icon` 404s. Confirmed by running `next build && next start`
+   * locally with zero Docker involved. `beforeFiles` runs before
+   * Next's filesystem routing, so this rewrite resolves `/icon`
+   * before it ever reaches (and fails) the broken route match.
+   * Safe to remove once a Next.js patch fixes the mismatch upstream.
+   */
+  async rewrites() {
+    return {
+      beforeFiles: [{ source: "/icon", destination: "/icon.png" }],
+      afterFiles: [],
+      fallback: [],
+    };
+  },
+
+  /**
    * Cross-origin dev access (Next.js 16).
    *
    * Next 16 blocks requests to dev-only resources (`/_next/*` internals,
