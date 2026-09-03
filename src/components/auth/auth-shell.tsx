@@ -22,7 +22,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           on the card relies on to have something real to blur. */}
       <div className="absolute inset-0 -z-10" aria-hidden="true">
         <Image
-          src="/branding/loginfondo.png"
+          src="/branding/loginfondo-retail.png"
           alt=""
           fill
           priority

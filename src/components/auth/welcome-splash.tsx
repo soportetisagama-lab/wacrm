@@ -40,7 +40,7 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
 
       <div className="relative z-10 flex flex-col items-center">
         <Image
-          src="/branding/SAGAMA.png"
+          src="/branding/SAGAMA-Retail.png"
           alt="Sagama Inox"
           width={300}
           height={93}
