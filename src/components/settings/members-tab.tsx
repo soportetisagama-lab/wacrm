@@ -21,16 +21,21 @@
 //   the role anyway.
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  Check,
+  KeyRound,
   Loader2,
   Mail,
   MailX,
+  Pencil,
   Plus,
+  Search,
   Trash2,
   UsersRound,
+  X,
 } from 'lucide-react';
 
 import {
@@ -55,6 +60,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -62,6 +69,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { useTranslations } from 'next-intl';
 import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
@@ -82,7 +90,18 @@ interface Member {
   email: string | null;
   avatar_url: string | null;
   role: AccountRole;
+  status: 'active' | 'inactive';
   joined_at: string;
+}
+
+// Accent/case-insensitive normalize so "linea" matches "Línea" and
+// "GERENCIA" matches "gerencia" — live search shouldn't punish accents.
+function normalize(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
 }
 
 interface Invitation {
@@ -142,6 +161,7 @@ function fmtExpiresIn(
 export function MembersTab() {
   const t = useTranslations('Settings.members');
   const tRoles = useTranslations('Settings.roles');
+  const tCommon = useTranslations('Common');
   const { user, canManageMembers } = useAuth();
   const { getPresence, getRow, now } = usePresence();
 
@@ -155,6 +175,37 @@ export function MembersTab() {
     null
   );
 
+  // Live search — filters the already-loaded roster in the client.
+  // No network call per keystroke: the full member list is a single
+  // fetch on mount (loadEverything below) and a single account's team
+  // is small enough (tens, not thousands) that filtering it in memory
+  // on every render is effectively free. If that assumption changes
+  // (accounts routinely running into the hundreds+), swap this for a
+  // server-side search with a debounce instead.
+  const [search, setSearch] = useState('');
+
+  // Inline name editing — one row editable at a time.
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState('');
+
+  // Admin-set-password dialog.
+  const [passwordMember, setPasswordMember] = useState<Member | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  const filteredMembers = useMemo(() => {
+    const query = normalize(search);
+    if (!query) return members;
+    return members.filter((m) => {
+      const haystack = normalize(
+        `${m.full_name} ${tRoles(m.role)} ${m.role}`
+      );
+      return haystack.includes(query);
+    });
+  }, [members, search, tRoles]);
+
   const loadEverything = useCallback(async () => {
     try {
       const [mres, ires] = await Promise.all([
@@ -166,7 +217,7 @@ export function MembersTab() {
 
       if (!mres.ok) {
         const payload = await mres.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to load members');
+        toast.error(payload.error || t('loadFailed'));
         return;
       }
       const mdata = (await mres.json()) as { members: Member[] };
@@ -175,7 +226,7 @@ export function MembersTab() {
       if (ires) {
         if (!ires.ok) {
           const payload = await ires.json().catch(() => ({}));
-          toast.error(payload.error || 'Failed to load invitations');
+          toast.error(payload.error || t('loadInvitationsFailed'));
           return;
         }
         const idata = (await ires.json()) as { invitations: Invitation[] };
@@ -185,11 +236,11 @@ export function MembersTab() {
       }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
-      toast.error('Could not reach the server');
+      toast.error(tCommon('serverUnreachable'));
     } finally {
       setLoading(false);
     }
-  }, [canManageMembers]);
+  }, [canManageMembers, t, tCommon]);
 
   useEffect(() => {
     void loadEverything();
@@ -225,7 +276,7 @@ export function MembersTab() {
           )
         );
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to update role');
+        toast.error(payload.error || t('roleUpdateFailed'));
         return;
       }
       toast.success(
@@ -242,9 +293,148 @@ export function MembersTab() {
         )
       );
       console.error('[MembersTab] role change error:', err);
-      toast.error('Could not reach the server');
+      toast.error(tCommon('serverUnreachable'));
     } finally {
       setPendingMemberAction(null);
+    }
+  }
+
+  function startEditingName(member: Member) {
+    setEditingNameId(member.user_id);
+    setEditingNameValue(member.full_name);
+  }
+
+  async function handleNameSave(member: Member) {
+    const nextName = editingNameValue.trim();
+    if (!nextName || nextName === member.full_name) {
+      setEditingNameId(null);
+      return;
+    }
+    const previousName = member.full_name;
+    setPendingMemberAction(member.user_id);
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.user_id === member.user_id ? { ...m, full_name: nextName } : m
+      )
+    );
+    try {
+      const res = await fetch(`/api/account/members/${member.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: nextName }),
+      });
+      if (!res.ok) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.user_id === member.user_id ? { ...m, full_name: previousName } : m
+          )
+        );
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || t('nameUpdateFailed'));
+        return;
+      }
+      toast.success(t('nameUpdatedToast', { name: nextName }));
+      setEditingNameId(null);
+    } catch (err) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id ? { ...m, full_name: previousName } : m
+        )
+      );
+      console.error('[MembersTab] name change error:', err);
+      toast.error(tCommon('serverUnreachable'));
+    } finally {
+      setPendingMemberAction(null);
+    }
+  }
+
+  async function handleStatusChange(member: Member, nextStatus: 'active' | 'inactive') {
+    if (member.status === nextStatus) return;
+    const previousStatus = member.status;
+    setPendingMemberAction(member.user_id);
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.user_id === member.user_id ? { ...m, status: nextStatus } : m
+      )
+    );
+    try {
+      const res = await fetch(`/api/account/members/${member.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      if (!res.ok) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.user_id === member.user_id ? { ...m, status: previousStatus } : m
+          )
+        );
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || t('statusUpdateFailed'));
+        return;
+      }
+      toast.success(
+        t(nextStatus === 'active' ? 'activatedToast' : 'deactivatedToast', {
+          name: member.full_name || t('unnamed'),
+        })
+      );
+    } catch (err) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id ? { ...m, status: previousStatus } : m
+        )
+      );
+      console.error('[MembersTab] status change error:', err);
+      toast.error(tCommon('serverUnreachable'));
+    } finally {
+      setPendingMemberAction(null);
+    }
+  }
+
+  function closePasswordDialog() {
+    setPasswordMember(null);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError(null);
+  }
+
+  async function handlePasswordSave() {
+    if (!passwordMember) return;
+    if (newPassword.length < 8) {
+      setPasswordError(t('passwordTooShort', { min: 8 }));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError(t('passwordMismatch'));
+      return;
+    }
+    setPasswordError(null);
+    setPasswordSaving(true);
+    try {
+      const res = await fetch(
+        `/api/account/members/${passwordMember.user_id}/password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPassword }),
+        }
+      );
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setPasswordError(payload.error || t('passwordUpdateFailed'));
+        return;
+      }
+      toast.success(
+        t('passwordUpdatedToast', {
+          name: passwordMember.full_name || t('unnamed'),
+        })
+      );
+      closePasswordDialog();
+    } catch (err) {
+      console.error('[MembersTab] password change error:', err);
+      setPasswordError(tCommon('serverUnreachable'));
+    } finally {
+      setPasswordSaving(false);
     }
   }
 
@@ -258,7 +448,7 @@ export function MembersTab() {
       );
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to remove member');
+        toast.error(payload.error || t('removeFailed'));
         return;
       }
       toast.success(
@@ -270,7 +460,7 @@ export function MembersTab() {
       setRemovingMember(null);
     } catch (err) {
       console.error('[MembersTab] remove error:', err);
-      toast.error('Could not reach the server');
+      toast.error(tCommon('serverUnreachable'));
     } finally {
       setPendingMemberAction(null);
     }
@@ -283,14 +473,14 @@ export function MembersTab() {
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        toast.error(payload.error || 'Failed to revoke invitation');
+        toast.error(payload.error || t('revokeFailed'));
         return;
       }
       toast.success(t('revokedToast'));
       setInvitations((prev) => prev.filter((i) => i.id !== invite.id));
     } catch (err) {
       console.error('[MembersTab] revoke error:', err);
-      toast.error('Could not reach the server');
+      toast.error(tCommon('serverUnreachable'));
     }
   }
 
@@ -343,11 +533,33 @@ export function MembersTab() {
           );
         })()}
 
+      {/* Live search — filters the roster already in memory, no
+          "Search" button and no page reload. Matches on name, the
+          translated role label, and the raw role key so typing
+          "asesor" surfaces every agent-role member. */}
+      {members.length > 0 && (
+        <div className="relative max-w-sm">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('searchPlaceholder')}
+            aria-label={t('searchPlaceholder')}
+            className="pl-8"
+          />
+        </div>
+      )}
+
       {/* Roster */}
       <Card>
         <CardContent className="p-0">
+          {filteredMembers.length === 0 && members.length > 0 ? (
+            <p className="text-muted-foreground px-4 py-8 text-center text-sm">
+              {t('noResults')}
+            </p>
+          ) : (
           <ul className="divide-border divide-y">
-            {members.map((member) => {
+            {filteredMembers.map((member) => {
               const roleMeta = ROLE_META[member.role];
               const RoleIcon = roleMeta.icon;
               const isSelf = member.user_id === user?.id;
@@ -379,7 +591,7 @@ export function MembersTab() {
                             {member.avatar_url ? (
                               <AvatarImage
                                 src={member.avatar_url}
-                                alt={member.full_name || 'Member'}
+                                alt={member.full_name || t('unnamed')}
                               />
                             ) : null}
                             <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
@@ -403,16 +615,73 @@ export function MembersTab() {
                     </Tooltip>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-foreground truncate text-sm font-medium">
-                          {member.full_name || t('unnamed')}
-                        </span>
-                        {isSelf && (
-                          <Badge className="bg-muted text-muted-foreground border-border text-[10px] tracking-wide uppercase">
-                            {t('you')}
-                          </Badge>
-                        )}
-                      </div>
+                      {editingNameId === member.user_id ? (
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            autoFocus
+                            value={editingNameValue}
+                            onChange={(e) => setEditingNameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void handleNameSave(member);
+                              if (e.key === 'Escape') setEditingNameId(null);
+                            }}
+                            disabled={isBusy}
+                            className="h-7 max-w-[200px]"
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7 shrink-0"
+                            disabled={isBusy}
+                            onClick={() => handleNameSave(member)}
+                            aria-label={t('save')}
+                          >
+                            <Check className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7 shrink-0"
+                            disabled={isBusy}
+                            onClick={() => setEditingNameId(null)}
+                            aria-label={t('cancel')}
+                          >
+                            <X className="size-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="text-foreground truncate text-sm font-medium">
+                            {member.full_name || t('unnamed')}
+                          </span>
+                          {isSelf && (
+                            <Badge className="bg-muted text-muted-foreground border-border text-[10px] tracking-wide uppercase">
+                              {t('you')}
+                            </Badge>
+                          )}
+                          {/* Name edit. Admin+ only; never on the owner
+                              row or your own row — self-edits go through
+                              the Profile settings tab instead. */}
+                          {canManageMembers && !isOwnerRow && !isSelf && (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="text-muted-foreground hover:text-foreground size-6 shrink-0"
+                                    onClick={() => startEditingName(member)}
+                                    aria-label={t('editNameTooltip')}
+                                  >
+                                    <Pencil className="size-3" />
+                                  </Button>
+                                }
+                              />
+                              <TooltipContent>{t('editNameTooltip')}</TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      )}
                       {member.email && (
                         <p className="text-muted-foreground truncate text-xs">
                           {member.email}
@@ -432,6 +701,51 @@ export function MembersTab() {
                       inline. Items align to the start on mobile so the
                       role dropdown lines up under the avatar. */}
                   <div className="flex items-center gap-2 sm:gap-3">
+                    {/* Status toggle. Admin+ only; never on the owner
+                        row or your own row (you can't lock yourself
+                        out). Read-only badge otherwise. */}
+                    {canManageMembers && !isOwnerRow && !isSelf ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <div className="flex items-center gap-1.5">
+                              <Switch
+                                checked={member.status === 'active'}
+                                disabled={isBusy}
+                                onCheckedChange={(checked) =>
+                                  handleStatusChange(
+                                    member,
+                                    checked ? 'active' : 'inactive'
+                                  )
+                                }
+                                aria-label={
+                                  member.status === 'active'
+                                    ? t('deactivateAction')
+                                    : t('activateAction')
+                                }
+                              />
+                              <span className="text-muted-foreground hidden text-xs sm:inline">
+                                {member.status === 'active'
+                                  ? t('statusActive')
+                                  : t('statusInactive')}
+                              </span>
+                            </div>
+                          }
+                        />
+                        <TooltipContent>
+                          {member.status === 'active'
+                            ? t('deactivateAction')
+                            : t('activateAction')}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      member.status === 'inactive' && (
+                        <Badge className="border-border bg-muted text-muted-foreground text-[10px] tracking-wide uppercase">
+                          {t('statusInactive')}
+                        </Badge>
+                      )
+                    )}
+
                     {/* Role display / editor. Inline Select is admin+
                         only AND not allowed on the owner row (owner
                         changes go through transfer, which lands later). */}
@@ -469,6 +783,30 @@ export function MembersTab() {
                       </span>
                     )}
 
+                    {/* Set password. Admin+ only; never on the owner
+                        row or your own row — self password changes go
+                        through Settings → Security instead. Uses the
+                        service role server-side (see the /password
+                        route) — never touches auth.users from here. */}
+                    {canManageMembers && !isOwnerRow && !isSelf && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setPasswordMember(member)}
+                              disabled={isBusy}
+                              className="border-border text-muted-foreground hover:bg-muted"
+                            >
+                              <KeyRound className="size-4" />
+                            </Button>
+                          }
+                        />
+                        <TooltipContent>{t('changePasswordTooltip')}</TooltipContent>
+                      </Tooltip>
+                    )}
+
                     {/* Remove. Admin+ only; never on the owner row;
                         never on yourself. Pre-polish styling was
                         neutral-default + red-on-hover — the
@@ -492,6 +830,7 @@ export function MembersTab() {
               );
             })}
           </ul>
+          )}
         </CardContent>
       </Card>
 
@@ -630,6 +969,85 @@ export function MembersTab() {
                 </>
               ) : (
                 t('removeBtn')
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={passwordMember !== null}
+        onOpenChange={(open) => {
+          if (!open) closePasswordDialog();
+        }}
+      >
+        <DialogContent className="bg-popover border-border sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground flex items-center gap-2">
+              <KeyRound className="size-4" />
+              {t('setPasswordTitle')}
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {t.rich('setPasswordDesc', {
+                name: passwordMember?.full_name || t('unnamed'),
+                bold: (chunks: React.ReactNode) => <strong>{chunks}</strong>,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="member-new-password" className="text-foreground">
+                {t('newPasswordLabel')}
+              </Label>
+              <Input
+                id="member-new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                disabled={passwordSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="member-confirm-password" className="text-foreground">
+                {t('confirmPasswordLabel')}
+              </Label>
+              <Input
+                id="member-confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+                disabled={passwordSaving}
+              />
+            </div>
+            {passwordError && (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {passwordError}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="bg-popover border-border">
+            <Button
+              variant="outline"
+              onClick={closePasswordDialog}
+              className="border-border text-muted-foreground hover:bg-muted"
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              onClick={handlePasswordSave}
+              disabled={passwordSaving || !newPassword || !confirmPassword}
+            >
+              {passwordSaving ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('settingPassword')}
+                </>
+              ) : (
+                t('setPasswordBtn')
               )}
             </Button>
           </DialogFooter>

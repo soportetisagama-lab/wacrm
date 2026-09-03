@@ -86,7 +86,7 @@ function LoginPageInner() {
       // Ignore — remembering the email is a convenience, not a requirement.
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data: signInData, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -97,6 +97,31 @@ function LoginPageInner() {
       setShake(true);
       setTimeout(() => setShake(false), 600);
       return;
+    }
+
+    // Block deactivated users right here, before they ever reach the
+    // dashboard. The profile row is readable under RLS (self-select),
+    // so this is a normal authenticated query — no service role
+    // needed. A user deactivated mid-session isn't kicked out (that's
+    // a separate, heavier mechanism); this only stops the next login.
+    const userId = signInData.user?.id;
+    if (userId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('status')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (profile?.status === 'inactive') {
+        await supabase.auth.signOut();
+        setError(
+          'Este usuario está inactivo. Contáctate con el área de sistemas.'
+        );
+        setLoading(false);
+        setShake(true);
+        setTimeout(() => setShake(false), 600);
+        return;
+      }
     }
 
     // Full-page navigation (not router.push) so the browser issues a

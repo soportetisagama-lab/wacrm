@@ -2,9 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, CheckCircle, Mail } from 'lucide-react';
+import { ArrowLeft, CheckCircle, KeyRound, Mail } from 'lucide-react';
 
-import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { AuthShell } from '@/components/auth/auth-shell';
 import { AuthCard } from '@/components/auth/auth-card';
@@ -16,28 +15,36 @@ import { AuthError } from '@/components/auth/auth-error';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
+  const [adminCode, setAdminCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const supabase = createClient();
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
-    });
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, adminCode }),
+      });
+      const payload = await res.json().catch(() => ({}));
 
-    if (error) {
-      setError(error.message);
+      if (!res.ok) {
+        setError(payload.error || 'No se pudo enviar el link');
+        setLoading(false);
+        return;
+      }
+
+      setSuccess(true);
       setLoading(false);
-      return;
+    } catch {
+      setError('No se pudo conectar con el servidor');
+      setLoading(false);
     }
-
-    setSuccess(true);
-    setLoading(false);
   };
 
   if (success) {
@@ -87,6 +94,17 @@ export default function ForgotPasswordPage() {
             placeholder="tu@ejemplo.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+
+          <AuthInput
+            icon={KeyRound}
+            id="adminCode"
+            type="text"
+            autoComplete="off"
+            placeholder="Código de administrador"
+            value={adminCode}
+            onChange={(e) => setAdminCode(e.target.value)}
             required
           />
 

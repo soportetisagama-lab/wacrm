@@ -18,9 +18,9 @@ import { useTranslations } from 'next-intl'
 export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
   const t = useTranslations('Dashboard.pipelineDonut')
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-sm">
       <header className="border-b border-border px-5 py-4">
-        <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
+        <h2 className="text-sm font-semibold tracking-tight text-foreground">{t('title')}</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {t('description')}
         </p>
@@ -38,19 +38,22 @@ export function PipelineDonut({ data, loading, currency }: PipelineDonutProps) {
         ) : (
           <>
             <Donut data={data} currency={currency} />
-            <ul className="mt-5 space-y-2">
+            <ul className="mt-5 space-y-0.5">
               {data.stages.map((s) => (
-                <li key={s.id} className="flex items-center gap-3 text-xs">
+                <li
+                  key={s.id}
+                  className="flex items-center gap-3 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-muted/50"
+                >
                   <span
                     className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-                    style={{ background: s.color }}
+                    style={{ background: s.color, boxShadow: `0 0 0 3px ${s.color}1f` }}
                     aria-hidden
                   />
-                  <span className="flex-1 truncate text-muted-foreground">{s.name}</span>
+                  <span className="flex-1 truncate font-medium text-foreground/90">{s.name}</span>
                   <span className="text-muted-foreground tabular-nums">
                     {t('dealCount', { count: s.dealCount })}
                   </span>
-                  <span className="w-20 text-right text-muted-foreground tabular-nums">
+                  <span className="w-20 text-right font-medium text-foreground tabular-nums">
                     {formatCurrencyShort(s.totalValue, currency)}
                   </span>
                 </li>
@@ -101,32 +104,39 @@ function Donut({ data, currency }: { data: PipelineDonutData; currency: string }
   return (
     <div className="flex items-center justify-center">
       <svg viewBox={`0 0 ${size} ${size}`} className="h-48 w-48" role="img" aria-label={t('ariaLabel')}>
+        <defs>
+          <filter id="donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity={0.18} />
+          </filter>
+        </defs>
         {/* background ring */}
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--muted)" strokeWidth={ringWidth} />
-        {segments.map((seg) => (
-          <path
-            key={seg.id}
-            d={seg.path}
-            fill="none"
-            stroke={seg.color}
-            strokeWidth={ringWidth}
-            strokeLinecap="butt"
-          />
-        ))}
+        <g filter="url(#donut-shadow)">
+          {segments.map((seg) => (
+            <path
+              key={seg.id}
+              d={seg.path}
+              fill="none"
+              stroke={seg.color}
+              strokeWidth={ringWidth}
+              strokeLinecap={segments.length > 1 ? 'round' : 'butt'}
+            />
+          ))}
+        </g>
         {/* center label */}
         <text
           x={cx}
           y={cy - 6}
           textAnchor="middle"
-          className="fill-muted-foreground text-[11px]"
+          className="fill-muted-foreground text-[11px] font-medium tracking-wide uppercase"
         >
           {t('total')}
         </text>
         <text
           x={cx}
-          y={cy + 14}
+          y={cy + 16}
           textAnchor="middle"
-          className="fill-foreground text-[18px] font-semibold tabular-nums"
+          className="fill-foreground text-[20px] font-bold tracking-tight tabular-nums"
         >
           {formatCurrencyShort(data.totalValue, currency)}
         </text>

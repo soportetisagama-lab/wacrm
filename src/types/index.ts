@@ -74,6 +74,9 @@ export interface AccountMember {
   email: string | null;
   avatar_url: string | null;
   role: AccountRole;
+  /** 'active' | 'inactive' — an inactive member is blocked at login
+   *  (see the login page's post-sign-in status check). */
+  status: 'active' | 'inactive';
   joined_at: string;
 }
 

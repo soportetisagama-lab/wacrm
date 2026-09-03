@@ -1,4 +1,9 @@
 {
+  "Common": {
+    "close": "Cerrar",
+    "loading": "Cargando...",
+    "serverUnreachable": "No se pudo conectar con el servidor"
+  },
   "LoginPage": {
     "titleAccept": "Inicia sesión para aceptar",
     "titleWelcome": "Bienvenido de nuevo",
@@ -20,7 +25,7 @@
     "inbox": "Bandeja",
     "notifications": "Notificaciones",
     "contacts": "Contactos",
-    "pipelines": "Pipelines",
+    "pipelines": "Embudos",
     "broadcasts": "Difusiones",
     "automations": "Automatizaciones",
     "flows": "Flujos",
@@ -30,7 +35,7 @@
     "unreadConversations": "{count} {count, plural, =1 {conversación sin leer} other {conversaciones sin leer}}",
     "unreadNotifications": "{count} {count, plural, =1 {notificación sin leer} other {notificaciones sin leer}}",
     "roleOwner": "Propietario",
-    "roleAdmin": "Admin",
+    "roleAdmin": "Administrador",
     "roleGerencia": "Gerencia",
     "roleJefeLinea": "Jefe de Línea",
     "roleAtc": "ATC",
@@ -41,14 +46,16 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "primaryNav": "Navegación principal",
+    "verifiedBadge": "Cuenta verificada"
   },
   "Header": {
     "dashboard": "Panel",
     "inbox": "Bandeja",
     "notifications": "Notificaciones",
     "contacts": "Contactos",
-    "pipelines": "Pipelines",
+    "pipelines": "Embudos",
     "broadcasts": "Difusiones",
     "automations": "Automatizaciones",
     "settings": "Configuración",
@@ -58,7 +65,11 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "fullscreenEnter": "Pantalla completa",
+    "fullscreenExit": "Salir de pantalla completa",
+    "collapseSidebar": "Colapsar menú",
+    "expandSidebar": "Expandir menú"
   },
   "ModeToggle": {
     "switchMode": "Cambiar a modo {mode}"
@@ -107,13 +118,13 @@
       "ariaLabel": "Conversaciones por día"
     },
     "pipelineDonut": {
-      "title": "Valor del pipeline",
+      "title": "Valor del embudo",
       "description": "Negocios abiertos por etapa",
       "noOpenDeals": "Todavía no hay negocios abiertos",
-      "noOpenDealsHint": "Creá negocios en Pipelines para ver el desglose por etapa acá.",
+      "noOpenDealsHint": "Creá negocios en Embudos para ver el desglose por etapa acá.",
       "dealCount": "{count} {count, plural, =1 {negocio} other {negocios}}",
       "total": "Total",
-      "ariaLabel": "Valor del pipeline por etapa"
+      "ariaLabel": "Valor del embudo por etapa"
     },
     "responseTimeChart": {
       "title": "Tiempo promedio de primera respuesta",
@@ -169,7 +180,11 @@
       "selectConversation": "Seleccioná una conversación",
       "selectConversationHint": "Elegí una conversación de la izquierda para empezar a chatear",
       "today": "Hoy",
-      "yesterday": "Ayer"
+      "yesterday": "Ayer",
+      "waitForSend": "Esperá a que el mensaje termine de enviarse",
+      "networkError": "error de red",
+      "reactionFailed": "No se pudo reaccionar: {reason}",
+      "assignmentUpdateFailed": "Error al actualizar la asignación"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -205,7 +220,17 @@
       "send": "Enviar",
       "quickReplyNamePrompt": "Nombrá esta respuesta rápida:",
       "quickReplySaved": "Guardada como respuesta rápida.",
-      "quickReplySaveError": "No se pudo guardar la respuesta rápida."
+      "quickReplySaveError": "No se pudo guardar la respuesta rápida.",
+      "audio": "Audio",
+      "aiNotConfigured": "La IA todavía no está configurada — activala en Configuración → Asistente de IA.",
+      "draftFailedGeneric": "No se pudo redactar una respuesta.",
+      "draftEmpty": "El asistente no devolvió ninguna respuesta.",
+      "aiUnreachable": "No se pudo conectar con el asistente de IA.",
+      "uploadTooLarge": "El archivo pesa {sizeMb} MB — el límite para {kind} es {maxMb} MB.",
+      "uploadFailed": "Error al subir el archivo.",
+      "recordingTooLong": "La grabación es demasiado larga (más de 16 MB).",
+      "voiceNotSupported": "La grabación de voz no es compatible con este navegador.",
+      "micDenied": "Acceso al micrófono denegado o no disponible."
     },
     "bubble": {
       "photo": "Foto",
@@ -313,7 +338,7 @@
       "tableColumns": {
         "name": "Nombre",
         "phone": "Teléfono",
-        "email": "Email",
+        "email": "Correo",
         "company": "Empresa",
         "tags": "Etiquetas",
         "createdAt": "Creado"
@@ -337,7 +362,8 @@
       "toastFailedDelete": "Error al eliminar el contacto",
       "toastDeleted": "Contacto eliminado",
       "toastBulkFailedDelete": "Error al eliminar los contactos",
-      "toastBulkDeleted": "{count} contactos eliminados"
+      "toastBulkDeleted": "{count} contactos eliminados",
+      "selectAllOnPage": "Seleccionar todos los contactos de esta página"
     },
     "form": {
       "addTitle": "Agregar contacto",
@@ -394,7 +420,7 @@
       "contactDetailsDesc": "Datos del contacto",
       "name": "Nombre",
       "phone": "Teléfono",
-      "email": "Email",
+      "email": "Correo",
       "company": "Empresa",
       "createdAt": "Creado el",
       "customFields": "Campos personalizados",
@@ -456,7 +482,7 @@
       "columns": {
         "phone": "Teléfono",
         "name": "Nombre",
-        "email": "Email",
+        "email": "Correo",
         "company": "Empresa",
         "tags": "Etiquetas"
       },
@@ -498,24 +524,24 @@
   },
   "Pipelines": {
     "page": {
-      "selectPipeline": "Seleccionar pipeline",
-      "noPipelinesYet": "Todavía no hay pipelines",
-      "managePipelines": "Gestionar pipelines",
-      "addPipeline": "Agregar pipeline",
+      "selectPipeline": "Seleccionar embudo",
+      "noPipelinesYet": "Todavía no hay embudos",
+      "managePipelines": "Gestionar embudos",
+      "addPipeline": "Agregar embudo",
       "addDeal": "Agregar negocio",
-      "createToStartTracking": "Creá un pipeline para empezar a hacer seguimiento de negocios",
-      "createPipeline": "Crear pipeline",
-      "newPipeline": "Nuevo pipeline",
-      "pipelineName": "Nombre del pipeline",
+      "createToStartTracking": "Creá un embudo para empezar a hacer seguimiento de negocios",
+      "createPipeline": "Crear embudo",
+      "newPipeline": "Nuevo embudo",
+      "pipelineName": "Nombre del embudo",
       "pipelineNamePlaceholder": "p. ej., Ventas Enterprise",
       "defaultStagesDesc": "Las etapas por defecto (Nuevo lead → Ganado) se crearán automáticamente.",
       "cancel": "Cancelar",
       "creating": "Creando...",
-      "createPipelineBtn": "Crear pipeline",
-      "toastFailedLoadPipelines": "Error al cargar los pipelines",
+      "createPipelineBtn": "Crear embudo",
+      "toastFailedLoadPipelines": "Error al cargar los embudos",
       "toastFailedMoveDeal": "Error al mover el negocio",
-      "toastFailedCreatePipeline": "Error al crear el pipeline",
-      "toastPipelineCreated": "Pipeline creado",
+      "toastFailedCreatePipeline": "Error al crear el embudo",
+      "toastPipelineCreated": "Embudo creado",
       "toastNotLinkedToAccount": "Tu perfil no está vinculado a ninguna cuenta."
     },
     "board": {
@@ -570,36 +596,36 @@
       "toastDeleted": "Negocio eliminado"
     },
     "settings": {
-      "managePipeline": "Gestionar pipeline",
-      "deletePipeline": "Eliminar pipeline",
-      "deletePipelineDesc": "Esto archivará todos los negocios de este pipeline. No se puede deshacer.",
+      "managePipeline": "Gestionar embudo",
+      "deletePipeline": "Eliminar embudo",
+      "deletePipelineDesc": "Esto archivará todos los negocios de este embudo. No se puede deshacer.",
       "cancel": "Cancelar",
       "deleting": "Eliminando...",
-      "deletePipelineBtn": "Eliminar pipeline",
-      "pipelineName": "Nombre del pipeline",
+      "deletePipelineBtn": "Eliminar embudo",
+      "pipelineName": "Nombre del embudo",
       "stages": "Etapas",
       "newStageNamePlaceholder": "Nombre de la nueva etapa",
       "add": "Agregar",
-      "createNewPipeline": "Crear un nuevo pipeline",
+      "createNewPipeline": "Crear un nuevo embudo",
       "saving": "Guardando...",
       "saveChanges": "Guardar cambios",
       "dragToReorder": "Arrastrá para reordenar",
       "changeColor": "Cambiar color",
-      "toastFailedSave": "Error al guardar el pipeline",
-      "toastSaved": "Pipeline guardado",
+      "toastFailedSave": "Error al guardar el embudo",
+      "toastSaved": "Embudo guardado",
       "toastFailedAddStage": "Error al agregar la etapa",
       "toastMoveOrDeleteDeals": "Primero mové o eliminá los negocios de esta etapa",
       "toastFailedDeleteStage": "Error al eliminar la etapa",
-      "toastFailedDeletePipeline": "Error al eliminar el pipeline",
-      "toastDeleted": "Pipeline eliminado"
+      "toastFailedDeletePipeline": "Error al eliminar el embudo",
+      "toastDeleted": "Embudo eliminado"
     },
     "analytics": {
       "totalDeals": "Negocios totales",
-      "totalDealsTooltip": "Cantidad de todos los negocios de este pipeline que no están marcados como Perdidos. Los negocios Ganados también se incluyen.",
-      "pipelineValue": "Valor del pipeline",
-      "pipelineValueTooltip": "Suma del valor en dólares de todos los negocios de este pipeline, excluyendo los marcados como Perdidos.",
+      "totalDealsTooltip": "Cantidad de todos los negocios de este embudo que no están marcados como Perdidos. Los negocios Ganados también se incluyen.",
+      "pipelineValue": "Valor del embudo",
+      "pipelineValueTooltip": "Suma del valor en dólares de todos los negocios de este embudo, excluyendo los marcados como Perdidos.",
       "avgDealSize": "Tamaño promedio del negocio",
-      "avgDealSizeTooltip": "Valor del pipeline dividido por Negocios totales — el valor promedio de un negocio no perdido.",
+      "avgDealSizeTooltip": "Valor del embudo dividido por Negocios totales — el valor promedio de un negocio no perdido.",
       "weightedValue": "Valor ponderado",
       "weightedValueTooltip": "Ingreso esperado: el valor de cada negocio abierto × la probabilidad de su etapa. La primera etapa ≈ 10%, las etapas avanzan hasta 90%, Ganado = 100%. Los negocios perdidos quedan excluidos.",
       "wonThisMonth": "Ganados este mes",
@@ -626,7 +652,8 @@
         "date": "Fecha"
       },
       "errorLoad": "Error al cargar las difusiones",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "broadcastInProgress": "Difusión en curso"
     },
     "status": {
       "draft": "Borrador",
@@ -764,7 +791,7 @@
         "fieldMap": {
           "name": "Nombre",
           "phone": "Teléfono",
-          "email": "Email"
+          "email": "Correo"
         }
       },
       "scheduleSend": {
@@ -819,7 +846,8 @@
         "updateError": "Error al actualizar",
         "duplicateError": "Error al duplicar",
         "deleteError": "Error al eliminar"
-      }
+      },
+      "openMenu": "Abrir menú"
     },
     "edit": {
       "loading": "Cargando...",
@@ -920,7 +948,7 @@
       },
       "fields": {
         "name": "Nombre",
-        "email": "Email",
+        "email": "Correo",
         "company": "Empresa",
         "customFields": "Campos personalizados",
         "unknown": "{id} (campo desconocido)"
@@ -931,14 +959,14 @@
         "unknown": "{id} (agente desconocido)"
       },
       "pipelines": {
-        "pipelineLabel": "Pipeline",
-        "pipelineIdLabel": "Id de pipeline",
+        "pipelineLabel": "Embudo",
+        "pipelineIdLabel": "Id de embudo",
         "stageLabel": "Etapa",
         "stageIdLabel": "Id de etapa",
-        "selectPipeline": "Seleccionar un pipeline…",
+        "selectPipeline": "Seleccionar un embudo…",
         "selectStage": "Seleccionar una etapa…",
-        "selectPipelineFirst": "Primero seleccioná un pipeline…",
-        "unknownPipeline": "{id} (pipeline desconocido)",
+        "selectPipelineFirst": "Primero seleccioná un embudo…",
+        "unknownPipeline": "{id} (embudo desconocido)",
         "unknownStage": "{id} (etapa desconocida)"
       },
       "templates": {
@@ -997,7 +1025,13 @@
         "matchWordHint": "Coincide con la palabra clave solo como palabra independiente, así \"k\" ya no se activa con \"gracias\". Mejor para palabras clave cortas en idiomas separados por espacios; usá Contiene para idiomas escritos sin espacios.",
         "matchExact": "Exacto",
         "closeConversationHint": "Establece el estado de la conversación en \"cerrada\". No requiere configuración."
-      }
+      },
+      "kindCondition": "Condición",
+      "kindWait": "Espera",
+      "kindAction": "Acción",
+      "moveUp": "Mover arriba",
+      "moveDown": "Mover abajo",
+      "schedulePlaceholder": "Expresión cron o HH:mm"
     }
   },
   "Flows": {
@@ -1141,7 +1175,10 @@
         "filenamePlaceholder": "factura.pdf",
         "advanceAfterSending": "Después de enviar, avanzar a",
         "pickNextNode": "Elegí un nodo siguiente…",
-        "none": "— Ninguno —"
+        "none": "— Ninguno —",
+        "fileTooLarge": "El archivo pesa {sizeMb} MB — el límite es 16 MB.",
+        "fileUploaded": "Archivo subido.",
+        "uploadFailed": "Error al subir el archivo."
       },
       "categories": {
         "messaging": "Mensajería",
@@ -1189,7 +1226,23 @@
           "label": "Fin",
           "blurb": "Termina el flujo"
         }
-      }
+      },
+      "editorView": "Vista del editor",
+      "backToFlows": "Volver a Flujos",
+      "flowNamePlaceholder": "Nombre del flujo",
+      "unsavedChangesHint": "Cambios sin guardar — tocá Guardar para persistirlos",
+      "edited": "Editado",
+      "runsBtn": "Ejecuciones",
+      "deleteBtn": "Eliminar",
+      "pauseBtn": "Pausar",
+      "activateBtn": "Activar",
+      "activateDisabledHint": "Solucioná los problemas de abajo antes de activar",
+      "saveBtn": "Guardar",
+      "descriptionPlaceholder": "Agregá una descripción breve (interna — los clientes no la ven)",
+      "descriptionAriaLabel": "Descripción del flujo",
+      "statusDraft": "Borrador",
+      "statusActive": "Activo",
+      "statusArchived": "Archivado"
     },
     "validation": {
       "noIssues": "Sin problemas. Listo para activar.",
@@ -1271,7 +1324,36 @@
       "removeDialogDesc": "¿Quitar a <bold>{name}</bold> de la cuenta? Se cerrará su sesión en esta cuenta y se le dará una cuenta personal nueva la próxima vez que inicie sesión. Su acceso de inicio de sesión no se elimina.",
       "cancel": "Cancelar",
       "removing": "Quitando...",
-      "removeBtn": "Quitar miembro"
+      "removeBtn": "Quitar miembro",
+      "searchPlaceholder": "Buscar por nombre o rol...",
+      "noResults": "No se encontraron miembros.",
+      "statusActive": "Activo",
+      "statusInactive": "Inactivo",
+      "activateAction": "Activar",
+      "deactivateAction": "Desactivar",
+      "activatedToast": "{name} fue activado",
+      "deactivatedToast": "{name} fue desactivado",
+      "editNameTooltip": "Editar nombre",
+      "save": "Guardar",
+      "nameUpdatedToast": "Se actualizó el nombre de {name}",
+      "changePasswordTooltip": "Cambiar contraseña",
+      "setPasswordTitle": "Cambiar contraseña",
+      "setPasswordDesc": "Establecé una nueva contraseña para <bold>{name}</bold>. La sesión actual de este usuario no se cierra automáticamente.",
+      "newPasswordLabel": "Nueva contraseña",
+      "confirmPasswordLabel": "Confirmar contraseña",
+      "passwordTooShort": "La contraseña debe tener al menos {min} caracteres",
+      "passwordMismatch": "Las contraseñas no coinciden",
+      "passwordUpdatedToast": "Contraseña actualizada para {name}",
+      "setPasswordBtn": "Cambiar contraseña",
+      "settingPassword": "Cambiando...",
+      "loadFailed": "Error al cargar los miembros",
+      "loadInvitationsFailed": "Error al cargar las invitaciones",
+      "roleUpdateFailed": "Error al actualizar el rol",
+      "nameUpdateFailed": "Error al actualizar el nombre",
+      "statusUpdateFailed": "Error al actualizar el estado",
+      "passwordUpdateFailed": "Error al cambiar la contraseña",
+      "removeFailed": "Error al quitar al miembro",
+      "revokeFailed": "Error al revocar la invitación"
     },
     "invite": {
       "inviteCreated": "Invitación creada",
@@ -1299,7 +1381,10 @@
       "labelTooLong": "La etiqueta debe tener {max} caracteres o menos",
       "copied": "Enlace de invitación copiado",
       "clipboardBlocked": "Portapapeles bloqueado — copiá el enlace manualmente",
-      "whatsappMessage": "Unite a {accountName} en wacrm usando este enlace (válido por {expiresInDays} días): {url}"
+      "whatsappMessage": "Unite a {accountName} en wacrm usando este enlace (válido por {expiresInDays} días): {url}",
+      "createFailed": "Error al crear la invitación",
+      "defaultAccountName": "nuestra cuenta de wacrm",
+      "createUnreachable": "No se pudo conectar con el servidor. ¿Intentamos de nuevo?"
     },
     "tagsAndFields": {
       "title": "Campos y etiquetas",
@@ -1308,7 +1393,7 @@
       "tagsDesc": "Etiquetas con código de color para agrupar y filtrar contactos.",
       "fieldsTitle": "Campos personalizados",
       "fieldsDesc": "Campos de contacto adicionales (p. ej. código postal, origen del lead). Aparecen en cada contacto y en la acción de automatización “Actualizar campo de contacto”.",
-      "adminRole": "Admin",
+      "adminRole": "Administrador",
       "failedToLoadTags": "Error al cargar las etiquetas",
       "nameRequired": "El nombre de la etiqueta es obligatorio",
       "notAuthenticated": "No autenticado",
@@ -1430,10 +1515,12 @@
       "toastInvalidImage": "La imagen del encabezado debe ser JPEG o PNG.",
       "toastImageTooLarge": "La imagen pesa {size} MB — el límite de Meta es 5 MB.",
       "toastUploadSuccess": "Imagen subida.",
-      "toastUploadFailed": "Error al subir."
+      "toastUploadFailed": "Error al subir.",
+      "metaQualityScore": "Puntaje de calidad de Meta",
+      "headerTextAriaLabel": "Texto del encabezado"
     },
     "roles": {
-      "admin": "Admin",
+      "admin": "Administrador",
       "adminHint": "Gestiona miembros y todo lo demás",
       "gerencia": "Gerencia",
       "gerenciaHint": "Ve y asigna todo lo operativo; sin configuración",
@@ -1512,7 +1599,29 @@
       "step4_3": "Pegá la <strong class=\"text-foreground\">URL de callback del webhook</strong> de arriba",
       "step4_4": "Ingresá el mismo <strong class=\"text-foreground\">token de verificación</strong> que configuraste acá",
       "step4_5": "Suscribite al campo de webhook \"messages\"",
-      "metaDocs": "Documentación de Meta WhatsApp API"
+      "metaDocs": "Documentación de Meta WhatsApp API",
+      "loadFailed": "Error al cargar la configuración de WhatsApp",
+      "phoneNumberIdRequired": "El Phone Number ID es obligatorio",
+      "accessTokenRequiredInitial": "El Access Token es obligatorio para la configuración inicial",
+      "reenterTokenRequired": "Volvé a ingresar el Access Token para guardar los cambios",
+      "saveFailed": "Error al guardar la configuración",
+      "savedButRegisterFailed": "Se guardó, pero Meta no pudo registrar el número: {error}",
+      "savedRegistrationSkipped": "Credenciales guardadas y verificadas. Se omitió el registro entrante (sin PIN) — mirá el estado de registro más abajo.",
+      "savedLiveWithName": "En vivo — {name} ya puede recibir eventos.",
+      "savedConnectedGeneric": "WhatsApp conectado. Los eventos empezarán a llegar en menos de un minuto.",
+      "testConnectedWithName": "Conectado a {name}",
+      "testConnectedGeneric": "Conexión con la API exitosa",
+      "testFailedGeneric": "Falló la conexión con la API",
+      "testUnreachable": "Falló la prueba de conexión. Revisá la red e intentá de nuevo.",
+      "verifyLive": "El número está completamente conectado — Meta está entregando eventos.",
+      "verifyNotLive": "El número no está completamente registrado. Mirá las verificaciones de abajo para ver qué paso falló.",
+      "verifyUnreachable": "No se pudo conectar con el endpoint de verificación.",
+      "resetConfirm": "Esto eliminará la configuración actual de WhatsApp para que puedas volver a ingresarla. ¿Continuar?",
+      "resetFailed": "Error al restablecer la configuración",
+      "resetSuccess": "Configuración eliminada. Ya podés volver a ingresar tus credenciales.",
+      "webhookCopied": "URL del webhook copiada al portapapeles",
+      "phoneNumberIdPlaceholder": "p. ej. 100234567890123",
+      "wabaIdPlaceholder": "p. ej. 100234567890456"
     },
     "sections": {
       "overview": "Resumen",
@@ -1589,7 +1698,31 @@
       "useMode": "Usar modo {mode}",
       "active": "Activo",
       "accentColor": "Color de acento",
-      "useTheme": "Usar tema {name}"
+      "useTheme": "Usar tema {name}",
+      "themeNames": {
+        "violet": {
+          "name": "Violeta",
+          "tagline": "El predeterminado — seguro, con un toque de personalidad."
+        },
+        "emerald": {
+          "name": "Esmeralda",
+          "tagline": "Asociado al crecimiento, sin copiar el verde de WhatsApp."
+        },
+        "cobalt": {
+          "name": "Cobalto",
+          "tagline": "Azul B2B-SaaS prolijo — calmo y orientado a producto."
+        },
+        "amber": {
+          "name": "Ámbar",
+          "tagline": "Cálido y cercano — se siente bien para equipos PyME."
+        },
+        "rose": {
+          "name": "Rosa",
+          "tagline": "Audaz y moderno — D2C, economía creativa, lifestyle."
+        }
+      },
+      "colorMode": "Modo de color",
+      "themeId": "Id del tema: {id}"
     },
     "security": {
       "title": "Inicio de sesión y seguridad",
@@ -1601,7 +1734,7 @@
       "newApiKey": "Nueva clave de API",
       "noApiKeys": "Todavía no hay claves de API.",
       "createOneHint": "Hacé clic en <bold>Nueva clave de API</bold> para crear una.",
-      "askAdminHint": "Pedile a un admin que cree una.",
+      "askAdminHint": "Pedile a un administrador que cree una.",
       "revoked": "Revocada",
       "expired": "Vencida",
       "noScopes": "Sin permisos",
@@ -1635,9 +1768,9 @@
     },
     "deals": {
       "title": "Negocios y moneda",
-      "description": "La moneda usada para los negocios nuevos y para los totales de pipeline y panel.",
+      "description": "La moneda usada para los negocios nuevos y para los totales de embudo y panel.",
       "defaultCurrency": "Moneda por defecto",
-      "defaultCurrencyDesc": "Los negocios nuevos usan esta moneda por defecto, y los totales de pipeline y panel se muestran en ella. Los negocios existentes conservan la moneda con la que se guardaron.",
+      "defaultCurrencyDesc": "Los negocios nuevos usan esta moneda por defecto, y los totales de embudo y panel se muestran en ella. Los negocios existentes conservan la moneda con la que se guardaron.",
       "currencyLabel": "Moneda",
       "adminOnlyHint": "Solo los administradores de la cuenta pueden cambiar la moneda por defecto.",
       "save": "Guardar",
@@ -1683,7 +1816,9 @@
       "saveSuccess": "Asistente de IA guardado.",
       "saveFailed": "Error al guardar.",
       "removeSuccess": "Configuración de IA eliminada.",
-      "removeFailed": "Error al eliminar."
+      "removeFailed": "Error al eliminar.",
+      "loading": "Cargando…",
+      "embeddingsKeyPlaceholder": "sk-... (OpenAI)"
     },
     "aiKnowledge": {
       "loadFailed": "Error al cargar la base de conocimiento",
@@ -1710,7 +1845,127 @@
       "addDoc": "Agregar documento",
       "reindex": "Reindexar",
       "reindexTooltip": "Volver a generar embeddings de todos los documentos (p. ej. después de agregar una clave de embeddings)",
-      "loading": "Cargando…"
+      "loading": "Cargando…",
+      "editAction": "Editar",
+      "deleteAction": "Eliminar"
+    },
+    "quickReplies": {
+      "title": "Respuestas rápidas",
+      "description": "Fragmentos reutilizables — texto plano o un mensaje interactivo guardado — que los agentes pueden insertar desde el redactor de la bandeja.",
+      "newButton": "Nueva respuesta rápida",
+      "emptyState": "Todavía no hay respuestas rápidas. Creá una para reutilizarla en las conversaciones.",
+      "nameRequired": "Ponele un nombre a la respuesta rápida.",
+      "saveFailed": "No se pudo guardar la respuesta rápida.",
+      "updatedToast": "Respuesta rápida actualizada.",
+      "createdToast": "Respuesta rápida creada.",
+      "deleteConfirm": "¿Eliminar esta respuesta rápida?",
+      "deleteFailed": "No se pudo eliminar la respuesta rápida.",
+      "editTitle": "Editar respuesta rápida",
+      "nameLabel": "Nombre",
+      "namePlaceholder": "p. ej. Horario de atención",
+      "kindText": "Texto",
+      "kindInteractive": "Interactivo",
+      "contentPlaceholder": "El texto del mensaje a insertar",
+      "cancel": "Cancelar",
+      "save": "Guardar"
+    },
+    "sectionsNav": "Secciones de configuración"
+  },
+  "Join": {
+    "verifying": "Verificando invitación…",
+    "fail": {
+      "notFoundTitle": "Invitación no encontrada",
+      "notFoundBody": "Este enlace no corresponde a una invitación válida. Revisá la URL o pedile a quien te invitó que te mande una nueva.",
+      "usedTitle": "Invitación ya usada",
+      "usedBody": "Esta invitación ya fue aceptada. Si no fuiste vos, pedile al administrador de la cuenta que mande un enlace nuevo.",
+      "expiredTitle": "Invitación vencida",
+      "expiredBody": "Esta invitación venció. Pedile al administrador de la cuenta que genere una nueva — tarda solo unos segundos.",
+      "serverErrorTitle": "Algo salió mal",
+      "serverErrorBody": "No pudimos verificar esta invitación en este momento. Probá recargando la página en un momento."
+    },
+    "tryAgain": "Reintentar",
+    "createAccountInstead": "Crear una cuenta nueva en su lugar",
+    "signIn": "Iniciar sesión",
+    "invitedToPrefix": "Te invitaron a",
+    "youllJoinAs": "Te unirás como",
+    "linkValidUntil": "Enlace válido hasta {date}.",
+    "acceptButton": "Aceptar invitación",
+    "accepting": "Aceptando…",
+    "acceptedFooterNote": "Al aceptar, tu inicio de sesión pasa a {account}. Tu cuenta personal vacía del registro se eliminará.",
+    "conflictDialogTitle": "No podés unirte a {account} con esta cuenta",
+    "conflictBody": "Para unirte a <bold>{account}</bold>, cerrá sesión y registrate de nuevo con un correo distinto. El enlace de invitación sigue siendo válido mientras no haya vencido.",
+    "stayLoggedIn": "Seguir con esta sesión",
+    "signOutAndRetry": "Cerrar sesión y usar otro correo",
+    "signingOut": "Cerrando sesión…",
+    "createAccountAndJoin": "Crear cuenta y unirme",
+    "alreadyHaveAccount": "Ya tengo una cuenta",
+    "toastAcceptFailed": "Error al aceptar la invitación",
+    "toastConflictFallback": "Ya estás en otra cuenta. Iniciá sesión con un correo distinto para unirte a esta.",
+    "toastWelcome": "Bienvenido al equipo",
+    "toastSignOutFailed": "No se pudo cerrar sesión. Probá recargando la página."
+  },
+  "Notifications": {
+    "title": "Notificaciones",
+    "description": "Acá aparecen las conversaciones que otros compañeros te asignan.",
+    "markAllAsRead": "Marcar todo como leído",
+    "markReadFailed": "Error al marcar la notificación como leída",
+    "markAllFailed": "Error al marcar todo como leído",
+    "retry": "Reintentar",
+    "emptyTitle": "Todavía no hay notificaciones",
+    "emptyHint": "Vas a ver un aviso acá cuando alguien te asigne una conversación.",
+    "unread": "No leída"
+  },
+  "Agents": {
+    "usage": {
+      "title": "Uso de tokens",
+      "description": "Tokens gastados en tu clave de proveedor por los borradores y el bot de respuesta automática. Solo conteos — no se almacena contenido de mensajes acá.",
+      "lastNDays": "Últimos {days} días",
+      "loadFailed": "Error al cargar el uso",
+      "noUsage": "Todavía no hay uso de IA en los últimos {days} días.",
+      "noUsageHint": "Esto se completa a medida que el asistente redacta y responde automáticamente.",
+      "totalTokens": "Tokens totales",
+      "llmCalls": "Llamadas al LLM",
+      "autoReply": "Respuesta automática",
+      "drafts": "Borradores",
+      "tokensPerDay": "Tokens por día",
+      "byModel": "Por modelo",
+      "tokCalls": "{tok} tok · {calls, plural, one {# llamada} other {# llamadas}}",
+      "truncatedHint": "Mostrando una ventana parcial — el uso es lo bastante alto como para resumir solo los registros más recientes acá."
+    },
+    "playground": {
+      "title": "Playground",
+      "subtitle": "probá respuestas como si fueras un cliente",
+      "reset": "Reiniciar",
+      "emptyTitle": "Enviá un mensaje para ver cómo respondería tu agente.",
+      "emptyHint": "Usa tu base de conocimiento y se comporta igual que el bot de respuesta automática — incluyendo el traspaso a un humano.",
+      "goToSetup": "¿Todavía no lo configuraste? Andá a Configuración",
+      "wouldHandOff": "Acá lo derivaría a un humano",
+      "thinking": "Pensando…",
+      "inputPlaceholder": "Escribí un mensaje de cliente…",
+      "notConfigured": "Todavía no hay un agente configurado — terminá la configuración primero.",
+      "replyFailed": "No se pudo obtener una respuesta.",
+      "unreachable": "No se pudo conectar con el agente."
     }
+  },
+  "InteractiveBuilder": {
+    "kindButtons": "Botones de respuesta",
+    "kindList": "Lista",
+    "bodyLabel": "Cuerpo",
+    "bodyPlaceholder": "Lo que el cliente lee arriba de las opciones",
+    "headerLabel": "Encabezado (opcional)",
+    "footerLabel": "Pie (opcional)",
+    "showReplyIds": "Mostrar IDs de respuesta (avanzado)",
+    "previewLabel": "Vista previa",
+    "buttonsLabel": "Botones ({current}/{max})",
+    "idPlaceholder": "id",
+    "buttonLabelPlaceholder": "Etiqueta del botón",
+    "addButton": "Agregar botón",
+    "listButtonLabelField": "Etiqueta del botón de lista",
+    "rowsLabel": "Filas ({current}/{max})",
+    "sectionTitlePlaceholder": "Título de la sección (opcional)",
+    "rowTitlePlaceholder": "Título de la fila",
+    "rowDescriptionPlaceholder": "Descripción (opcional)",
+    "addRow": "Agregar fila",
+    "addSection": "Agregar sección"
   }
 }

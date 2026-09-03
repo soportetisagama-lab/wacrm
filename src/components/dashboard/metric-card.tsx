@@ -2,6 +2,15 @@ import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { cn } from '@/lib/utils'
 
+/**
+ * Which of the theme's `--chart-1`..`--chart-4` tokens tints this
+ * card's icon badge + left accent edge. Using the chart tokens (not a
+ * hardcoded hex) means the tint follows both light/dark mode and
+ * whichever accent theme (violet/emerald/cobalt/…) the account has
+ * picked — see the ACCENT blocks in globals.css.
+ */
+export type MetricAccent = 'chart-1' | 'chart-2' | 'chart-3' | 'chart-4'
+
 interface MetricCardProps {
   title: string
   /** Pre-formatted value for display (e.g. "42" or "$1,250"). */
@@ -19,22 +28,47 @@ interface MetricCardProps {
   }
   /** Used instead of `delta` when the metric has a static subtitle. */
   subtitle?: string
+  /** Icon badge + left-edge tint. Defaults to the primary accent. */
+  accent?: MetricAccent
 }
 
-export function MetricCard({ title, value, icon: Icon, delta, subtitle }: MetricCardProps) {
+const ACCENT_VAR: Record<MetricAccent, string> = {
+  'chart-1': 'var(--chart-1)',
+  'chart-2': 'var(--chart-2)',
+  'chart-3': 'var(--chart-3)',
+  'chart-4': 'var(--chart-4)',
+}
+
+export function MetricCard({
+  title,
+  value,
+  icon: Icon,
+  delta,
+  subtitle,
+  accent = 'chart-1',
+}: MetricCardProps) {
+  const accentColor = ACCENT_VAR[accent]
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <div className="flex items-start justify-between">
-        <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Icon className="h-4 w-4" />
+    <div
+      className="group relative overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm transition-shadow duration-200 hover:shadow-md"
+      style={{ borderLeft: `3px solid ${accentColor}` }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {title}
+        </p>
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform duration-200 group-hover:scale-105"
+          style={{ backgroundColor: `color-mix(in oklch, ${accentColor} 14%, transparent)`, color: accentColor }}
+        >
+          <Icon className="h-[18px] w-[18px]" />
         </div>
       </div>
-      <p className="mt-3 text-[28px] leading-none font-bold tabular-nums text-foreground">
+      <p className="mt-3.5 text-[30px] leading-none font-bold tracking-tight tabular-nums text-foreground">
         {value}
       </p>
       {delta ? <DeltaRow sign={delta.sign} label={delta.label} /> : subtitle ? (
-        <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>
+        <p className="mt-2.5 text-sm text-muted-foreground">{subtitle}</p>
       ) : null}
     </div>
   )

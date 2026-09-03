@@ -806,7 +806,7 @@ export function MessageThread({
         return;
       }
       if (messageId.startsWith('temp-')) {
-        toast.error('Wait for the message to finish sending');
+        toast.error(t('waitForSend'));
         return;
       }
 
@@ -851,8 +851,8 @@ export function MessageThread({
           throw new Error(payload?.error || `HTTP ${res.status}`);
         }
       } catch (err) {
-        const reason = err instanceof Error ? err.message : 'network error';
-        toast.error(`Reaction failed: ${reason}`);
+        const reason = err instanceof Error ? err.message : t('networkError');
+        toast.error(t('reactionFailed', { reason }));
         setReactions(snapshot);
       }
     },
@@ -871,13 +871,13 @@ export function MessageThread({
 
       if (error) {
         console.error('Failed to update assignment:', error);
-        toast.error('Failed to update assignment');
+        toast.error(t('assignmentUpdateFailed'));
         return;
       }
 
       onAssignChange(conversation.id, agentId);
     },
-    [conversation, onAssignChange]
+    [conversation, onAssignChange, t]
   );
 
   // Empty state — same WhatsApp-style doodle background as the active
