@@ -142,13 +142,13 @@ html[data-mode="light"] {
 
 :root,
 html[data-theme="violet"] {
-  --primary: oklch(0.603 0.207 259);
-  --primary-foreground: oklch(0.985 0 0);
-  --primary-hover: oklch(0.67 0.185 259);
-  --primary-soft: oklch(0.603 0.207 259 / 0.12);
-  --primary-soft-2: oklch(0.603 0.207 259 / 0.22);
-  --ring: oklch(0.603 0.207 259);
-  --chart-1: oklch(0.603 0.207 259);
+  --primary: #f59612;
+  --primary-foreground: #ffffff;
+  --primary-hover: #f7a93d;
+  --primary-soft: rgba(245, 150, 18, 0.12);
+  --primary-soft-2: rgba(245, 150, 18, 0.22);
+  --ring: #f59612;
+  --chart-1: #f59612;
 }
 
 html[data-theme="emerald"] {
