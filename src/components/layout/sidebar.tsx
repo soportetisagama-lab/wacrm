@@ -328,7 +328,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
         >
           <Link href="/dashboard" className="flex items-center justify-center">
             <Image
-              src="/branding/SAGAMAMENU.png"
+              src="/branding/SAGAMAMENU-Retail.png"
               alt="Sagama Inox CRM"
               width={882}
               height={283}

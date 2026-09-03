@@ -19,7 +19,7 @@ export function AuthLogoHeader({
           actually grow (~10-14%) instead of the cap silently doing
           nothing. */}
       <Image
-        src="/branding/BIENVENIDO.png"
+        src="/branding/BIENVENIDO-Retail.png"
         alt="Bienvenido a Sagama Inox"
         width={862}
         height={134}
