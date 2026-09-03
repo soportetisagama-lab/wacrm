@@ -127,11 +127,16 @@ interface SidebarProps {
   /** Controlled on mobile by the Header's hamburger button. Ignored on lg+. */
   open?: boolean;
   onClose?: () => void;
+  /** Desktop-only icon-rail mode, toggled from the Header. Mobile
+   *  (the slide-in drawer) always renders full labels regardless —
+   *  every `collapsed`-driven class below is `lg:`-scoped so it never
+   *  touches the < lg breakpoint. */
+  collapsed?: boolean;
 }
 
 import { useTranslations } from 'next-intl';
 
-export function Sidebar({ open = false, onClose }: SidebarProps) {
+export function Sidebar({ open = false, onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('Sidebar');
   const pathname = usePathname();
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
@@ -198,26 +203,33 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       <li key={item.href}>
         <Link
           href={item.href}
+          title={collapsed ? t(item.labelKey as string) : undefined}
           className={cn(
-            'group relative flex items-center gap-3 border-l-[3px] border-transparent px-4 py-2.5 text-xs font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
+            'group relative flex items-center gap-3 border-l-[3px] border-transparent px-4 py-2.5 text-[13px] font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
             isActive || childActive
               ? 'bg-[var(--sidebar-accent-dim)] text-sidebar-primary border-sidebar-primary'
-              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground hover:border-sidebar-primary/40'
+              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground hover:border-sidebar-primary/40',
+            collapsed && 'lg:justify-center lg:px-0'
           )}
         >
           <item.icon
             className={cn(
-              'h-4 w-4 shrink-0 transition-colors',
+              'h-[18px] w-[18px] shrink-0 transition-colors',
               isActive || childActive
                 ? 'text-sidebar-primary'
                 : 'text-sidebar-foreground/60 group-hover:text-sidebar-foreground'
             )}
           />
-          <span className="flex-1 truncate">{t(item.labelKey as string)}</span>
+          <span className={cn('flex-1 truncate', collapsed && 'lg:hidden')}>
+            {t(item.labelKey as string)}
+          </span>
           {item.beta && (
             <span
               aria-label={t('beta')}
-              className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-300 normal-case"
+              className={cn(
+                'rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-300 normal-case',
+                collapsed && 'lg:hidden'
+              )}
             >
               {t('beta')}
             </span>
@@ -245,7 +257,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           )}
         </Link>
         {item.children && item.children.length > 0 && (
-          <ul className="bg-[var(--sidebar-sub)]">
+          <ul className={cn('bg-[var(--sidebar-sub)]', collapsed && 'lg:hidden')}>
             {item.children.map((child) => {
               const isChildActive =
                 pathname === child.href || pathname.startsWith(child.href);
@@ -296,13 +308,24 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           'transition-transform duration-200 ease-out will-change-transform',
           open ? 'translate-x-0' : '-translate-x-full',
           // Desktop: static, always visible — reset all the mobile framing.
-          'lg:static lg:z-0 lg:w-72 lg:translate-x-0 lg:transition-none'
+          // Width is collapse-aware; transition it separately from the
+          // (permanently disabled at lg) transform above.
+          'lg:static lg:z-0 lg:translate-x-0 lg:transition-[width] lg:duration-200',
+          collapsed ? 'lg:w-20' : 'lg:w-[276px]'
         )}
-        aria-label="Primary"
+        aria-label={t('primaryNav')}
       >
         {/* Logo row — the Sagama wordmark, centered, with a mobile-only
-            close button overlaid on top so it doesn't skew the centering. */}
-        <div className="border-sidebar-border relative flex h-20 shrink-0 items-center justify-center border-b px-5">
+            close button overlaid on top so it doesn't skew the centering.
+            pt-6 (vs. pb-4) gives it more breathing room from the very
+            top edge of the sidebar specifically — that's what looked
+            cramped, not the row as a whole. */}
+        <div
+          className={cn(
+            'border-sidebar-border relative flex shrink-0 items-center justify-center border-b pt-6 pb-4',
+            collapsed ? 'px-5 lg:px-2' : 'px-5'
+          )}
+        >
           <Link href="/dashboard" className="flex items-center justify-center">
             <Image
               src="/branding/SAGAMAMENU.png"
@@ -310,7 +333,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               width={882}
               height={283}
               priority
-              className="h-auto w-full max-w-[240px]"
+              className={cn(
+                'h-auto w-full max-w-[228px]',
+                collapsed && 'lg:max-w-10'
+              )}
             />
           </Link>
           <button
@@ -341,7 +367,12 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               below; for renamed or shared accounts it tells the user
               which account they're acting in. */}
           {showAccountStrip && account?.name ? (
-            <div className="text-sidebar-foreground/60 mb-2 flex items-center gap-2 px-1 text-xs">
+            <div
+              className={cn(
+                'text-sidebar-foreground/60 mb-2 flex items-center gap-2 px-1 text-xs',
+                collapsed && 'lg:hidden'
+              )}
+            >
               <UsersRound className="size-3.5 shrink-0" />
               {/* `title=` exposes the full name on hover when it
                   gets truncated (long account names + narrow
@@ -373,8 +404,19 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               centered below, inside a bordered card that reads as an
               ID badge rather than a plain menu row. */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-lg border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2">
-              <Avatar className="after:rounded-xl size-16 shrink-0 rounded-xl">
+            <DropdownMenuTrigger
+              title={collapsed ? (profile?.full_name ?? t('defaultUser')) : undefined}
+              className={cn(
+                'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-lg border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2',
+                collapsed && 'lg:gap-0 lg:px-0 lg:py-2'
+              )}
+            >
+              <Avatar
+                className={cn(
+                  'after:rounded-xl size-16 shrink-0 rounded-xl',
+                  collapsed && 'lg:size-9'
+                )}
+              >
                 {profile?.avatar_url ? (
                   <AvatarImage
                     src={profile.avatar_url}
@@ -388,9 +430,18 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     'U'}
                 </AvatarFallback>
               </Avatar>
-              <div className="min-w-0 w-full">
-                <p className="text-sidebar-foreground truncate text-sm font-semibold">
-                  {profile?.full_name ?? t('defaultUser')}
+              <div className={cn('min-w-0 w-full', collapsed && 'lg:hidden')}>
+                <p className="flex min-w-0 items-center justify-center gap-1.5">
+                  <span className="text-sidebar-foreground min-w-0 truncate text-sm font-semibold">
+                    {profile?.full_name ?? t('defaultUser')}
+                  </span>
+                  <Image
+                    src="/branding/Verificado.png"
+                    alt={t('verifiedBadge')}
+                    width={18}
+                    height={18}
+                    className="h-[18px] w-[18px] shrink-0"
+                  />
                 </p>
                 <p className="text-sidebar-foreground/50 truncate text-xs">
                   {profile?.email ?? ''}

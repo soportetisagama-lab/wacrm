@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { FullscreenToggle } from "@/components/layout/fullscreen-toggle";
+import { SidebarCollapseToggle } from "@/components/layout/sidebar-collapse-toggle";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
@@ -43,11 +45,19 @@ interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
    *  hamburger button is hidden on lg+. */
   onOpenSidebar?: () => void;
+  /** Desktop icon-rail state, lifted to the shell so both the header
+   *  button and the sidebar itself read the same value. */
+  sidebarCollapsed?: boolean;
+  onToggleSidebarCollapsed?: () => void;
 }
 
 import { useTranslations } from "next-intl";
 
-export function Header({ onOpenSidebar }: HeaderProps) {
+export function Header({
+  onOpenSidebar,
+  sidebarCollapsed = false,
+  onToggleSidebarCollapsed,
+}: HeaderProps) {
   const t = useTranslations("Header");
   const tSidebar = useTranslations("Sidebar");
   const pathname = usePathname();
@@ -73,6 +83,23 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
+
+        {/* Fullscreen + sidebar-collapse — same pill styling as the
+            ModeToggle override below (white circle on the blue header
+            background). Hidden below sm alongside the rest of the
+            header's secondary controls; the mobile header is already
+            tight with the hamburger + title. */}
+        <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
+          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+          {onToggleSidebarCollapsed && (
+            <SidebarCollapseToggle
+              collapsed={sidebarCollapsed}
+              onToggle={onToggleSidebarCollapsed}
+              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
+            />
+          )}
+        </div>
+
         <h1 className="truncate text-base font-semibold text-white sm:text-lg">
           {t(titleKey as string)}
         </h1>

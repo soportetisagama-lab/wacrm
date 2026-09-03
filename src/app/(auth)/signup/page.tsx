@@ -3,9 +3,8 @@
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { CheckCircle, Eye, EyeOff, KeyRound, Lock, Mail, User } from 'lucide-react';
 
-import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { AuthShell } from '@/components/auth/auth-shell';
 import { AuthCard } from '@/components/auth/auth-card';
@@ -38,12 +37,17 @@ function SignupPageInner() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [adminCode, setAdminCode] = useState('');
+  // Hidden when a `?invite=` token is present — a valid invite is its
+  // own authorization (see /api/auth/signup). If the server later
+  // finds that token invalid/expired, its response flips this back on
+  // so the visitor isn't stuck with no field to retry through.
+  const [showAdminCode, setShowAdminCode] = useState(!inviteToken);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const supabase = createClient();
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,33 +65,36 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
-    const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName,
+          email,
+          password,
+          adminCode,
+          inviteToken: inviteToken || undefined,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-        },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
-      },
-    });
+      if (!res.ok) {
+        // The invite didn't validate server-side — reveal the admin
+        // code field so the visitor has a way to actually retry
+        // instead of resubmitting into the same dead end.
+        if (payload.reason === 'invite_invalid') setShowAdminCode(true);
+        setError(payload.error || 'No se pudo crear la cuenta');
+        setLoading(false);
+        return;
+      }
 
-    if (error) {
-      setError(error.message);
+      setSuccess(true);
       setLoading(false);
-      return;
+    } catch {
+      setError('No se pudo conectar con el servidor');
+      setLoading(false);
     }
-
-    setSuccess(true);
-    setLoading(false);
   };
 
   if (success) {
@@ -218,6 +225,19 @@ function SignupPageInner() {
               </button>
             }
           />
+
+          {showAdminCode && (
+            <AuthInput
+              icon={KeyRound}
+              id="adminCode"
+              type="text"
+              autoComplete="off"
+              placeholder="Código de administrador"
+              value={adminCode}
+              onChange={(e) => setAdminCode(e.target.value)}
+              required
+            />
+          )}
 
           <AuthSubmitButton loading={loading} loadingLabel="Creando cuenta...">
             Crear cuenta

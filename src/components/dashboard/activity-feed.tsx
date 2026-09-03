@@ -57,9 +57,9 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
     i === 0 || totalLoaded > PAGE_SIZES[i - 1]
 
   return (
-    <section className="rounded-xl border border-border bg-card">
+    <section className="rounded-xl border border-border bg-card shadow-sm">
       <header className="flex items-center justify-between border-b border-border px-5 py-4">
-        <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
+        <h2 className="text-sm font-semibold tracking-tight text-foreground">{t('title')}</h2>
         <Link
           href="/inbox"
           className="text-xs font-medium text-primary hover:text-primary/80"
@@ -96,7 +96,7 @@ export function ActivityFeed({ items, loading }: ActivityFeedProps) {
                 <div className="flex items-center gap-3 px-5 py-2.5">
                   <span
                     className={cn(
-                      'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full',
+                      'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ring-1 ring-inset ring-black/5',
                       theme.badge,
                     )}
                   >

@@ -49,22 +49,22 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
   }, [data])
 
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
+    <section className="flex h-full flex-col rounded-xl border border-border bg-card shadow-sm">
       <header className="flex items-center justify-between border-b border-border px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">{t('title')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{t('description')}</p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
+        <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/50 p-1">
           {[7, 30, 90].map((r) => (
             <button
               key={r}
               type="button"
               onClick={() => onRangeChange(r as RangeDays)}
               className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-150',
                 range === r
-                  ? 'bg-secondary text-secondary-foreground'
+                  ? 'bg-card text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
@@ -133,6 +133,13 @@ function LineSvg({
 
   const incomingPath = data.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i)},${yFor(p.incoming)}`).join(' ')
   const outgoingPath = data.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i)},${yFor(p.outgoing)}`).join(' ')
+  // Area fills under each line — same path as the stroke, closed down
+  // to the baseline. Purely decorative (gradients fade to transparent
+  // via the defs below), makes the chart read as a finished area chart
+  // instead of two bare polylines.
+  const baseline = PADDING.top + chartH
+  const incomingAreaPath = `${incomingPath} L${xFor(data.length - 1)},${baseline} L${xFor(0)},${baseline} Z`
+  const outgoingAreaPath = `${outgoingPath} L${xFor(data.length - 1)},${baseline} L${xFor(0)},${baseline} Z`
 
   // Mouse-move: use the SVG's current screen-CTM to map clientX
   // back to viewBox coordinates. The previous rect-based math
@@ -202,6 +209,17 @@ function LineSvg({
         role="img"
         aria-label={t('ariaLabel')}
       >
+        <defs>
+          <linearGradient id="conv-incoming-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.22} />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+          </linearGradient>
+          <linearGradient id="conv-outgoing-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#7c3aed" stopOpacity={0.18} />
+            <stop offset="100%" stopColor="#7c3aed" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+
         {/* Y-axis gridlines + labels */}
         {ticks.map((t) => {
           const y = yFor(t)
@@ -213,6 +231,7 @@ function LineSvg({
                 y1={y}
                 y2={y}
                 stroke="var(--border)"
+                strokeOpacity={0.7}
                 strokeDasharray="3 3"
               />
               <text
@@ -243,12 +262,16 @@ function LineSvg({
           ) : null,
         )}
 
+        {/* Area fills, behind the strokes */}
+        <path d={outgoingAreaPath} fill="url(#conv-outgoing-fill)" stroke="none" />
+        <path d={incomingAreaPath} fill="url(#conv-incoming-fill)" stroke="none" />
+
         {/* Outgoing polyline (violet) */}
         <path
           d={outgoingPath}
           fill="none"
           stroke="#7c3aed"
-          strokeWidth={2}
+          strokeWidth={2.25}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -257,7 +280,7 @@ function LineSvg({
           d={incomingPath}
           fill="none"
           stroke="#3b82f6"
-          strokeWidth={2}
+          strokeWidth={2.25}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -271,10 +294,11 @@ function LineSvg({
               y1={PADDING.top}
               y2={PADDING.top + chartH}
               stroke="var(--muted-foreground)"
+              strokeOpacity={0.5}
               strokeDasharray="3 3"
             />
-            <circle cx={hoverX} cy={yFor(data[hover.idx].incoming)} r={3.5} fill="#3b82f6" />
-            <circle cx={hoverX} cy={yFor(data[hover.idx].outgoing)} r={3.5} fill="#7c3aed" />
+            <circle cx={hoverX} cy={yFor(data[hover.idx].incoming)} r={4.5} fill="#3b82f6" stroke="var(--card)" strokeWidth={2} />
+            <circle cx={hoverX} cy={yFor(data[hover.idx].outgoing)} r={4.5} fill="#7c3aed" stroke="var(--card)" strokeWidth={2} />
           </g>
         )}
       </svg>
@@ -285,7 +309,7 @@ function LineSvg({
           letterboxed viewBox percentage. */}
       {hovered && hover !== null && (
         <div
-          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] shadow-lg"
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-lg border border-border bg-popover px-3 py-2 text-[11px] shadow-lg ring-1 ring-black/5"
           style={{ left: `${hover.tooltipLeftPx}px` }}
         >
           <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day)}</div>

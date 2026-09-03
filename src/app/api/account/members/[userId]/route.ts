@@ -50,7 +50,7 @@ export async function PATCH(
     const ctx = await requireRole('admin');
 
     const limit = checkRateLimit(
-      `admin:memberRole:${ctx.userId}`,
+      `admin:memberUpdate:${ctx.userId}`,
       RATE_LIMITS.adminAction
     );
     if (!limit.success) return rateLimitResponse(limit);
@@ -59,37 +59,86 @@ export async function PATCH(
 
     const body = (await request.json().catch(() => null)) as {
       role?: unknown;
+      full_name?: unknown;
+      status?: unknown;
     } | null;
-    const role = body?.role;
 
-    if (!isAccountRole(role)) {
-      return NextResponse.json(
-        {
-          error:
-            "'role' must be one of owner, admin, gerencia, jefe_linea, atc, agent, viewer",
-        },
-        { status: 400 }
-      );
+    if (
+      !body ||
+      (body.role === undefined &&
+        body.full_name === undefined &&
+        body.status === undefined)
+    ) {
+      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
 
-    // The RPC blocks promotion to / demotion from owner, but
-    // surface the friendlier 400 before crossing the wire too.
-    if (role === 'owner') {
-      return NextResponse.json(
-        {
-          error:
-            'Use POST /api/account/transfer-ownership to promote a member to owner',
-        },
-        { status: 400 }
-      );
+    // Each field is independently optional so the client can send just
+    // the one thing it changed (role dropdown, name edit, status
+    // toggle) without re-sending the others.
+
+    if (body.role !== undefined) {
+      const role = body.role;
+
+      if (!isAccountRole(role)) {
+        return NextResponse.json(
+          {
+            error:
+              "'role' must be one of owner, admin, gerencia, jefe_linea, atc, agent, viewer",
+          },
+          { status: 400 }
+        );
+      }
+
+      // The RPC blocks promotion to / demotion from owner, but
+      // surface the friendlier 400 before crossing the wire too.
+      if (role === 'owner') {
+        return NextResponse.json(
+          {
+            error:
+              'Use POST /api/account/transfer-ownership to promote a member to owner',
+          },
+          { status: 400 }
+        );
+      }
+
+      const { error } = await ctx.supabase.rpc('set_member_role', {
+        p_user_id: userId,
+        p_new_role: role,
+      });
+      if (error) return rpcErrorToResponse(error);
     }
 
-    const { error } = await ctx.supabase.rpc('set_member_role', {
-      p_user_id: userId,
-      p_new_role: role,
-    });
+    if (body.full_name !== undefined) {
+      const fullName = body.full_name;
+      if (typeof fullName !== 'string' || fullName.trim() === '') {
+        return NextResponse.json(
+          { error: "'full_name' must be a non-empty string" },
+          { status: 400 }
+        );
+      }
 
-    if (error) return rpcErrorToResponse(error);
+      const { error } = await ctx.supabase.rpc('set_member_full_name', {
+        p_user_id: userId,
+        p_full_name: fullName,
+      });
+      if (error) return rpcErrorToResponse(error);
+    }
+
+    if (body.status !== undefined) {
+      const status = body.status;
+      if (status !== 'active' && status !== 'inactive') {
+        return NextResponse.json(
+          { error: "'status' must be 'active' or 'inactive'" },
+          { status: 400 }
+        );
+      }
+
+      const { error } = await ctx.supabase.rpc('set_member_status', {
+        p_user_id: userId,
+        p_status: status,
+      });
+      if (error) return rpcErrorToResponse(error);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

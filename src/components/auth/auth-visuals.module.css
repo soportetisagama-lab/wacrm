@@ -4,52 +4,92 @@
  * --foreground) via color-mix() so this file never hardcodes the brand
  * blue — a future rebrand only touches globals.css. */
 
-/* ---- Page background ---- */
-
-.pageGradient {
-  background-color: var(--background);
-  background-image:
-    radial-gradient(
-      ellipse at 15% 20%,
-      color-mix(in srgb, var(--primary) 16%, transparent) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse at 85% 15%,
-      color-mix(in srgb, var(--primary-hover) 12%, transparent) 0%,
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse at 50% 90%,
-      color-mix(in srgb, var(--primary) 10%, transparent) 0%,
-      transparent 55%
-    );
+/* ---- Liquid-glass card ----
+ * Dark mode (the rule below, unscoped): built from --card / --foreground
+ * via color-mix() so it flips automatically with any future token
+ * change. NOT touched by the light-mode block that follows.
+ *
+ * Light mode: a separate, hand-tuned recipe (hardcoded white/sky-blue
+ * rgba, not tokens) — approved pixel values from a live glass-effect
+ * calibration pass against the actual background photo, deliberately
+ * independent of the dark-mode rule above. If dark mode ever wants its
+ * own equivalent glossy treatment, that's a separate decision — don't
+ * infer it from this block. */
+.glassCard {
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  box-shadow:
+    0 25px 60px -15px color-mix(in srgb, black 45%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
 }
 
-/* Light mode washes the same percentages out almost to white (a light
- * near-white background reads any low-alpha tint as barely-there,
- * unlike a dark background where it pops). Bump the alpha so the brand
- * blue is clearly visible — dark mode above is untouched. */
-html[data-mode='light'] .pageGradient {
-  background-image:
-    radial-gradient(
-      ellipse at 15% 20%,
-      color-mix(in srgb, var(--primary) 32%, transparent) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse at 85% 15%,
-      color-mix(in srgb, var(--primary-hover) 26%, transparent) 0%,
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse at 50% 90%,
-      color-mix(in srgb, var(--primary) 22%, transparent) 0%,
-      transparent 55%
-    );
+html[data-mode='light'] .glassCard {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.4),
+    rgba(235, 244, 255, 0.24)
+  );
+  backdrop-filter: blur(10px) saturate(135%);
+  -webkit-backdrop-filter: blur(10px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  box-shadow:
+    0 24px 60px rgba(15, 40, 75, 0.33),
+    inset 0 1px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 1px rgba(100, 145, 200, 0.12);
 }
 
-/* ---- Floating orbs ---- */
+/* Soft sheen overlay — sits on top of the card's own children (it's
+ * generated content painted after them in the box's own stacking
+ * order isn't guaranteed, hence `pointer-events: none` so it never
+ * blocks clicks on the real inputs/button underneath). Light mode
+ * only, same reasoning as the block above. */
+html[data-mode='light'] .glassCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.75), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22), transparent 45%);
+}
+
+/* Inputs + submit button inside the glass card get their own lighter
+ * glass treatment. Plain descendant selectors — scoped to .glassCard
+ * (only AuthCard uses that class) so this never leaks into the Input/
+ * Button components' styling anywhere else in the app, and the actual
+ * form JSX doesn't change at all. */
+html[data-mode='light'] .glassCard input {
+  background: rgba(225, 235, 247, 0.42);
+  border: 1px solid rgba(120, 155, 200, 0.32);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    inset 0 1px 2px rgba(40, 70, 110, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* `button[type='submit']` (not just `button`) so this only hits
+ * AuthSubmitButton, not the show/hide-password toggle button that
+ * also lives inside the card. */
+html[data-mode='light'] .glassCard button[type='submit'] {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 15px;
+  background: linear-gradient(180deg, #3185ff 0%, #1472f8 100%);
+  box-shadow:
+    0 10px 24px rgba(36, 122, 250, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+/* ---- Floating orbs ----
+ * Owned by <LoginBackground /> (login-background.tsx). That component
+ * isn't rendered by <AuthShell /> anymore (see its file header) now
+ * that the auth screens use a photo background instead of the old
+ * gradient + decorative-shapes combo, but it's kept importable, so
+ * these rules stay valid for it. */
 
 .orb {
   position: absolute;
