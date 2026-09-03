@@ -78,9 +78,9 @@ html[data-mode='light'] .glassCard input {
 html[data-mode='light'] .glassCard button[type='submit'] {
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 15px;
-  background: linear-gradient(180deg, #3185ff 0%, #1472f8 100%);
+  background: linear-gradient(180deg, var(--header-bg) 0%, var(--header-bg-2) 100%);
   box-shadow:
-    0 10px 24px rgba(36, 122, 250, 0.3),
+    0 10px 24px color-mix(in srgb, var(--header-bg) 30%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 

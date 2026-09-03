@@ -207,10 +207,10 @@ html[data-theme="rose"] {
   --sidebar-border: rgba(255, 255, 255, 0.08);
   --sidebar-accent: rgba(255, 255, 255, 0.05);
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-accent-dim: rgba(36, 122, 250, 0.16);
-  --sidebar-primary: #247afa;
+  --sidebar-accent-dim: rgba(245, 150, 18, 0.16);
+  --sidebar-primary: #f59612;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-ring: #247afa;
+  --sidebar-ring: #f59612;
   --sidebar-sub: #1c252e;
 }
 
@@ -218,8 +218,8 @@ html[data-theme="rose"] {
  * The topbar is a fixed brand element too, same rationale as the
  * SIDEBAR block above — independent of light/dark mode. */
 :root {
-  --header-bg: #247afa;
-  --header-bg-2: #1a63d6;
+  --header-bg: #f59612;
+  --header-bg-2: #f59612;
 }
 
 /* Notification bell — ring wobble on the icon, an expanding pulse ring

@@ -90,12 +90,12 @@ export function Header({
             header's secondary controls; the mobile header is already
             tight with the hamburger + title. */}
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
-          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
           {onToggleSidebarCollapsed && (
             <SidebarCollapseToggle
               collapsed={sidebarCollapsed}
               onToggle={onToggleSidebarCollapsed}
-              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
+              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
             />
           )}
         </div>
@@ -106,7 +106,7 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5">
-        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
 
         {/* Notifications — same unread count the sidebar's nav item
             surfaces, mirrored here as a quick-glance bell. */}
@@ -156,7 +156,7 @@ export function Header({
                 alt={profile.full_name ?? t("defaultAvatar")}
               />
             ) : null}
-            <AvatarFallback className="bg-white text-sm font-medium text-[#247afa]">
+            <AvatarFallback className="bg-white text-sm font-medium text-[#f59612]">
               {initial}
             </AvatarFallback>
           </Avatar>
