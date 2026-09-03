@@ -69,9 +69,9 @@ export interface ThemeMeta {
 export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
     id: "violet",
-    name: "Violet",
+    name: "Tangerine",
     tagline: "The default — confident, slightly playful.",
-    swatch: "oklch(0.526 0.247 293)",
+    swatch: "#f59612",
   },
   {
     id: "emerald",
