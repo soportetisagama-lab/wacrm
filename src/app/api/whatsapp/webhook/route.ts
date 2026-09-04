@@ -60,6 +60,22 @@ interface WhatsAppMessage {
   }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  /**
+   * Present on the message that resulted from a Click-To-WhatsApp ad
+   * (Meta may attach this to the first inbound message from that click,
+   * or to a later one if the lead returns via a different ad). Captured
+   * into `conversation_referrals` — see saveReferralIfPresent below.
+   */
+  referral?: {
+    source_id?: string
+    source_url?: string
+    headline?: string
+    body?: string
+    media_type?: string
+    image_url?: string
+    video_url?: string
+    ctwa_clid?: string
+  }
 }
 
 interface WhatsAppWebhookEntry {
@@ -558,6 +574,48 @@ async function handleReaction(
   }
 }
 
+/**
+ * Persist a Click-To-WhatsApp ad referral, if this message carries one.
+ * Meta can attach `referral` to more than one inbound message per
+ * conversation (a lead returning via a different ad later on), so this
+ * always inserts a new row rather than upserting — conversation_referrals
+ * keeps the full attribution history, not just the first touch.
+ *
+ * Best-effort: a failure here must not break the main inbound-message
+ * flow, so errors are swallowed with a log (mirrors flagBroadcastReplyIfAny).
+ */
+async function saveReferralIfPresent(
+  message: WhatsAppMessage,
+  accountId: string,
+  conversationId: string,
+  contactId: string
+) {
+  const referral = message.referral
+  if (!referral) return
+
+  try {
+    const { error } = await supabaseAdmin().from('conversation_referrals').insert({
+      account_id: accountId,
+      conversation_id: conversationId,
+      contact_id: contactId,
+      source_id: referral.source_id ?? null,
+      source_url: referral.source_url ?? null,
+      headline: referral.headline ?? null,
+      body: referral.body ?? null,
+      media_type: referral.media_type ?? null,
+      image_url: referral.image_url ?? null,
+      video_url: referral.video_url ?? null,
+      ctwa_clid: referral.ctwa_clid ?? null,
+      created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
+    })
+    if (error) {
+      console.error('[webhook] Error inserting conversation referral:', error)
+    }
+  } catch (err) {
+    console.error('[webhook] saveReferralIfPresent failed:', err)
+  }
+}
+
 async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
@@ -603,6 +661,11 @@ async function processMessage(
       contact_id: contactRecord.id,
     })
   }
+
+  // CTWA (Click-To-WhatsApp Ads) attribution. Runs regardless of message
+  // type / first-message status — Meta can attach `referral` to any
+  // inbound message, not only the very first one.
+  await saveReferralIfPresent(message, accountId, conversation.id, contactRecord.id)
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
