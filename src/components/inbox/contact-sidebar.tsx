@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, Deal, ContactNote, Tag, ConversationReferral } from "@/types";
 import {
   Phone,
   Mail,
@@ -15,6 +15,7 @@ import {
   DollarSign,
   StickyNote,
   Plus,
+  Megaphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,9 +24,13 @@ import { useTranslations } from "next-intl";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  /** Referrals are per-conversation (a contact can have several
+   *  conversations, e.g. across numbers), so this drives the ad-source
+   *  lookup separately from `contact`. */
+  conversationId?: string | null;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({ contact, conversationId }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
 
@@ -34,6 +39,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [referrals, setReferrals] = useState<ConversationReferral[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -79,6 +85,23 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContactData();
   }, [fetchContactData]);
+
+  // Ad attribution is keyed by conversation, not contact — separate
+  // effect so switching conversations for the same contact re-fetches.
+  useEffect(() => {
+    if (!conversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setReferrals([]);
+      return;
+    }
+    const supabase = createClient();
+    supabase
+      .from("conversation_referrals")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setReferrals(data ?? []));
+  }, [conversationId]);
 
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
@@ -177,6 +200,50 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               </div>
             )}
           </div>
+
+          {/* Ad attribution (CTWA referral) */}
+          {referrals.length > 0 && (
+            <>
+              <div className="my-4 border-t border-border" />
+              <div>
+                <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <Megaphone className="h-3 w-3" />
+                  {tSidebar("adSource")}
+                </div>
+                <div className="mt-2 space-y-2">
+                  {referrals.map((referral) => (
+                    <div key={referral.id} className="rounded-lg bg-muted px-3 py-2">
+                      {referral.headline && (
+                        <p className="text-sm font-medium text-foreground">
+                          {referral.headline}
+                        </p>
+                      )}
+                      {referral.body && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {referral.body}
+                        </p>
+                      )}
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <p className="text-[10px] text-muted-foreground">
+                          {format(new Date(referral.created_at), "MMM d, yyyy HH:mm")}
+                        </p>
+                        {referral.source_url && (
+                          <a
+                            href={referral.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-medium text-primary hover:underline"
+                          >
+                            {tSidebar("viewAd")}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />

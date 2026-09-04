@@ -118,6 +118,27 @@ export interface Contact {
   tags?: Tag[];
 }
 
+/**
+ * A Click-To-WhatsApp ad attribution captured from an inbound message's
+ * `referral` object (migration 041). One conversation can have more than
+ * one row — a lead who returns via a different ad keeps both.
+ */
+export interface ConversationReferral {
+  id: string;
+  account_id: string;
+  conversation_id: string;
+  contact_id: string;
+  source_id: string | null;
+  source_url: string | null;
+  headline: string | null;
+  body: string | null;
+  media_type: string | null;
+  image_url: string | null;
+  video_url: string | null;
+  ctwa_clid: string | null;
+  created_at: string;
+}
+
 export interface Tag {
   id: string;
   user_id: string;
