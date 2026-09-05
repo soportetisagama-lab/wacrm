@@ -237,10 +237,26 @@ export interface KeywordTriggerConfig {
 // the no-empty-object-type lint rule.
 export type FirstInboundTriggerConfig = Record<string, never>;
 
+/**
+ * Matches ANY inbound text message from a contact with no active
+ * flow_run — a superset of `first_inbound_message` (which only
+ * matches when it's literally the contact's first-ever message).
+ * Lets a flow like an FAQ bot restart (e.g. re-show its menu) after a
+ * prior run reached a terminal status, without requiring the contact
+ * to type a keyword.
+ *
+ * Gated the same way every other entry trigger is (see
+ * `isConversationBotEligible` in engine.ts): won't match while the
+ * contact's conversation is 'pending' or assigned to a human agent —
+ * a human already has it, the bot must not interrupt.
+ */
+export type ReturningMessageTriggerConfig = Record<string, never>;
+
 export type FlowTriggerConfig =
   | { trigger_type: "keyword"; config: KeywordTriggerConfig }
   | { trigger_type: "first_inbound_message"; config: FirstInboundTriggerConfig }
-  | { trigger_type: "manual"; config: Record<string, never> };
+  | { trigger_type: "manual"; config: Record<string, never> }
+  | { trigger_type: "returning_message"; config: ReturningMessageTriggerConfig };
 
 // ============================================================
 // DB-row shapes (read by the engine via supabaseAdmin)
@@ -257,8 +273,12 @@ export interface FlowRow {
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
-  trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
+  trigger_type: "keyword" | "first_inbound_message" | "manual" | "returning_message";
+  trigger_config:
+    | KeywordTriggerConfig
+    | FirstInboundTriggerConfig
+    | ReturningMessageTriggerConfig
+    | Record<string, unknown>;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;
   execution_count: number;

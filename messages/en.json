@@ -1072,6 +1072,7 @@
       "triggerKeywordNone": "Triggers on keyword (none set)",
       "triggerKeyword": "Triggers on: {keywords}",
       "triggerFirstInbound": "Triggers on a contact's first-ever inbound message",
+      "triggerReturningMessage": "Triggers when a contact writes with no active run",
       "triggerManual": "Manual trigger"
     },
     "edit": {
@@ -1103,6 +1104,7 @@
       "whenLabel": "When…",
       "triggerKeywordTitle": "A message contains a keyword",
       "triggerFirstInboundTitle": "Customer's first ever inbound message",
+      "triggerReturningMessageTitle": "Any message with no active run (includes reactivation)",
       "triggerManualTitle": "Manual only (no auto-trigger)",
       "keywordsLabel": "Keywords (comma-separated)",
       "keywordsPlaceholder": "support, help, hi",

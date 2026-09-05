@@ -6,6 +6,7 @@ import {
   isSuspending,
   isTerminal,
   evaluateConditionPredicate,
+  isConversationBotEligible,
 } from "./engine";
 
 describe("matchReplyId", () => {
@@ -295,5 +296,47 @@ describe("evaluateConditionPredicate", () => {
         configValue: "anything",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isConversationBotEligible", () => {
+  it("eligible when open and unassigned", () => {
+    expect(
+      isConversationBotEligible({ status: "open", assigned_agent_id: null }),
+    ).toBe(true);
+  });
+
+  it("eligible when closed and unassigned", () => {
+    expect(
+      isConversationBotEligible({ status: "closed", assigned_agent_id: null }),
+    ).toBe(true);
+  });
+
+  it("not eligible when pending, even if unassigned", () => {
+    expect(
+      isConversationBotEligible({ status: "pending", assigned_agent_id: null }),
+    ).toBe(false);
+  });
+
+  it("not eligible when assigned to an agent, even if status is open", () => {
+    expect(
+      isConversationBotEligible({ status: "open", assigned_agent_id: "agent-1" }),
+    ).toBe(false);
+  });
+
+  it("not eligible when both pending and assigned", () => {
+    expect(
+      isConversationBotEligible({
+        status: "pending",
+        assigned_agent_id: "agent-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("fails open (eligible) when the conversation lookup came back null", () => {
+    // Mirrors this file's existing convention for DB read failures on
+    // guard checks: a transient error shouldn't silently mute every
+    // flow trigger for the account.
+    expect(isConversationBotEligible(null)).toBe(true);
   });
 });

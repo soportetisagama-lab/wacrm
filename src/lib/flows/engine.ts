@@ -137,6 +137,31 @@ export function isTerminal(node_type: string): boolean {
 }
 
 /**
+ * Gate on every entry-trigger match (keyword, first_inbound_message,
+ * returning_message alike): a flow must never start over a
+ * conversation a human is already handling. "Handling" means either
+ * `status === 'pending'` (mid-handoff, no agent has necessarily
+ * claimed it yet — see executeHandoff in this file) or
+ * `assigned_agent_id` is set (an agent has claimed it, independent of
+ * status — see migration 038).
+ *
+ * `null` input (conversation lookup failed/missing) defaults to
+ * eligible. This mirrors the rest of this file's convention for DB
+ * read failures on guard checks (e.g. `loadActiveRunForContact`,
+ * `findEntryFlow` itself) — fail toward the flow still running rather
+ * than silently going mute for every trigger type on a transient
+ * error. The conversation row is expected to already exist by the
+ * time the webhook reaches flow dispatch, so a `null` here signals an
+ * infra hiccup, not a real "no conversation" state.
+ */
+export function isConversationBotEligible(
+  conversation: { status: string; assigned_agent_id: string | null } | null,
+): boolean {
+  if (!conversation) return true;
+  return conversation.status !== "pending" && conversation.assigned_agent_id === null;
+}
+
+/**
  * Evaluate a `condition` node's predicate against the current run
  * state. Exported pure for unit testing — the engine wraps it with a
  * DB lookup for `tag` / `contact_field` subjects.
@@ -310,6 +335,27 @@ async function isDuplicateInbound(
   return (count ?? 0) > 0;
 }
 
+/**
+ * Conversation fields the entry-trigger gate needs. One indexed
+ * by-PK lookup — only hit on the "no active run" path, which is
+ * already the less-common branch of dispatch.
+ */
+async function loadConversationGateInfo(
+  db: AdminClient,
+  conversationId: string,
+): Promise<{ status: string; assigned_agent_id: string | null } | null> {
+  const { data, error } = await db
+    .from("conversations")
+    .select("status, assigned_agent_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error) {
+    console.error("[flows] loadConversationGateInfo error:", error.message);
+    return null;
+  }
+  return (data as { status: string; assigned_agent_id: string | null } | null) ?? null;
+}
+
 async function findEntryFlow(
   db: AdminClient,
   accountId: string,
@@ -341,6 +387,12 @@ async function findEntryFlow(
         return flow;
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
+      return flow;
+    } else if (flow.trigger_type === "returning_message") {
+      // Superset of first_inbound_message: matches on ANY text
+      // message, not just the contact's first ever. Lets a flow
+      // restart (e.g. re-show its menu) after a prior run for this
+      // contact reached a terminal status.
       return flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
@@ -866,7 +918,21 @@ export async function dispatchInboundToFlows(
       return handleReplyForActiveRun(db, activeRun, input.message, nodes);
     }
 
-    // No active run → look for a flow whose entry trigger matches.
+    // No active run → before even looking for a matching entry
+    // trigger, check whether a human already owns this conversation.
+    // A flow (any trigger_type — keyword, first_inbound_message,
+    // returning_message) must never start over a conversation that's
+    // 'pending' or assigned to an agent; see isConversationBotEligible.
+    const conversationGate = await loadConversationGateInfo(
+      db,
+      input.conversationId,
+    );
+    if (!isConversationBotEligible(conversationGate)) {
+      return { consumed: false, outcome: "no_match" };
+    }
+
+    // No active run, conversation not human-owned → look for a flow
+    // whose entry trigger matches.
     const flow = await findEntryFlow(
       db,
       input.accountId,
