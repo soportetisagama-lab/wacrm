@@ -237,6 +237,11 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                           {referral.body}
                         </p>
                       )}
+                      {referral.source_id && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {tSidebar("adId")}: {referral.source_id}
+                        </p>
+                      )}
                       <div className="mt-1 flex items-center justify-between gap-2">
                         <p className="text-[10px] text-muted-foreground">
                           {format(new Date(referral.created_at), "MMM d, yyyy HH:mm")}

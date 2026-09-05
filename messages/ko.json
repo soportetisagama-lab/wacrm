@@ -311,6 +311,7 @@
       "addNotePlaceholder": "메모 추가...",
       "adSource": "광고 출처",
       "viewAd": "광고 보기",
+      "adId": "광고 ID",
       "noPhoneNumber": "전화번호 없음"
     },
     "aiBanner": {

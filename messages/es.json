@@ -311,6 +311,7 @@
       "addNotePlaceholder": "Agregar una nota...",
       "adSource": "Origen del anuncio",
       "viewAd": "Ver anuncio",
+      "adId": "ID del anuncio",
       "noPhoneNumber": "Sin número de teléfono"
     },
     "aiBanner": {
