@@ -309,7 +309,8 @@
       "noDeals": "Sin negocios",
       "addNotePlaceholder": "Agregar una nota...",
       "adSource": "Origen del anuncio",
-      "viewAd": "Ver anuncio"
+      "viewAd": "Ver anuncio",
+      "adId": "ID del anuncio"
     },
     "aiBanner": {
       "pausedTitle": "El asistente de IA está pausado acá",
