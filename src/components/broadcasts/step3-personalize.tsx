@@ -207,7 +207,7 @@ export function Step3Personalize({
         if (mapping.type === 'static' && mapping.value) {
           replacement = mapping.value;
         } else if (mapping.type === 'field' && mapping.value) {
-          const fieldMap: Record<string, string | undefined> = {
+          const fieldMap: Record<string, string | null | undefined> = {
             name: contact.name,
             phone: contact.phone,
             email: contact.email,
@@ -230,7 +230,7 @@ export function Step3Personalize({
   ]);
 
   const previewLabel = firstContact
-    ? firstContact.name || firstContact.phone
+    ? firstContact.name || firstContact.phone || firstContact.whatsapp_user_id || ''
     : t('personalize.previewSample');
 
   return (

@@ -6,11 +6,15 @@ import {
 } from '@/lib/flows/meta-send'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
-  sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import {
+  resolveRecipient,
+  toRecipientTarget,
+  type RecipientIdentifier,
+} from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -118,16 +122,21 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, whatsapp_user_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
+  // Phone wins when present; falls back to the contact's BSUID for
+  // username-only contacts with no phone on file (migration 042).
+  const recipient = resolveRecipient(contact)
+  if (!recipient) {
+    throw new Error('contact has no phone number or WhatsApp ID')
+  }
+  if (recipient.kind === 'phone' && !isValidE164(recipient.value)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
@@ -142,12 +151,13 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   const accessToken = decrypt(config.access_token)
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: RecipientIdentifier): Promise<string> => {
+    const targetFields = toRecipientTarget(target)
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...targetFields,
         templateName: input.templateName,
         language: input.language,
         params: input.params,
@@ -157,7 +167,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...targetFields,
       text: input.text,
     })
     return r.messageId
@@ -165,27 +175,32 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
   // numbers registered with/without a trunk 0 both require this to
-  // reliably land a message.
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  // reliably land a message. Only meaningful for a phone recipient —
+  // a BSUID has no trunk-prefix variants, so it's sent once.
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
+  if (recipient.kind === 'phone') {
+    const variants = phoneVariants(recipient.value)
+    let workingPhone = recipient.value
+    let lastError: unknown = null
+    for (const v of variants) {
+      try {
+        waMessageId = await attempt({ kind: 'phone', value: v })
+        workingPhone = v
+        lastError = null
+        break
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!isRecipientNotAllowedError(msg)) throw err
+        lastError = err
+      }
     }
-  }
-  if (lastError) throw lastError
+    if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    if (workingPhone !== recipient.value) {
+      await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    }
+  } else {
+    waMessageId = await attempt(recipient)
   }
 
   // Persist the sent message so it appears in the inbox with a real

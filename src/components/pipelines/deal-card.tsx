@@ -20,7 +20,7 @@ function formatDate(dateStr: string) {
   });
 }
 
-function initials(name?: string, fallback?: string) {
+function initials(name?: string | null, fallback?: string | null) {
   const source = (name || fallback || "?").trim();
   if (!source) return "?";
   return source.charAt(0).toUpperCase();
@@ -28,7 +28,11 @@ function initials(name?: string, fallback?: string) {
 
 export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
   const t = useTranslations("Pipelines.card");
-  const contactLabel = deal.contact?.name || deal.contact?.phone || t("noContact");
+  const contactLabel =
+    deal.contact?.name ||
+    deal.contact?.phone ||
+    deal.contact?.whatsapp_user_id ||
+    t("noContact");
   const assigneeLabel = deal.assignee?.full_name || null;
 
   return (
@@ -75,7 +79,7 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
-          {initials(deal.contact?.name, deal.contact?.phone)}
+          {initials(deal.contact?.name, deal.contact?.phone || deal.contact?.whatsapp_user_id)}
         </span>
         <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
       </div>

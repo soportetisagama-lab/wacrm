@@ -48,7 +48,12 @@ interface RunRow {
   end_reason: string | null;
   vars: Record<string, unknown>;
   reprompt_count: number;
-  contact: { id: string; name: string | null; phone: string } | null;
+  contact: {
+    id: string;
+    name: string | null;
+    phone: string | null;
+    whatsapp_user_id: string | null;
+  } | null;
 }
 
 interface EventRow {
@@ -227,7 +232,10 @@ function RunCard({
   const meta = STATUS_META[run.status];
   const StatusIcon = meta.icon;
   const contactLabel =
-    run.contact?.name?.trim() || run.contact?.phone || t("unknownContact");
+    run.contact?.name?.trim() ||
+    run.contact?.phone ||
+    run.contact?.whatsapp_user_id ||
+    t("unknownContact");
   const duration = run.ended_at
     ? formatDistanceToNow(new Date(run.ended_at), {
         addSuffix: false,

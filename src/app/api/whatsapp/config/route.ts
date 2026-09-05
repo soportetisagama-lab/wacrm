@@ -432,6 +432,80 @@ export async function POST(request: Request) {
 }
 
 /**
+ * PATCH /api/whatsapp/config
+ *
+ * Updates the `bsuid_request_contact_info_enabled` behavior flag only.
+ * Deliberately separate from POST: POST re-verifies credentials
+ * against Meta and can re-run /register (issue-prone if it silently
+ * fired on every settings tweak); flipping this toggle should never
+ * touch any of that. Uses the caller's own session (not the service
+ * role), so the existing `whatsapp_config_update` RLS policy
+ * (admin+, migration 017) is what actually enforces who can change it
+ * — this handler doesn't duplicate that check.
+ */
+export async function PATCH(request: Request) {
+  try {
+    const supabase = await createClient()
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const accountId = await resolveAccountId(supabase, user.id)
+    if (!accountId) {
+      return NextResponse.json(
+        { error: 'Your profile is not linked to an account.' },
+        { status: 403 },
+      )
+    }
+
+    const body = await request.json()
+    if (typeof body.bsuid_request_contact_info_enabled !== 'boolean') {
+      return NextResponse.json(
+        { error: 'bsuid_request_contact_info_enabled must be a boolean' },
+        { status: 400 },
+      )
+    }
+
+    // .select().maybeSingle() so an RLS-blocked update (caller isn't
+    // admin+, or there's no config row yet) surfaces as a clear 403/404
+    // instead of a silent no-op 200 (Postgres doesn't error on an
+    // UPDATE that matches zero rows).
+    const { data: updated, error: updateError } = await supabase
+      .from('whatsapp_config')
+      .update({
+        bsuid_request_contact_info_enabled: body.bsuid_request_contact_info_enabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('account_id', accountId)
+      .select('id')
+      .maybeSingle()
+
+    if (updateError) {
+      console.error('Error updating bsuid_request_contact_info_enabled:', updateError)
+      return NextResponse.json({ error: 'Failed to update setting' }, { status: 500 })
+    }
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'No WhatsApp configuration saved yet — save your credentials first.' },
+        { status: 404 },
+      )
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error in WhatsApp config PATCH:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+/**
  * DELETE /api/whatsapp/config
  *
  * Removes the authenticated user's WhatsApp configuration row.

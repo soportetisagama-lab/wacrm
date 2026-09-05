@@ -184,7 +184,8 @@
       "waitForSend": "Wait for the message to finish sending",
       "networkError": "network error",
       "reactionFailed": "Reaction failed: {reason}",
-      "assignmentUpdateFailed": "Failed to update assignment"
+      "assignmentUpdateFailed": "Failed to update assignment",
+      "noPhoneNumber": "No phone number"
     },
     "sessionTimer": {
       "expired": "Expired",
@@ -309,7 +310,8 @@
       "noDeals": "No deals",
       "addNotePlaceholder": "Add a note...",
       "adSource": "Ad source",
-      "viewAd": "View ad"
+      "viewAd": "View ad",
+      "noPhoneNumber": "No phone number"
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
@@ -419,6 +421,7 @@
       },
       "contactInfo": "Contact Information",
       "unnamed": "Unknown",
+      "noPhoneNumber": "No phone number",
       "contactDetailsDesc": "Contact details",
       "name": "Name",
       "phone": "Phone",
@@ -1575,6 +1578,13 @@
       "webhookTitle": "Webhook Configuration",
       "webhookDesc": "Use this URL as your webhook callback in the Meta App Dashboard.",
       "webhookUrl": "Webhook Callback URL",
+      "bsuidToggleTitle": "Username-only leads",
+      "bsuidToggleDesc": "WhatsApp is rolling out usernames. When a customer who has adopted one messages you and hasn't shared their phone number recently, their message still reaches your inbox as a normal conversation — this setting does not affect that.",
+      "bsuidToggleLabel": "Automatically request their phone number",
+      "bsuidToggleScopeNote": "Only controls whether we proactively send them a button asking for their number on their first such message. It does not control whether the conversation is created — that always happens. With this off, an agent can still ask for the number manually at any time.",
+      "bsuidToggleEnabled": "Enabled — the button will be sent automatically going forward.",
+      "bsuidToggleDisabled": "Disabled — agents can still request the number manually.",
+      "bsuidToggleSaveFailed": "Failed to save this setting. Please try again.",
       "saving": "Saving...",
       "saveConfig": "Save Configuration",
       "testing": "Testing...",

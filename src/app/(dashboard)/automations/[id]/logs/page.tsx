@@ -48,7 +48,7 @@ export default function AutomationLogsPage({
             .maybeSingle(),
           supabase
             .from("automation_logs")
-            .select("*, contact:contacts(id, name, phone)")
+            .select("*, contact:contacts(id, name, phone, whatsapp_user_id)")
             .eq("automation_id", id)
             .order("created_at", { ascending: false })
             .limit(100),
@@ -129,7 +129,10 @@ export default function AutomationLogsPage({
                   <StatusBadge status={log.status} t={t} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-foreground">
-                      {log.contact?.name ?? log.contact?.phone ?? t("unknownContact")}
+                      {log.contact?.name ??
+                        log.contact?.phone ??
+                        log.contact?.whatsapp_user_id ??
+                        t("unknownContact")}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
                       {log.trigger_event} · {log.steps_executed?.length ?? 0}{" "}

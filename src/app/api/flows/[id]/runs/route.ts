@@ -47,7 +47,7 @@ export async function GET(
   const { data: runs, error: runsErr } = await supabase
     .from('flow_runs')
     .select(
-      'id, status, current_node_key, started_at, last_advanced_at, ended_at, end_reason, vars, reprompt_count, contact:contacts(id, name, phone)',
+      'id, status, current_node_key, started_at, last_advanced_at, ended_at, end_reason, vars, reprompt_count, contact:contacts(id, name, phone, whatsapp_user_id)',
     )
     .eq('flow_id', id)
     .order('started_at', { ascending: false })

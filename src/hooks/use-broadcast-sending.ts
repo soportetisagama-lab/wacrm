@@ -103,7 +103,7 @@ export function resolveVariables(
     if (v.type === 'static') return v.value;
 
     if (v.type === 'field') {
-      const fieldMap: Record<string, string | undefined> = {
+      const fieldMap: Record<string, string | null | undefined> = {
         name: contact.name,
         phone: contact.phone,
         email: contact.email,

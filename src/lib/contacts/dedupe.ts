@@ -56,6 +56,37 @@ export async function findExistingContact(
 }
 
 /**
+ * Find an existing contact in `accountId` by BSUID (business-scoped
+ * user id — migration 042), or null. Exact match only: unlike phone,
+ * a BSUID has no formatting variants to normalize or fuzzy-match
+ * against, so this is a plain equality lookup on the unique
+ * `(account_id, whatsapp_user_id)` index rather than the
+ * suffix-prefilter + `phonesMatch` dance `findExistingContact` needs.
+ *
+ * Used only by the webhook's contact resolution, for an inbound
+ * message whose sender has no phone number on the payload (a
+ * username-only WhatsApp user Meta hasn't shared a number for) — see
+ * `findOrCreateContact` in the webhook route.
+ */
+export async function findExistingContactByBsuid(
+  db: SupabaseClient,
+  accountId: string,
+  bsuid: string,
+): Promise<ExistingContact | null> {
+  if (!bsuid) return null;
+
+  const { data, error } = await db
+    .from("contacts")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("whatsapp_user_id", bsuid)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data as ExistingContact;
+}
+
+/**
  * True when an existing contact is an *exact* normalized match for
  * `phone` (vs only a fuzzy trunk-variant match). The form hard-blocks
  * exact matches but only warns on fuzzy ones.

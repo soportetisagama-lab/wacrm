@@ -10,11 +10,15 @@ import {
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
-  sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import {
+  resolveRecipient,
+  toRecipientTarget,
+  type RecipientIdentifier,
+} from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -69,16 +73,21 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, whatsapp_user_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
+  // Phone wins when present; falls back to the contact's BSUID for
+  // username-only contacts with no phone on file (migration 042).
+  const recipient = resolveRecipient(contact)
+  if (!recipient) {
+    throw new Error('contact has no phone number or WhatsApp ID')
+  }
+  if (recipient.kind === 'phone' && !isValidE164(recipient.value)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
@@ -93,36 +102,42 @@ export async function engineSendText(
 
   const accessToken = decrypt(config.access_token)
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: RecipientIdentifier): Promise<string> => {
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...toRecipientTarget(target),
       text: args.text,
     })
     return r.messageId
   }
 
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  // Phone-variant retry only makes sense for a phone recipient — a
+  // BSUID has no trunk-prefix variants, so it's sent once.
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
+  if (recipient.kind === 'phone') {
+    const variants = phoneVariants(recipient.value)
+    let workingPhone = recipient.value
+    let lastError: unknown = null
+    for (const v of variants) {
+      try {
+        waMessageId = await attempt({ kind: 'phone', value: v })
+        workingPhone = v
+        lastError = null
+        break
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!isRecipientNotAllowedError(msg)) throw err
+        lastError = err
+      }
     }
-  }
-  if (lastError) throw lastError
+    if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    if (workingPhone !== recipient.value) {
+      await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    }
+  } else {
+    waMessageId = await attempt(recipient)
   }
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -179,16 +194,21 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, whatsapp_user_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
+  // Phone wins when present; falls back to the contact's BSUID for
+  // username-only contacts with no phone on file (migration 042).
+  const recipient = resolveRecipient(contact)
+  if (!recipient) {
+    throw new Error('contact has no phone number or WhatsApp ID')
+  }
+  if (recipient.kind === 'phone' && !isValidE164(recipient.value)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
@@ -203,11 +223,11 @@ export async function engineSendMedia(
 
   const accessToken = decrypt(config.access_token)
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: RecipientIdentifier): Promise<string> => {
     const r = await sendMediaMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...toRecipientTarget(target),
       kind: args.kind,
       link: args.link,
       caption: args.caption,
@@ -216,26 +236,32 @@ export async function engineSendMedia(
     return r.messageId
   }
 
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  // Phone-variant retry only makes sense for a phone recipient — a
+  // BSUID has no trunk-prefix variants, so it's sent once.
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
+  if (recipient.kind === 'phone') {
+    const variants = phoneVariants(recipient.value)
+    let workingPhone = recipient.value
+    let lastError: unknown = null
+    for (const v of variants) {
+      try {
+        waMessageId = await attempt({ kind: 'phone', value: v })
+        workingPhone = v
+        lastError = null
+        break
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!isRecipientNotAllowedError(msg)) throw err
+        lastError = err
+      }
     }
-  }
-  if (lastError) throw lastError
+    if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    if (workingPhone !== recipient.value) {
+      await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    }
+  } else {
+    waMessageId = await attempt(recipient)
   }
 
   // content_type='image'|'video'|'document' — these are already in the
@@ -331,16 +357,21 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, whatsapp_user_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
+  // Phone wins when present; falls back to the contact's BSUID for
+  // username-only contacts with no phone on file (migration 042).
+  const recipient = resolveRecipient(contact)
+  if (!recipient) {
+    throw new Error('contact has no phone number or WhatsApp ID')
+  }
+  if (recipient.kind === 'phone' && !isValidE164(recipient.value)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
@@ -355,12 +386,13 @@ async function sendInteractiveViaMeta(
 
   const accessToken = decrypt(config.access_token)
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: RecipientIdentifier): Promise<string> => {
+    const targetFields = toRecipientTarget(target)
     if (input.kind === 'buttons') {
       const r = await sendInteractiveButtons({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...targetFields,
         bodyText: input.bodyText,
         buttons: input.buttons,
         headerText: input.headerText,
@@ -371,7 +403,7 @@ async function sendInteractiveViaMeta(
     const r = await sendInteractiveList({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...targetFields,
       bodyText: input.bodyText,
       buttonLabel: input.buttonLabel,
       sections: input.sections,
@@ -384,26 +416,32 @@ async function sendInteractiveViaMeta(
   // Same phone-variant retry as automations/meta-send.ts. Numbers
   // registered with/without a trunk 0 + Meta's sandbox quirks all
   // need this to reliably land a message.
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  // Phone-variant retry only makes sense for a phone recipient — a
+  // BSUID has no trunk-prefix variants, so it's sent once.
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
+  if (recipient.kind === 'phone') {
+    const variants = phoneVariants(recipient.value)
+    let workingPhone = recipient.value
+    let lastError: unknown = null
+    for (const v of variants) {
+      try {
+        waMessageId = await attempt({ kind: 'phone', value: v })
+        workingPhone = v
+        lastError = null
+        break
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!isRecipientNotAllowedError(msg)) throw err
+        lastError = err
+      }
     }
-  }
-  if (lastError) throw lastError
+    if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    if (workingPhone !== recipient.value) {
+      await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    }
+  } else {
+    waMessageId = await attempt(recipient)
   }
 
   // Persist the bot's prompt to the messages table so it appears in

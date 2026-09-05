@@ -19,7 +19,9 @@ export const CONTACT_SELECT = '*, contact_tags(tags(*))';
 
 export interface ApiContact {
   id: string;
-  phone: string;
+  /** Null for a contact created from a username-only inbound message
+   *  with no phone in the webhook payload (migration 042). */
+  phone: string | null;
   name: string | null;
   email: string | null;
   company: string | null;
@@ -46,7 +48,7 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
   const joins = (row.contact_tags as RawTagJoin[] | undefined) ?? [];
   return {
     id: row.id as string,
-    phone: row.phone as string,
+    phone: row.phone as string | null,
     name: (row.name as string | null) ?? null,
     email: (row.email as string | null) ?? null,
     company: (row.company as string | null) ?? null,

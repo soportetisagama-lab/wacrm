@@ -265,6 +265,13 @@ export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
 
 // --- 5. Activity feed --------------------------------------------------
 
+/** Minimal contact shape the activity feed needs for its "who" label. */
+interface ActivityContactRef {
+  name: string | null
+  phone: string | null
+  whatsapp_user_id: string | null
+}
+
 export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> {
   // Pull ~10 from each source (plenty of headroom after merge-sort),
   // then interleave by timestamp. The individual per-table limits
@@ -272,13 +279,13 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   const [msgs, contacts, deals, broadcasts, autoLogs] = await Promise.all([
     db
       .from('messages')
-      .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))')
+      .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone, whatsapp_user_id))')
       .eq('sender_type', 'customer')
       .order('created_at', { ascending: false })
       .limit(10),
     db
       .from('contacts')
-      .select('id, name, phone, created_at')
+      .select('id, name, phone, whatsapp_user_id, created_at')
       .order('created_at', { ascending: false })
       .limit(10),
     db
@@ -293,7 +300,7 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
       .limit(5),
     db
       .from('automation_logs')
-      .select('id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone)')
+      .select('id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone, whatsapp_user_id)')
       .order('created_at', { ascending: false })
       .limit(10),
   ])
@@ -308,13 +315,13 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
     created_at: string
     conversation_id: string
     conversations:
-      | { contact_id: string | null; contacts: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null }[]
-      | { contact_id: string | null; contacts: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null }
+      | { contact_id: string | null; contacts: ActivityContactRef[] | ActivityContactRef | null }[]
+      | { contact_id: string | null; contacts: ActivityContactRef[] | ActivityContactRef | null }
       | null
   }>) {
     const conv = Array.isArray(m.conversations) ? m.conversations[0] : m.conversations
     const contact = Array.isArray(conv?.contacts) ? conv?.contacts[0] : conv?.contacts
-    const who = contact?.name || contact?.phone || 'Unknown'
+    const who = contact?.name || contact?.phone || contact?.whatsapp_user_id || 'Unknown'
     items.push({
       id: `msg-${m.id}`,
       kind: 'message',
@@ -324,11 +331,13 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
     })
   }
 
-  for (const c of (contacts.data ?? []) as Array<{ id: string; name: string | null; phone: string; created_at: string }>) {
+  for (const c of (contacts.data ?? []) as Array<
+    { id: string; created_at: string } & ActivityContactRef
+  >) {
     items.push({
       id: `contact-${c.id}`,
       kind: 'contact',
-      text: `New contact: ${c.name || c.phone}`,
+      text: `New contact: ${c.name || c.phone || c.whatsapp_user_id}`,
       at: c.created_at,
       href: '/contacts',
     })
@@ -378,11 +387,11 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
     status: string
     created_at: string
     automation: { name: string }[] | { name: string } | null
-    contact: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null
+    contact: ActivityContactRef[] | ActivityContactRef | null
   }>) {
     const automation = Array.isArray(l.automation) ? l.automation[0] : l.automation
     const contact = Array.isArray(l.contact) ? l.contact[0] : l.contact
-    const who = contact?.name || contact?.phone || 'a contact'
+    const who = contact?.name || contact?.phone || contact?.whatsapp_user_id || 'a contact'
     const autoName = automation?.name || 'Automation'
     items.push({
       id: `auto-${l.id}`,

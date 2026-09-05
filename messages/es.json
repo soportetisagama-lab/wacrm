@@ -184,7 +184,8 @@
       "waitForSend": "Esperá a que el mensaje termine de enviarse",
       "networkError": "error de red",
       "reactionFailed": "No se pudo reaccionar: {reason}",
-      "assignmentUpdateFailed": "Error al actualizar la asignación"
+      "assignmentUpdateFailed": "Error al actualizar la asignación",
+      "noPhoneNumber": "Sin número de teléfono"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -309,7 +310,8 @@
       "noDeals": "Sin negocios",
       "addNotePlaceholder": "Agregar una nota...",
       "adSource": "Origen del anuncio",
-      "viewAd": "Ver anuncio"
+      "viewAd": "Ver anuncio",
+      "noPhoneNumber": "Sin número de teléfono"
     },
     "aiBanner": {
       "pausedTitle": "El asistente de IA está pausado acá",
@@ -419,6 +421,7 @@
       },
       "contactInfo": "Información del contacto",
       "unnamed": "Desconocido",
+      "noPhoneNumber": "Sin número de teléfono",
       "contactDetailsDesc": "Datos del contacto",
       "name": "Nombre",
       "phone": "Teléfono",
@@ -1575,6 +1578,13 @@
       "webhookTitle": "Configuración del webhook",
       "webhookDesc": "Usá esta URL como callback del webhook en el panel de Meta App.",
       "webhookUrl": "URL de callback del webhook",
+      "bsuidToggleTitle": "Leads sin teléfono conocido",
+      "bsuidToggleDesc": "WhatsApp está lanzando los nombres de usuario (@username). Cuando un cliente que adoptó uno te escribe y no compartió su número recientemente, su mensaje igual llega a tu bandeja como una conversación normal — esta configuración no afecta eso.",
+      "bsuidToggleLabel": "Pedirle el número automáticamente",
+      "bsuidToggleScopeNote": "Solo controla si le enviamos de forma proactiva un botón pidiendo su número en su primer mensaje de este tipo. No controla si se crea la conversación — eso siempre pasa. Con esto apagado, un agente igual puede pedirle el número manualmente en cualquier momento.",
+      "bsuidToggleEnabled": "Activado — el botón se enviará automáticamente de ahora en más.",
+      "bsuidToggleDisabled": "Desactivado — los agentes igual pueden pedir el número manualmente.",
+      "bsuidToggleSaveFailed": "No se pudo guardar esta configuración. Intentá de nuevo.",
       "saving": "Guardando...",
       "saveConfig": "Guardar configuración",
       "testing": "Probando...",

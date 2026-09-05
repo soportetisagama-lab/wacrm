@@ -22,7 +22,9 @@ export interface ApiConversation {
   updated_at: string;
   contact: {
     id: string;
-    phone: string;
+    /** Null for a contact created from a username-only inbound message
+     *  with no phone in the webhook payload (migration 042). */
+    phone: string | null;
     name: string | null;
     email: string | null;
     company: string | null;

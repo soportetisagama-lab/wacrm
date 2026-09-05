@@ -772,7 +772,8 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
-  const contactDisplayName = contact?.name || contact?.phone || 'Customer';
+  const contactDisplayName =
+    contact?.name || contact?.phone || contact?.whatsapp_user_id || 'Customer';
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -904,7 +905,8 @@ export function MessageThread({
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  const displayName =
+    contact.name || contact.phone || contact.whatsapp_user_id || 'Unknown';
   const messageGroups = groupMessagesByDate(messages);
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
@@ -949,7 +951,7 @@ export function MessageThread({
               {displayName}
             </h2>
             <p className="text-muted-foreground truncate text-xs">
-              {contact.phone}
+              {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
             </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
@@ -1168,7 +1170,10 @@ export function MessageThread({
                             parent.sender_type === 'agent' ||
                             parent.sender_type === 'bot'
                               ? t('me')
-                              : contact?.name || contact?.phone || 'Unknown',
+                              : contact?.name ||
+                                contact?.phone ||
+                                contact?.whatsapp_user_id ||
+                                'Unknown',
                           preview: buildReplyPreview(parent, tQuote),
                         }
                       : null;

@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Accordion,
@@ -77,6 +78,13 @@ export function WhatsAppConfig() {
   const isRegistered = Boolean(config?.registered_at);
   const lastRegistrationError = config?.last_registration_error ?? null;
 
+  // Local mirror of config.bsuid_request_contact_info_enabled, updated
+  // optimistically on toggle so the switch responds instantly; reverted
+  // if the PATCH fails. Saved through its own endpoint (not the big
+  // "Save" button below) — see handleToggleBsuidRequestContactInfo.
+  const [bsuidRequestContactInfoEnabled, setBsuidRequestContactInfoEnabled] = useState(false);
+  const [savingBsuidToggle, setSavingBsuidToggle] = useState(false);
+
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
     live: boolean;
@@ -121,6 +129,9 @@ export function WhatsAppConfig() {
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setBsuidRequestContactInfoEnabled(
+          data.bsuid_request_contact_info_enabled ?? false,
+        );
       } else {
         setConfig(null);
         setPhoneNumberId('');
@@ -129,6 +140,7 @@ export function WhatsAppConfig() {
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setBsuidRequestContactInfoEnabled(false);
       }
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
@@ -357,6 +369,34 @@ export function WhatsAppConfig() {
       toast.error(t('resetFailed'));
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleToggleBsuidRequestContactInfo(next: boolean) {
+    const previous = bsuidRequestContactInfoEnabled;
+    setBsuidRequestContactInfoEnabled(next);
+    setSavingBsuidToggle(true);
+    try {
+      const res = await fetch('/api/whatsapp/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bsuid_request_contact_info_enabled: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBsuidRequestContactInfoEnabled(previous);
+        toast.error(data.error || t('bsuidToggleSaveFailed'));
+        return;
+      }
+      toast.success(
+        next ? t('bsuidToggleEnabled') : t('bsuidToggleDisabled'),
+      );
+    } catch (err) {
+      console.error('bsuid_request_contact_info_enabled PATCH failed:', err);
+      setBsuidRequestContactInfoEnabled(previous);
+      toast.error(t('bsuidToggleSaveFailed'));
+    } finally {
+      setSavingBsuidToggle(false);
     }
   }
 
@@ -676,6 +716,41 @@ export function WhatsAppConfig() {
             </div>
           </CardContent>
         </Card>
+
+        {/* BSUID / username leads — REQUEST_CONTACT_INFO toggle */}
+        {config && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-foreground">{t('bsuidToggleTitle')}</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                {t('bsuidToggleDesc')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {t('bsuidToggleLabel')}
+                  </p>
+                  {/* Scope callout — the one thing this toggle does NOT
+                      affect is intentionally spelled out here so nobody
+                      enabling/disabling it later assumes it gates whether
+                      username-only leads reach the inbox at all. They
+                      always do, regardless of this setting. */}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('bsuidToggleScopeNote')}
+                  </p>
+                </div>
+                <Switch
+                  checked={bsuidRequestContactInfoEnabled}
+                  onCheckedChange={handleToggleBsuidRequestContactInfo}
+                  disabled={savingBsuidToggle}
+                  aria-label={t('bsuidToggleLabel')}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">

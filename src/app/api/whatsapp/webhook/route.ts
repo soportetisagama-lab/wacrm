@@ -1,9 +1,14 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl, downloadMedia, sendRequestContactInfo } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import { toRecipientTarget } from '@/lib/whatsapp/recipient'
+import {
+  findExistingContact,
+  findExistingContactByBsuid,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe'
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
@@ -36,7 +41,25 @@ function supabaseAdmin() {
 
 interface WhatsAppMessage {
   id: string
+  /**
+   * The sender's phone number. Historically always present; Meta now
+   * omits it for a message from a user who has adopted a WhatsApp
+   * username, unless we've exchanged a message/call with their number
+   * in the last 30 days. `from_user_id` below is present regardless,
+   * so it — not `from` — is the stable per-message sender identifier.
+   * Still typed as required for now: the contact-resolution code that
+   * actually handles its absence lands in a follow-up change, and
+   * loosening this type ahead of that would just push `undefined`
+   * silently into `normalizePhone` call sites that aren't ready for it.
+   */
   from: string
+  /**
+   * BSUID (business-scoped user id) for the sender, e.g.
+   * "US.13491208655302741918". Always present once Meta has rolled
+   * BSUIDs out to this account, independent of whether the sender has
+   * adopted a username — unlike `from`, this never gets omitted.
+   */
+  from_user_id?: string
   timestamp: string
   type: string
   text?: { body: string }
@@ -76,6 +99,26 @@ interface WhatsAppMessage {
     video_url?: string
     ctwa_clid?: string
   }
+  /**
+   * Present only on `type: 'contacts'` messages — the customer shared
+   * one or more contact cards. Confirmed against Meta's docs
+   * (developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids/):
+   * the phone number is already structured (`phones[0].phone`), no
+   * vCard parsing needed.
+   *
+   * `origin` on the first entry distinguishes why this arrived:
+   *   - 'contact_request' — the customer tapped our REQUEST_CONTACT_INFO
+   *     button and shared their own number. Only this case should
+   *     promote the phone onto a BSUID-only contact — see
+   *     promoteBsuidContactPhoneIfRequested.
+   *   - 'other' — an unprompted contact card shared in normal
+   *     conversation (could be anyone's number, not necessarily the
+   *     sender's own). Must NOT touch BSUID resolution.
+   */
+  contacts?: Array<{
+    origin?: 'contact_request' | 'other'
+    phones?: Array<{ phone: string; type?: string; wa_id?: string }>
+  }>
 }
 
 interface WhatsAppWebhookEntry {
@@ -88,8 +131,17 @@ interface WhatsAppWebhookEntry {
         phone_number_id: string
       }
       contacts?: Array<{
-        profile: { name: string }
+        profile: { name: string; username?: string }
+        /**
+         * Phone number of whoever sent the message this `contacts[]`
+         * entry describes. Same 30-day/username caveat as
+         * `WhatsAppMessage.from` — kept required for now for the same
+         * reason (see that field's comment); the contact-resolution
+         * code that branches on its absence lands in a follow-up change.
+         */
         wa_id: string
+        /** BSUID — see WhatsAppMessage.from_user_id. Always present. */
+        user_id?: string
       }>
       messages?: WhatsAppMessage[]
       statuses?: Array<{
@@ -317,7 +369,12 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          phoneNumberId,
+          // Gates ONLY the proactive REQUEST_CONTACT_INFO send — never
+          // whether the contact/conversation get created (that always
+          // happens, unconditionally, in findOrCreateContact above).
+          config.bsuid_request_contact_info_enabled ?? false
         )
       }
     }
@@ -616,6 +673,135 @@ async function saveReferralIfPresent(
   }
 }
 
+/**
+ * Proactively ask a brand-new BSUID-only contact for their phone
+ * number via the REQUEST_CONTACT_INFO button (migration 042) —
+ * gated by whatsapp_config.bsuid_request_contact_info_enabled at the
+ * call site. Fires once, right when the contact is first created;
+ * never re-fires on a later phone-less message from the same contact
+ * (the caller only reaches this on contactOutcome.wasCreated).
+ *
+ * NOT YET EMPIRICALLY VERIFIED: `to` is used here for the BSUID
+ * target, matching every other BSUID send path in this codebase
+ * (resolveRecipient — send-message.ts, flows/automations meta-send,
+ * react/route.ts). Meta's own docs describe an alternative top-level
+ * `recipient` field for BSUID targets, with `to` only for phone
+ * numbers — this was never confirmed against a live send. If Meta
+ * rejects `to` holding a BSUID, every one of those call sites needs
+ * the same fix, not just this one.
+ *
+ * Best-effort: mirrors saveReferralIfPresent — a send failure must
+ * not break the main inbound-message flow.
+ */
+async function sendBsuidContactInfoRequest(
+  conversationId: string,
+  bsuid: string,
+  phoneNumberId: string,
+  accessToken: string
+) {
+  try {
+    const { messageId } = await sendRequestContactInfo({
+      phoneNumberId,
+      accessToken,
+      // Always a BSUID target by construction — this function only
+      // ever fires for a contact that has no phone on file. `recipient`
+      // (never `to`) is confirmed as the correct field for this case —
+      // see toRecipientTarget's doc comment.
+      ...toRecipientTarget({ kind: 'bsuid', value: bsuid }),
+      // TODO: not currently configurable per-account/locale. Revisit
+      // if accounts need this in their own language.
+      bodyText:
+        "To make sure we can always reach you, could you share your phone number with us?",
+    })
+
+    const { error: msgErr } = await supabaseAdmin().from('messages').insert({
+      conversation_id: conversationId,
+      sender_type: 'bot',
+      content_type: 'interactive',
+      content_text: 'Requested contact info',
+      message_id: messageId,
+      status: 'sent',
+    })
+    if (msgErr) {
+      console.error('[webhook] Error persisting REQUEST_CONTACT_INFO send:', msgErr)
+    }
+
+    await supabaseAdmin()
+      .from('conversations')
+      .update({
+        last_message_text: 'Requested contact info',
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', conversationId)
+  } catch (err) {
+    console.error('[webhook] sendBsuidContactInfoRequest failed:', err)
+  }
+}
+
+/**
+ * If this inbound message is the customer's reply to our own
+ * REQUEST_CONTACT_INFO button (a shared contact card with
+ * `origin: 'contact_request'`), promote the phone it contains onto
+ * the BSUID-only contact record that's still missing one.
+ *
+ * `origin: 'other'` — an unprompted contact card shared in normal
+ * conversation, unrelated to us ever having asked — is deliberately
+ * ignored: treating it as this contact's own number would be wrong
+ * (it could be anyone's card), and it must not touch BSUID resolution
+ * at all, per product decision.
+ *
+ * Best-effort: mirrors saveReferralIfPresent — a failure here must
+ * not break the main inbound-message flow.
+ */
+async function promoteBsuidContactPhoneIfRequested(
+  message: WhatsAppMessage,
+  accountId: string,
+  contact: { id: string; phone: string | null }
+) {
+  if (message.type !== 'contacts' || contact.phone) return
+
+  const shared = message.contacts?.[0]
+  if (!shared || shared.origin !== 'contact_request') return
+
+  const rawPhone = shared.phones?.[0]?.phone
+  if (!rawPhone) return
+
+  const sanitized = normalizePhone(rawPhone)
+  if (!sanitized) return
+
+  try {
+    // Don't blindly overwrite: if this number already belongs to a
+    // different contact in this account, merging is a judgment call
+    // this path doesn't make automatically — log and leave both rows
+    // untouched rather than risk conflating two people.
+    const collision = await findExistingContact(supabaseAdmin(), accountId, sanitized)
+    if (collision && collision.id !== contact.id) {
+      console.warn(
+        `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} already belongs to contact ${collision.id}; not merging into ${contact.id}`
+      )
+      return
+    }
+
+    const { error } = await supabaseAdmin()
+      .from('contacts')
+      .update({ phone: sanitized, updated_at: new Date().toISOString() })
+      .eq('id', contact.id)
+
+    if (error) {
+      if (isUniqueViolation(error)) {
+        console.warn(
+          `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} collided with another contact on write; not merging`
+        )
+        return
+      }
+      console.error('[webhook] Error promoting BSUID contact phone:', error)
+    }
+  } catch (err) {
+    console.error('[webhook] promoteBsuidContactPhoneIfRequested failed:', err)
+  }
+}
+
 async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
@@ -627,9 +813,18 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  phoneNumberId: string,
+  // whatsapp_config.bsuid_request_contact_info_enabled — see the call
+  // site's comment. Only consulted below, at the point that decides
+  // whether to proactively send REQUEST_CONTACT_INFO.
+  requestContactInfoEnabled: boolean
 ) {
   const senderPhone = normalizePhone(message.from)
+  // Always present per Meta once BSUIDs are live for this account,
+  // independent of whether the sender adopted a username — unlike
+  // `message.from`, this is never omitted.
+  const senderBsuid = message.from_user_id ?? null
   const contactName = contact.profile.name
 
   // Find or create contact
@@ -637,6 +832,7 @@ async function processMessage(
     accountId,
     configOwnerUserId,
     senderPhone,
+    senderBsuid,
     contactName
   )
   if (!contactOutcome) return
@@ -666,6 +862,41 @@ async function processMessage(
   // type / first-message status — Meta can attach `referral` to any
   // inbound message, not only the very first one.
   await saveReferralIfPresent(message, accountId, conversation.id, contactRecord.id)
+
+  // TODO(product): confirm whether Sagama has Meta's Contact Book
+  // enabled (Meta Business Suite → Business settings → Business info).
+  // If it is, Meta already reuses phone numbers from prior
+  // interactions across the business's numbers/apps, and
+  // REQUEST_CONTACT_INFO is only actually needed for genuinely new
+  // leads who arrive via username with no prior contact at all —
+  // meaning the toggle below could default more conservatively, or
+  // this send could be skipped more often, once that's known. Until
+  // then this fires whenever the toggle is on, for every brand-new
+  // phone-less contact, without checking Contact Book status (no way
+  // to query that from the webhook — it's account-level Meta config,
+  // not part of any payload we receive).
+  //
+  // BSUID follow-ups (migration 042) — both best-effort, never block
+  // the main inbound flow:
+  //   1. A brand-new, still phone-less contact — if the account opted
+  //      in, ask them for their number once, right now.
+  //   2. Any inbound `contacts`-type message — if it's the reply to
+  //      that exact button (origin: 'contact_request'), promote the
+  //      shared phone onto this contact.
+  if (
+    contactOutcome.wasCreated &&
+    !contactRecord.phone &&
+    contactRecord.whatsapp_user_id &&
+    requestContactInfoEnabled
+  ) {
+    await sendBsuidContactInfoRequest(
+      conversation.id,
+      contactRecord.whatsapp_user_id,
+      phoneNumberId,
+      accessToken
+    )
+  }
+  await promoteBsuidContactPhoneIfRequested(message, accountId, contactRecord)
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
@@ -1063,6 +1294,53 @@ async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
   phone: string,
+  // BSUID (business-scoped user id, migration 042) — only consulted
+  // when `phone` is empty. Null on any config saved/matched before
+  // BSUIDs existed, or on the (per Meta, shouldn't-happen) case where
+  // a message carries neither.
+  bsuid: string | null,
+  name: string
+): Promise<ContactOutcome | null> {
+  if (phone) {
+    return findOrCreateContactByPhone(accountId, configOwnerUserId, phone, name)
+  }
+
+  // No phone on this message — a username/BSUID-only sender. This
+  // always creates/resolves a contact by BSUID, unconditionally: a
+  // lead who messages in without a known phone number must land in
+  // the inbox exactly like any other conversation — that's the whole
+  // point of supporting CTWA/username leads. Whether we additionally
+  // *prompt* them for their number via the REQUEST_CONTACT_INFO button
+  // is a separate, narrower decision
+  // (whatsapp_config.bsuid_request_contact_info_enabled) made at send
+  // time, not here — see plan step 7 (not yet implemented).
+  //
+  // Before migration 042, `phone` was NOT NULL and this branch didn't
+  // exist: normalizePhone(undefined) produces '', findExistingContact
+  // already treats '' as "no phone" and returns null immediately
+  // without querying, so every such inbound message fell through to
+  // an INSERT with phone: '' — a distinct duplicate contact on every
+  // message from the same sender. Routing through
+  // findOrCreateContactByBsuid instead of that old path is what fixes
+  // it, not any toggle.
+  if (!bsuid) {
+    // Per Meta's BSUID contract this shouldn't happen — from_user_id
+    // is always present once BSUIDs are live. Defensive-only: without
+    // a phone or a BSUID there's no stable identifier to key a contact
+    // on, so the message is dropped rather than creating garbage.
+    console.error(
+      '[webhook] inbound message has neither a phone number nor a BSUID — dropping it',
+    )
+    return null
+  }
+
+  return findOrCreateContactByBsuid(accountId, configOwnerUserId, bsuid, name)
+}
+
+async function findOrCreateContactByPhone(
+  accountId: string,
+  configOwnerUserId: string,
+  phone: string,
   name: string
 ): Promise<ContactOutcome | null> {
   // Find an existing contact for this account by phone. The shared
@@ -1113,6 +1391,57 @@ async function findOrCreateContact(
       if (raced) return { contact: raced, wasCreated: false }
     }
     console.error('Error creating contact:', createError)
+    return null
+  }
+
+  return { contact: newContact, wasCreated: true }
+}
+
+async function findOrCreateContactByBsuid(
+  accountId: string,
+  configOwnerUserId: string,
+  bsuid: string,
+  name: string
+): Promise<ContactOutcome | null> {
+  // Mirrors findOrCreateContactByPhone above, keyed on the unique
+  // (account_id, whatsapp_user_id) index (migration 042) instead of
+  // phone. BSUIDs have no formatting variants, so the lookup is a
+  // plain equality match — no suffix-prefilter/phonesMatch dance
+  // needed.
+  const existingContact = await findExistingContactByBsuid(
+    supabaseAdmin(),
+    accountId,
+    bsuid,
+  )
+
+  if (existingContact) {
+    if (name && name !== existingContact.name) {
+      await supabaseAdmin()
+        .from('contacts')
+        .update({ name, updated_at: new Date().toISOString() })
+        .eq('id', existingContact.id)
+    }
+    return { contact: existingContact, wasCreated: false }
+  }
+
+  const { data: newContact, error: createError } = await supabaseAdmin()
+    .from('contacts')
+    .insert({
+      account_id: accountId,
+      user_id: configOwnerUserId,
+      phone: null,
+      whatsapp_user_id: bsuid,
+      name: name || bsuid,
+    })
+    .select()
+    .single()
+
+  if (createError) {
+    if (isUniqueViolation(createError)) {
+      const raced = await findExistingContactByBsuid(supabaseAdmin(), accountId, bsuid)
+      if (raced) return { contact: raced, wasCreated: false }
+    }
+    console.error('Error creating BSUID contact:', createError)
     return null
   }
 
