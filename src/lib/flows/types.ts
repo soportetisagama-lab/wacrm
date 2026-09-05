@@ -34,7 +34,30 @@ export interface SendMessageNodeConfig {
   next_node_key: string;
 }
 
-export interface SendButtonsNodeConfig {
+/**
+ * Free-text intent detection shared by send_buttons/send_list: the
+ * customer typed instead of tapping. Checked BEFORE the flow's
+ * generic fallback_policy — if the text contains any of
+ * `unmatched_text_keywords` (case-insensitive substring match, same
+ * semantics as a flow's `keyword` entry trigger), the run jumps
+ * straight to `handoff_node_key`, skipping the reprompt/max_reprompts
+ * cycle entirely for that reply. Both fields are optional; when either
+ * is unset, free text falls through to fallback_policy exactly as
+ * before this existed.
+ *
+ * `reprompt_hint_text`, separately, is sent as its own plain-text
+ * message immediately before fallback_policy's "reprompt" action
+ * resends this node's prompt (e.g. "¿Podés elegir una opción de la
+ * lista de arriba?"). Optional; unset means the resend stays silent,
+ * matching prior behavior.
+ */
+interface UnmatchedTextHandling {
+  unmatched_text_keywords?: string[];
+  handoff_node_key?: string;
+  reprompt_hint_text?: string;
+}
+
+export interface SendButtonsNodeConfig extends UnmatchedTextHandling {
   text: string;
   /** Optional header / footer lines around the buttons. */
   header_text?: string;
@@ -50,7 +73,7 @@ export interface SendButtonsNodeConfig {
   }>;
 }
 
-export interface SendListNodeConfig {
+export interface SendListNodeConfig extends UnmatchedTextHandling {
   text: string;
   /** Label of the tap-to-expand button on the message bubble. */
   button_label: string;

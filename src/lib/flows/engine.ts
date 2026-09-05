@@ -924,9 +924,13 @@ async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "no_match" };
   }
 
-  // Two ways a reply can advance:
+  // Three ways a reply can advance:
   //   1. Interactive button/list tap on a send_buttons/send_list node.
   //   2. Text reply on a collect_input node — capture into vars.
+  //   3. Free text on a send_buttons/send_list node that hits an
+  //      escalation keyword (e.g. "quiero hablar con un asesor") —
+  //      jumps straight to handoff_node_key, bypassing the
+  //      reprompt/max_reprompts cycle entirely for this reply.
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
@@ -964,6 +968,25 @@ async function handleReplyForActiveRun(
         });
         matched = cfg.next_node_key;
       }
+    }
+  } else if (
+    message.kind === "text" &&
+    (currentNode.node_type === "send_buttons" ||
+      currentNode.node_type === "send_list")
+  ) {
+    const cfg = currentNode.config as unknown as
+      | SendButtonsNodeConfig
+      | SendListNodeConfig;
+    if (
+      cfg.handoff_node_key &&
+      cfg.unmatched_text_keywords &&
+      cfg.unmatched_text_keywords.length > 0 &&
+      matchesKeywordTrigger(message.text, {
+        keywords: cfg.unmatched_text_keywords,
+        match_type: "contains",
+      })
+    ) {
+      matched = cfg.handoff_node_key;
     }
   }
 
@@ -1011,6 +1034,35 @@ async function handleReplyForActiveRun(
   }
   if (action.type === "reprompt") {
     // Re-send the same prompt. Same node, no current_node_key change.
+    if (
+      currentNode.node_type === "send_buttons" ||
+      currentNode.node_type === "send_list"
+    ) {
+      // Optional clarifying line ("¿Podés elegir una opción de la
+      // lista de arriba?") sent as its own message right before the
+      // resend, so the customer understands why they're seeing the
+      // same prompt again. Best-effort — a failure here must not
+      // block the resend itself.
+      const cfg = currentNode.config as unknown as
+        | SendButtonsNodeConfig
+        | SendListNodeConfig;
+      if (cfg.reprompt_hint_text) {
+        try {
+          await engineSendText({
+            accountId: run.account_id,
+            userId: run.user_id,
+            conversationId: run.conversation_id!,
+            contactId: run.contact_id!,
+            text: cfg.reprompt_hint_text,
+          });
+        } catch (err) {
+          await logEvent(db, run.id, "error", currentNode.node_key, {
+            reason: "reprompt_hint_send_failed",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
     if (currentNode.node_type === "send_buttons") {
       await sendButtonsAndSuspend(db, run, currentNode);
     } else if (currentNode.node_type === "send_list") {

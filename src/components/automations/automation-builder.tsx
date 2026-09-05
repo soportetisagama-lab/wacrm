@@ -1309,13 +1309,24 @@ function StepEditor({
     case "send_buttons":
     case "send_list":
       // The whole step_config IS the interactive payload; the shared
-      // builder edits it in place (and enforces Meta's limits + preview).
+      // builder edits it in place (and enforces Meta's limits).
+      //
+      // showPreview={false}: InteractiveBuilder's side-by-side preview
+      // column assumes a wide host (it's fine in message-composer.tsx
+      // and quick-replies-manager.tsx, both inside a sm:max-w-2xl
+      // dialog). This step card is fixed at sm:w-80 (320px) — far
+      // narrower than the preview column's own non-shrinking
+      // md:w-[280px], so on any desktop viewport the two columns
+      // fight for space inside ~272px of content width and the form
+      // column gets squeezed to near-zero, wrapping text letter by
+      // letter while the preview overflows the card.
       return (
         <InteractiveBuilder
           value={asInteractive(cfg)}
           onChange={(payload) =>
             onChange({ ...step, step_config: toStepConfig(payload) })
           }
+          showPreview={false}
         />
       )
     case "send_template":

@@ -215,10 +215,82 @@ export function NodeConfigForm({
 }
 
 // ============================================================
+// Shared: free-text escalation, used by both send_buttons and
+// send_list. See UnmatchedTextHandling in lib/flows/types.ts for the
+// runtime semantics — this is purely the editor for those fields.
+// ============================================================
+
+interface UnmatchedTextCfg {
+  unmatched_text_keywords?: string[];
+  handoff_node_key?: string;
+  reprompt_hint_text?: string;
+}
+
+function UnmatchedTextFields({
+  cfg,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+  t,
+}: {
+  cfg: UnmatchedTextCfg;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const keywordsText = (cfg.unmatched_text_keywords ?? []).join(", ");
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/20 p-3">
+      <p className="text-xs font-medium text-foreground">
+        {t("unmatchedTextTitle")}
+      </p>
+      <p className="mb-3 mt-0.5 text-[10px] text-muted-foreground">
+        {t("unmatchedTextHelp")}
+      </p>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">
+          {t("escalationKeywordsLabel")}
+        </label>
+        <Input
+          value={keywordsText}
+          onChange={(e) =>
+            onUpdateConfig({
+              unmatched_text_keywords: e.target.value
+                .split(",")
+                .map((k) => k.trim())
+                .filter(Boolean),
+            })
+          }
+          placeholder={t("escalationKeywordsPlaceholder")}
+          className="bg-muted"
+        />
+      </div>
+      <div className="mt-2">
+        <NextNodeRow
+          value={cfg.handoff_node_key ?? ""}
+          allNodes={allNodes}
+          currentKey={currentKey}
+          onChange={(v) => onUpdateConfig({ handoff_node_key: v })}
+          label={t("escalationTargetLabel")}
+        />
+      </div>
+      <div className="mt-2">
+        <TextRow
+          label={t("repromptHintLabel")}
+          value={cfg.reprompt_hint_text ?? ""}
+          onChange={(v) => onUpdateConfig({ reprompt_hint_text: v })}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // send_buttons
 // ============================================================
 
-interface SendButtonsCfg {
+interface SendButtonsCfg extends UnmatchedTextCfg {
   text?: string;
   footer_text?: string;
   buttons?: Array<{ reply_id: string; title: string; next_node_key: string }>;
@@ -341,6 +413,13 @@ function SendButtonsForm({
           </Button>
         )}
       </div>
+      <UnmatchedTextFields
+        cfg={cfg}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onUpdateConfig={onUpdateConfig}
+        t={t}
+      />
     </>
   );
 }
@@ -349,7 +428,7 @@ function SendButtonsForm({
 // send_list
 // ============================================================
 
-interface SendListCfg {
+interface SendListCfg extends UnmatchedTextCfg {
   text?: string;
   button_label?: string;
   footer_text?: string;
@@ -580,6 +659,13 @@ function SendListForm({
           </Button>
         )}
       </div>
+      <UnmatchedTextFields
+        cfg={cfg}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onUpdateConfig={onUpdateConfig}
+        t={t}
+      />
     </>
   );
 }
