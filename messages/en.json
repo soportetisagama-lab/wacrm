@@ -307,7 +307,10 @@
       "deals": "Deals",
       "noTags": "No tags",
       "noDeals": "No deals",
-      "addNotePlaceholder": "Add a note..."
+      "addNotePlaceholder": "Add a note...",
+      "adSource": "Ad source",
+      "viewAd": "View ad",
+      "adId": "Ad ID"
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
