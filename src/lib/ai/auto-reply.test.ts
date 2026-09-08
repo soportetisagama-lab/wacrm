@@ -255,11 +255,21 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
 })
 
 describe('dispatchInboundToAiReply — handoff', () => {
-  it('disables auto-reply, writes a summary, and does not send on handoff', async () => {
+  it('sends the closing line, disables auto-reply, and writes a summary on handoff — never the (empty) generated text', async () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
-    expect(h.engineSendText).not.toHaveBeenCalled()
+    // The prompt instructs the model to reply with exactly [[HANDOFF]]
+    // and nothing else, so `text` is always empty here — the customer
+    // must still get the fixed closing line, not silence, and never
+    // the raw (empty) generated text via the normal send path.
     expect(h.state.rpcCalls).toHaveLength(0)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Un asesor va a continuar contigo en breve.',
+      }),
+    )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
     expect(h.state.updatePayload?.ai_handoff_summary).toContain(
       'AI agent handed off',
@@ -272,9 +282,19 @@ describe('dispatchInboundToAiReply — handoff', () => {
     h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
     expect(h.state.updatePayload).toMatchObject({
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+
+  it('still marks the conversation for handoff even if the closing-message send fails', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.engineSendText.mockRejectedValue(new Error('meta send failed'))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
 })

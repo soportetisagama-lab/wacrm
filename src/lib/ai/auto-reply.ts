@@ -21,9 +21,37 @@ interface DispatchArgs {
   configOwnerUserId: string
 }
 
-/** Sent to the customer when the per-conversation reply cap is reached
- *  — see handleAutoReplyCapReached below. */
-const AUTO_REPLY_CAP_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+/** Sent to the customer whenever auto-reply hands a conversation off to
+ *  a human — whether the model decided on its own ([[HANDOFF]]) or the
+ *  per-conversation reply cap was reached. Same text either way: from
+ *  the customer's side, the underlying situation is identical ("a
+ *  human takes it from here"). */
+const AUTO_REPLY_HANDOFF_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+
+/**
+ * Send the fixed handoff-closing line, swallowing any send failure —
+ * wrapped here (not inline at each call site) so both callers get the
+ * same "marking matters more than the message landing" contract
+ * without duplicating the try/catch.
+ */
+async function sendHandoffClosingMessage(args: {
+  accountId: string
+  conversationId: string
+  contactId: string
+  configOwnerUserId: string
+}): Promise<void> {
+  try {
+    await engineSendText({
+      accountId: args.accountId,
+      userId: args.configOwnerUserId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text: AUTO_REPLY_HANDOFF_CLOSING_TEXT,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] handoff closing message send failed:', err)
+  }
+}
 
 /**
  * Mark a conversation as needing a human — pauses auto-reply on it
@@ -60,9 +88,7 @@ async function markNeedsHuman(
  * before generating a reply, or lost the atomic-claim race after
  * already generating one) — send a closing line so the customer isn't
  * left with silence, then mark the conversation for a human the same
- * way a model-decided handoff does. The send is wrapped in its own
- * try/catch so a failed send still leaves the conversation correctly
- * marked — the marking matters more than the message landing.
+ * way a model-decided handoff does.
  */
 async function handleAutoReplyCapReached(
   db: ReturnType<typeof supabaseAdmin>,
@@ -75,17 +101,7 @@ async function handleAutoReplyCapReached(
     assignedAgentId: string | null
   },
 ): Promise<void> {
-  try {
-    await engineSendText({
-      accountId: args.accountId,
-      userId: args.configOwnerUserId,
-      conversationId: args.conversationId,
-      contactId: args.contactId,
-      text: AUTO_REPLY_CAP_CLOSING_TEXT,
-    })
-  } catch (err) {
-    console.error('[ai auto-reply] cap-reached closing message send failed:', err)
-  }
+  await sendHandoffClosingMessage(args)
   await markNeedsHuman(db, {
     conversationId: args.conversationId,
     config: args.config,
@@ -225,12 +241,22 @@ export async function dispatchInboundToAiReply(
 
     if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
-      // this thread and hand it to a human. Assigning (inside
+      // this thread and hand it to a human. The prompt instructs the
+      // model to reply with EXACTLY the [[HANDOFF]] sentinel and
+      // nothing else in this case, so `text` is always empty here —
+      // without sendHandoffClosingMessage the customer would get no
+      // signal at all that a human is taking over. Assigning (inside
       // markNeedsHuman) fires the `on_conversation_assigned` trigger,
       // which notifies the agent.
       const summary = buildHandoffSummary({
         messages,
         replyCount: conv.ai_reply_count ?? 0,
+      })
+      await sendHandoffClosingMessage({
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
       })
       await markNeedsHuman(db, {
         conversationId,
