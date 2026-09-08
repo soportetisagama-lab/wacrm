@@ -6,6 +6,8 @@ import {
   providerHttpError,
   toNetworkError,
   type ProviderArgs,
+  type StructuredProviderArgs,
+  type StructuredProviderResult,
 } from './shared'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -84,4 +86,62 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
     completion: data?.usage?.output_tokens,
   })
   return { text, usage }
+}
+
+interface AnthropicToolResponse {
+  content?: { type?: string; input?: unknown }[]
+  usage?: { input_tokens?: number; output_tokens?: number }
+}
+
+/**
+ * Call Anthropic's Messages endpoint with a single forced tool call
+ * instead of free text — used for structured extraction
+ * (`extractWithReply`). Anthropic parses the tool's JSON arguments for
+ * us (`content[].input` is already an object, unlike OpenAI's
+ * arguments string).
+ */
+export async function generateAnthropicStructured(
+  args: StructuredProviderArgs,
+): Promise<StructuredProviderResult> {
+  const { apiKey, model, systemPrompt, messages, timeoutMs, schema, toolName } = args
+
+  let res: Response
+  try {
+    res = await fetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        system: systemPrompt,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        messages: normalizeForAnthropic(messages),
+        tools: [{ name: toolName, input_schema: schema }],
+        tool_choice: { type: 'tool', name: toolName },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (err) {
+    throw toNetworkError(err)
+  }
+
+  if (!res.ok) {
+    throw await providerHttpError('Anthropic', res)
+  }
+
+  const data = (await res.json().catch(() => null)) as AnthropicToolResponse | null
+  const toolUse = data?.content?.find((b) => b.type === 'tool_use')
+  if (!toolUse || toolUse.input === undefined) {
+    throw new AiError('Anthropic did not return a tool call.', {
+      code: 'empty_response',
+    })
+  }
+  const usage = normalizeUsage({
+    prompt: data?.usage?.input_tokens,
+    completion: data?.usage?.output_tokens,
+  })
+  return { data: toolUse.input, usage }
 }

@@ -13,6 +13,23 @@ export interface ProviderArgs {
 }
 
 /**
+ * Args for a forced-tool-call structured-output request (used by
+ * `extractWithReply` in `../generate`). `schema` is a JSON Schema
+ * object; `toolName` is the single tool both providers are forced to
+ * call, so the response is always parseable as that schema.
+ */
+export interface StructuredProviderArgs extends ProviderArgs {
+  schema: Record<string, unknown>
+  toolName: string
+}
+
+/** Parsed tool-call arguments + usage, before any field-level validation. */
+export interface StructuredProviderResult {
+  data: unknown
+  usage: AiUsage | null
+}
+
+/**
  * Coerce a provider's usage block into our normalized `AiUsage`, tolerant
  * of missing/partial fields (providers differ and older API versions may
  * omit counts). Returns null when there's nothing usable, so logging can
