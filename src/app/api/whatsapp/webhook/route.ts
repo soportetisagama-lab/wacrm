@@ -12,7 +12,8 @@ import {
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
-import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { dispatchInboundToFlows, matchesKeywordTrigger } from '@/lib/flows/engine'
+import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -550,6 +551,81 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
   }
 }
 
+// Deterministic — checked on every inbound text message regardless of
+// which flow/node (if any) the contact is currently in, so an opt-out
+// said mid-menu or with no active run at all still lands. Not run
+// through the collect_ai model: that only fires when a collect_ai node
+// is the one currently suspended, which would miss every other case —
+// see the design discussion that landed this. Kept as its own fixed
+// list (not per-account configurable) since this is closer to a
+// consent/compliance mechanism ("STOP") than business-voice copy.
+const NUDGE_OPT_OUT_KEYWORDS = [
+  'no me escribas',
+  'no me envies',
+  'no me envíes',
+  'dejame en paz',
+  'déjame en paz',
+  'no más recordatorios',
+  'no mas recordatorios',
+  'no me molestes',
+]
+
+/**
+ * If the inbound text matches an opt-out phrase, flag the CONTACT (not
+ * the flow/run) as opted out of future collect_ai inactivity nudges —
+ * `contacts.ai_nudge_opt_out` applies to every flow/run for this
+ * contact going forward, not just the current one. Confirms back to
+ * the customer once (the `.eq('ai_nudge_opt_out', false)` guard makes
+ * the UPDATE a no-op on repeat mentions, so `updated` comes back empty
+ * and we skip re-sending the confirmation).
+ *
+ * Runs on a best-effort basis, same contract as `flagBroadcastReplyIfAny`
+ * — failures here must not break the main inbound-message flow.
+ */
+async function flagNudgeOptOutIfRequested(
+  accountId: string,
+  contactId: string,
+  conversationId: string,
+  configOwnerUserId: string,
+  text: string,
+) {
+  try {
+    if (!text.trim()) return
+    if (
+      !matchesKeywordTrigger(text, {
+        keywords: NUDGE_OPT_OUT_KEYWORDS,
+        match_type: 'contains',
+      })
+    ) {
+      return
+    }
+
+    const { data: updated, error } = await supabaseAdmin()
+      .from('contacts')
+      .update({ ai_nudge_opt_out: true, ai_nudge_opt_out_at: new Date().toISOString() })
+      .eq('id', contactId)
+      .eq('account_id', accountId)
+      .eq('ai_nudge_opt_out', false)
+      .select('id')
+
+    if (error) {
+      console.error('[webhook] flagNudgeOptOutIfRequested update failed:', error.message)
+      return
+    }
+    if (!updated || updated.length === 0) return // already opted out — no repeat confirmation
+
+    await engineSendText({
+      accountId,
+      userId: configOwnerUserId,
+      conversationId,
+      contactId,
+      text: 'Listo, no te voy a enviar más recordatorios. Si necesitas algo más, aquí estoy.',
+    })
+  } catch (err) {
+    console.error('[webhook] flagNudgeOptOutIfRequested failed:', err)
+  }
+}
+
 /**
  * Resolve a Meta-side message_id into the matching internal UUID, scoped
  * to one conversation. Returns null when we never received the parent
@@ -1007,6 +1083,17 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // Checked on every inbound text message, independent of flow/AI
+  // state — see the function's own doc comment for why this can't be
+  // left to the collect_ai model to recognize.
+  await flagNudgeOptOutIfRequested(
+    accountId,
+    contactRecord.id,
+    conversation.id,
+    configOwnerUserId,
+    contentText ?? message.text?.body ?? '',
+  )
 
   // ============================================================
   // Flow runner dispatch.
