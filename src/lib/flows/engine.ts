@@ -584,6 +584,46 @@ async function sendListAndSuspend(
 const DEFAULT_NON_TEXT_REPLY_TEXT =
   "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?";
 
+/** Default for CollectAiNodeConfig.nudge_text when a node sets
+ *  nudge_after_minutes but not this. Sent by the /api/flows/cron
+ *  sweep, not by the engine itself. */
+export const DEFAULT_NUDGE_TEXT =
+  "¿Seguís ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.";
+
+/**
+ * Pure decision for whether /api/flows/cron should send a collect_ai
+ * inactivity nudge right now. No I/O — the cron route does the DB
+ * reads/writes and the actual send; this only computes the boolean.
+ *
+ * `optedOut` (contacts.ai_nudge_opt_out) short-circuits everything
+ * else — checked first, deliberately, so it can never be bypassed by
+ * some combination of the other conditions.
+ *
+ * The "already nudged" check compares TIMESTAMPS rather than treating
+ * `lastNudgeSentAt` as a sticky boolean: a nudge only counts as
+ * covering the CURRENT silence period if it was sent AFTER the run's
+ * last real activity (`lastAdvancedAt`). Once the customer replies —
+ * which already bumps `last_advanced_at` unconditionally, including
+ * on a non-text reply via handleCollectAiNonTextReply — any earlier
+ * nudge is naturally stale and a fresh silence period becomes
+ * nudge-eligible again, with no explicit reset write needed anywhere
+ * else in the codebase.
+ */
+export function shouldSendCollectAiNudge(args: {
+  ageMinutes: number;
+  nudgeAfterMinutes: number;
+  lastAdvancedAt: string;
+  lastNudgeSentAt: string | null;
+  optedOut: boolean;
+}): boolean {
+  const { ageMinutes, nudgeAfterMinutes, lastAdvancedAt, lastNudgeSentAt, optedOut } = args;
+  if (optedOut) return false;
+  const alreadyNudgedThisPeriod =
+    lastNudgeSentAt !== null && new Date(lastNudgeSentAt) > new Date(lastAdvancedAt);
+  if (alreadyNudgedThisPeriod) return false;
+  return ageMinutes >= nudgeAfterMinutes;
+}
+
 /** Reset the node-visit turn counter to 0. Mirrors how `reprompt_count`
  *  already resets to 0 on every successful match elsewhere in this file. */
 async function resetAiTurnCount(db: AdminClient, run: FlowRunRow): Promise<void> {

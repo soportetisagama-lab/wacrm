@@ -226,6 +226,20 @@ export interface CollectAiNodeConfig {
    * the validator's warning when it's unset.
    */
   handoff_fallback_text?: string;
+  /**
+   * Minutes of inactivity (measured from `flow_runs.last_advanced_at`)
+   * before the /api/flows/cron sweep sends `nudge_text` to nudge the
+   * customer along. Unset (the default) means no nudge behavior at
+   * all for this node — opt-in per node, not a global switch. Skipped
+   * entirely when the contact has `contacts.ai_nudge_opt_out` set.
+   */
+  nudge_after_minutes?: number;
+  /**
+   * Sent when the inactivity nudge fires. Optional — falls back to a
+   * built-in default (engine.ts's DEFAULT_NUDGE_TEXT) when
+   * `nudge_after_minutes` is set but this isn't.
+   */
+  nudge_text?: string;
   /** Node to advance to once every required field is captured. */
   next_node_key: string;
 }
@@ -400,6 +414,11 @@ export interface FlowRunRow {
    *  reprompt_count — see that migration's comment for why they're
    *  separate counters. */
   ai_turn_count: number;
+  /** Last time /api/flows/cron sent a collect_ai inactivity nudge for
+   *  this run's current node (migration 048). Null = never nudged
+   *  (or nudged before the current silence period started — see
+   *  shouldSendCollectAiNudge). */
+  last_nudge_sent_at: string | null;
   started_at: string;
   last_advanced_at: string;
   ended_at: string | null;

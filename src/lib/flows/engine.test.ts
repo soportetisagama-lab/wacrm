@@ -27,6 +27,7 @@ import {
   enterCollectAiNode,
   handleCollectAiReply,
   handleCollectAiNonTextReply,
+  shouldSendCollectAiNudge,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -542,6 +543,59 @@ describe("decideCollectAiOutcome", () => {
   });
 });
 
+describe("shouldSendCollectAiNudge", () => {
+  const BASE = {
+    ageMinutes: 65,
+    nudgeAfterMinutes: 60,
+    lastAdvancedAt: "2026-01-01T10:00:00Z",
+    lastNudgeSentAt: null as string | null,
+    optedOut: false,
+  };
+
+  it("true once ageMinutes reaches nudgeAfterMinutes, with no prior nudge", () => {
+    expect(shouldSendCollectAiNudge(BASE)).toBe(true);
+  });
+
+  it("false before the threshold", () => {
+    expect(shouldSendCollectAiNudge({ ...BASE, ageMinutes: 59 })).toBe(false);
+  });
+
+  it("optedOut short-circuits to false regardless of everything else", () => {
+    expect(
+      shouldSendCollectAiNudge({ ...BASE, ageMinutes: 999, optedOut: true }),
+    ).toBe(false);
+  });
+
+  it("false when a nudge was already sent for THIS silence period (nudge is after last_advanced_at)", () => {
+    expect(
+      shouldSendCollectAiNudge({
+        ...BASE,
+        lastNudgeSentAt: "2026-01-01T10:30:00Z", // after lastAdvancedAt (10:00)
+      }),
+    ).toBe(false);
+  });
+
+  it("true again once last_advanced_at moves past the old nudge — a reply resets eligibility with no explicit reset write", () => {
+    expect(
+      shouldSendCollectAiNudge({
+        ...BASE,
+        lastNudgeSentAt: "2026-01-01T09:00:00Z", // BEFORE lastAdvancedAt (10:00) — stale
+        lastAdvancedAt: "2026-01-01T10:00:00Z",
+        ageMinutes: 65, // 65 min since the NEW last_advanced_at
+      }),
+    ).toBe(true);
+  });
+
+  it("a nudge sent exactly at last_advanced_at does not count as covering this period (strict >)", () => {
+    expect(
+      shouldSendCollectAiNudge({
+        ...BASE,
+        lastNudgeSentAt: BASE.lastAdvancedAt,
+      }),
+    ).toBe(true);
+  });
+});
+
 // ============================================================
 // collect_ai orchestration — enterCollectAiNode / handleCollectAiReply,
 // with extractWithReply (and its DB-touching neighbors) mocked so the
@@ -563,6 +617,7 @@ function makeRun(overrides: Partial<FlowRunRow> = {}): FlowRunRow {
     vars: {},
     reprompt_count: 0,
     ai_turn_count: 0,
+    last_nudge_sent_at: null,
     started_at: "2026-01-01T00:00:00Z",
     last_advanced_at: "2026-01-01T00:00:00Z",
     ended_at: null,
