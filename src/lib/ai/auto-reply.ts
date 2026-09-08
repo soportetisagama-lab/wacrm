@@ -19,6 +19,17 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string
+  /**
+   * False when the inbound that triggered this dispatch was media
+   * (image/video/audio/sticker/document) rather than usable text — the
+   * webhook still calls this unconditionally so every existing
+   * eligibility gate (config on, no competing automation, no human
+   * assigned, not already handed off, reply cap) applies uniformly;
+   * this only changes what happens once all of those pass. `true` for
+   * every other inbound kind this function already handled before this
+   * field existed.
+   */
+  isTextMessage: boolean
 }
 
 /** Sent to the customer whenever auto-reply hands a conversation off to
@@ -27,6 +38,43 @@ interface DispatchArgs {
  *  the customer's side, the underlying situation is identical ("a
  *  human takes it from here"). */
 const AUTO_REPLY_HANDOFF_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+
+/**
+ * Same wording as collect_ai's DEFAULT_NON_TEXT_REPLY_TEXT
+ * (lib/flows/engine.ts) — kept as an independent constant rather than
+ * imported across the ai/flows module boundary for a single string
+ * the two are free to diverge on later, not because they must always
+ * match.
+ */
+const AUTO_REPLY_NON_TEXT_FALLBACK_TEXT =
+  'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?'
+
+/**
+ * Send the fixed "text only" nudge for a media inbound (image/video/
+ * audio/sticker/document) — never calls the provider, never claims a
+ * reply slot, so it costs nothing and doesn't count toward
+ * auto_reply_max_per_conversation. Not a handoff: doesn't touch
+ * ai_autoreply_disabled or ai_handoff_summary, since nothing here
+ * means a human needs to take over — the customer just needs to type.
+ */
+async function sendNonTextFallback(args: {
+  accountId: string
+  conversationId: string
+  contactId: string
+  configOwnerUserId: string
+}): Promise<void> {
+  try {
+    await engineSendText({
+      accountId: args.accountId,
+      userId: args.configOwnerUserId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text: AUTO_REPLY_NON_TEXT_FALLBACK_TEXT,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] non-text fallback send failed:', err)
+  }
+}
 
 /**
  * Send the fixed handoff-closing line, swallowing any send failure —
@@ -125,6 +173,11 @@ async function handleAutoReplyCapReached(
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
  *
+ * A media inbound (image/video/audio/sticker/document — `isTextMessage:
+ * false`) that clears all of the above still doesn't reach the model:
+ * it gets a fixed "text only" nudge instead (sendNonTextFallback),
+ * free of provider cost and not counted against the reply cap.
+ *
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
  * window check is needed.
@@ -132,7 +185,7 @@ async function handleAutoReplyCapReached(
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  const { accountId, conversationId, contactId, configOwnerUserId } = args
+  const { accountId, conversationId, contactId, configOwnerUserId, isTextMessage } = args
 
   try {
     const db = supabaseAdmin()
@@ -183,6 +236,17 @@ export async function dispatchInboundToAiReply(
         config,
         assignedAgentId: conv.assigned_agent_id,
       })
+      return
+    }
+
+    // Media inbound (image/video/audio/sticker/document) — every gate
+    // above already passed, so this account/conversation IS eligible
+    // for auto-reply right now; it's just that there's no usable text
+    // to hand the model. Short-circuits before buildConversationContext
+    // /generateReply/claim_ai_reply_slot entirely: no provider call, no
+    // reply-cap spend.
+    if (!isTextMessage) {
+      await sendNonTextFallback({ accountId, conversationId, contactId, configOwnerUserId })
       return
     }
 

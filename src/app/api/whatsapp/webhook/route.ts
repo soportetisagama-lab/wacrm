@@ -589,6 +589,20 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
   }
 }
 
+// Meta message types with no usable chat text for the general auto-reply
+// assistant — even when one HAS a caption, buildConversationContext
+// filters it out (content_type stays image/video/audio/document, never
+// 'text'), so the model would never see it. dispatchInboundToAiReply
+// still runs for these (isTextMessage:false) so its own eligibility
+// gates decide whether the fixed "text only" nudge should fire at all.
+const NON_TEXT_AUTO_REPLY_MEDIA_TYPES = new Set([
+  'image',
+  'video',
+  'audio',
+  'sticker',
+  'document',
+])
+
 // Deterministic — checked on every inbound text message regardless of
 // which flow/node (if any) the contact is currently in, so an opt-out
 // said mid-menu or with no active run at all still lands. Not run
@@ -1344,12 +1358,23 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  //
+  // Media types (image/video/audio/sticker/document) still dispatch —
+  // isTextMessage:false — so dispatchInboundToAiReply's own gates
+  // (config, competing automation, assigned agent, cap) decide whether
+  // it's eligible at all before it sends the fixed "text only" nudge.
+  // Checked on message.type, not on inboundText being non-empty: a
+  // caption on a photo/video/document must NOT be treated as usable
+  // chat text (buildConversationContext filters non-text content_types
+  // out entirely, so the model would never actually see it).
+  const isNonTextMedia = NON_TEXT_AUTO_REPLY_MEDIA_TYPES.has(message.type)
+  if (!flowConsumed && !interactiveReplyId && (isNonTextMedia || inboundText.trim())) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+      isTextMessage: !isNonTextMedia,
     })
   }
 

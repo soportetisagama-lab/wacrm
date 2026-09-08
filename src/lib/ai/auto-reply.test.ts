@@ -64,6 +64,7 @@ const ARGS = {
   conversationId: 'conv-1',
   contactId: 'contact-1',
   configOwnerUserId: 'user-1',
+  isTextMessage: true,
 }
 
 function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
@@ -251,6 +252,46 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+})
+
+describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/sticker/document)', () => {
+  it('sends the fixed "text only" nudge without ever calling the provider or claiming a reply slot', async () => {
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.state.rpcCalls).toHaveLength(0) // never calls claim_ai_reply_slot
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('does not touch ai_autoreply_disabled/ai_handoff_summary — this is not a handoff', async () => {
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.state.updatePayload).toBeNull()
+  })
+
+  it('still respects the existing eligibility gates — e.g. stays silent when AI is off', async () => {
+    h.loadAiConfig.mockResolvedValue(null)
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('still respects the reply cap — a capped conversation gets the cap handoff, not the text-only nudge', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+    }
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
 })
 
