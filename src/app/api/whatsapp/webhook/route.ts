@@ -12,7 +12,12 @@ import {
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
-import { dispatchInboundToFlows, matchesKeywordTrigger } from '@/lib/flows/engine'
+import {
+  dispatchInboundToFlows,
+  matchesKeywordTrigger,
+  resolveTemplateButtonAction,
+  startFlowRunAtNode,
+} from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
@@ -82,6 +87,15 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /**
+   * Set when the customer taps a QUICK-REPLY button on a template
+   * message (`type: 'button'`) — structurally different from
+   * `interactive` above, which is only for buttons/lists WE built and
+   * sent (send_buttons/send_list). `payload` is whatever string was
+   * configured on the button when the template was created in Meta's
+   * template editor (often equal to `text`, not guaranteed).
+   */
+  button?: { text: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
   /**
@@ -650,6 +664,96 @@ async function flagNudgeOptOutIfRequested(
   }
 }
 
+// Node the "Sí, quiero info" template button re-enters — hardcoded to
+// this one template's known follow-up, not a general per-account
+// config. See the design discussion that landed this: one template,
+// two buttons, deliberately narrow scope rather than a generic
+// "template button routing" system.
+const TEMPLATE_BUTTON_QUOTE_NODE_KEY = 'collect_inox_quote'
+
+const TEMPLATE_BUTTON_CLOSE_TEXT =
+  '¡Gracias por avisarnos! Si más adelante te interesa, con gusto te ayudamos. Que tengas un buen día.'
+
+/**
+ * Handle a tap on one of b1_no_respuesta's two quick-reply buttons.
+ * These arrive with NO active flow_run — the template is sent well
+ * after any prior conversation ended — so this is the only thing that
+ * reacts to them: `dispatchInboundToFlows` can't (entry triggers are
+ * text/keyword-only, never button-driven — see `findEntryFlow`), and
+ * `dispatchInboundToAiReply` would just treat the tap as freeform text
+ * if it happens to fire at all.
+ *
+ * Returns whether it recognized + handled the tap, so the caller can
+ * suppress the generic flow/automations/AI-reply dispatch for this
+ * inbound — same reasoning as `flowConsumed` elsewhere in this file:
+ * without this, a coincidental keyword match or the general assistant
+ * could react a second time to the same tap.
+ */
+async function handleTemplateButtonReply(
+  accountId: string,
+  contactId: string,
+  conversationId: string,
+  configOwnerUserId: string,
+  buttonText: string,
+): Promise<boolean> {
+  const action = resolveTemplateButtonAction(buttonText)
+  if (!action) return false
+
+  try {
+    if (action.action === 'close') {
+      await engineSendText({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        text: TEMPLATE_BUTTON_CLOSE_TEXT,
+      })
+      return true
+    }
+
+    // action.action === 'start_quote' — find which flow (in THIS
+    // account) owns the collect_inox_quote node. node_key isn't a real
+    // FK (see types.ts), so this goes through flow_nodes directly,
+    // scoped by the flows.account_id it embeds.
+    const { data: node, error } = await supabaseAdmin()
+      .from('flow_nodes')
+      .select('flow_id, flows!inner(account_id)')
+      .eq('node_key', TEMPLATE_BUTTON_QUOTE_NODE_KEY)
+      .eq('node_type', 'collect_ai')
+      .eq('flows.account_id', accountId)
+      .limit(1)
+      .maybeSingle()
+
+    if (error || !node) {
+      // A misconfigured/renamed node is an infra-level problem the
+      // generic dispatch couldn't meaningfully recover from either —
+      // log loudly (so it's visible, not silently swallowed) and still
+      // suppress the fallback paths rather than let a coincidental
+      // keyword match or the general assistant improvise a reply to a
+      // button tap.
+      console.error(
+        '[webhook] handleTemplateButtonReply: collect_inox_quote node not found for account',
+        accountId,
+        error?.message,
+      )
+      return true
+    }
+
+    await startFlowRunAtNode({
+      accountId,
+      flowId: node.flow_id as string,
+      nodeKey: TEMPLATE_BUTTON_QUOTE_NODE_KEY,
+      contactId,
+      conversationId,
+      startedVia: { reason: 'template_button_reply', button_text: buttonText },
+    })
+    return true
+  } catch (err) {
+    console.error('[webhook] handleTemplateButtonReply failed:', err)
+    return true
+  }
+}
+
 /**
  * Resolve a Meta-side message_id into the matching internal UUID, scoped
  * to one conversation. Returns null when we never received the parent
@@ -1138,26 +1242,44 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
-  const flowResult = await dispatchInboundToFlows({
-    accountId,
-    userId: configOwnerUserId,
-    contactId: contactRecord.id,
-    conversationId: conversation.id,
-    message:
-      interactiveReplyId
-        ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
-        : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
-    isFirstInboundMessage,
-  })
+  // Template quick-reply buttons (Meta `type: 'button'`) carry no
+  // active flow_run and can't match a Flow entry trigger (text/keyword
+  // only) — resolved separately, BEFORE the normal flow dispatch, so
+  // it can fully own the response and suppress everything else below
+  // for this inbound. See handleTemplateButtonReply's own doc comment.
+  const templateButtonConsumed =
+    message.type === 'button'
+      ? await handleTemplateButtonReply(
+          accountId,
+          contactRecord.id,
+          conversation.id,
+          configOwnerUserId,
+          message.button?.text ?? '',
+        )
+      : false
+
+  const flowResult = templateButtonConsumed
+    ? { consumed: true as const }
+    : await dispatchInboundToFlows({
+        accountId,
+        userId: configOwnerUserId,
+        contactId: contactRecord.id,
+        conversationId: conversation.id,
+        message:
+          interactiveReplyId
+            ? {
+                kind: 'interactive_reply',
+                reply_id: interactiveReplyId,
+                reply_title: contentText ?? '',
+                meta_message_id: message.id,
+              }
+            : {
+                kind: 'text',
+                text: contentText ?? message.text?.body ?? '',
+                meta_message_id: message.id,
+              },
+        isFirstInboundMessage,
+      })
   const flowConsumed = flowResult.consumed
 
   // Fire any automations that react to this webhook event. All dispatches
@@ -1363,6 +1485,19 @@ async function parseMessageContent(
 
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
+
+    case 'button':
+      // Quick-reply tap on a TEMPLATE message (not an interactive
+      // message we built via send_buttons/send_list — those are
+      // `type: 'interactive'`, handled below). Store the real button
+      // text as contentText so the inbox bubble renders it legibly —
+      // previously this fell to `default` below and stored the literal
+      // string "[Unsupported message type: button]". No
+      // interactiveReplyId: routing for these is handled separately,
+      // in the caller (handleTemplateButtonReply), by matching this
+      // text — there's no stable id to key off the way
+      // interactive.button_reply.id provides.
+      return { ...empty, contentText: message.button?.text || null }
 
     case 'interactive': {
       // The customer tapped a reply button or a list row on a message

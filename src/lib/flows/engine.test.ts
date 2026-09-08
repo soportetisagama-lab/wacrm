@@ -28,6 +28,7 @@ import {
   handleCollectAiReply,
   handleCollectAiNonTextReply,
   shouldSendCollectAiNudge,
+  resolveTemplateButtonAction,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -168,6 +169,37 @@ describe("matchesKeywordTrigger", () => {
     const cfg = { keywords: ["", "support", ""] };
     expect(matchesKeywordTrigger("support center", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nope", cfg)).toBe(false);
+  });
+});
+
+describe("resolveTemplateButtonAction", () => {
+  it("maps the accented quote-request button to start_quote", () => {
+    expect(resolveTemplateButtonAction("Sí, quiero info")).toEqual({
+      action: "start_quote",
+    });
+  });
+
+  it("also matches the unaccented variant", () => {
+    expect(resolveTemplateButtonAction("Si, quiero info")).toEqual({
+      action: "start_quote",
+    });
+  });
+
+  it("is case-insensitive and trims whitespace", () => {
+    expect(resolveTemplateButtonAction("  SÍ, QUIERO INFO  ")).toEqual({
+      action: "start_quote",
+    });
+  });
+
+  it("maps the decline button to close", () => {
+    expect(resolveTemplateButtonAction("Ya no me interesa")).toEqual({
+      action: "close",
+    });
+  });
+
+  it("returns null for any other button text", () => {
+    expect(resolveTemplateButtonAction("Some other template's button")).toBeNull();
+    expect(resolveTemplateButtonAction("")).toBeNull();
   });
 });
 

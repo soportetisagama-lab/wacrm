@@ -138,6 +138,27 @@ export function isSuspending(node_type: string): boolean {
   );
 }
 
+/**
+ * Map a WhatsApp template quick-reply button's display text to the
+ * fixed action it should take — hardcoded to b1_no_respuesta's two
+ * known buttons, not a general per-template config (see the design
+ * discussion that landed this: one template, two buttons, narrow
+ * scope on purpose). `null` for any other button text — the webhook
+ * caller leaves those untouched rather than guessing.
+ */
+export function resolveTemplateButtonAction(
+  buttonText: string,
+): { action: "start_quote" } | { action: "close" } | null {
+  const normalized = buttonText.trim().toLowerCase();
+  if (normalized === "sí, quiero info" || normalized === "si, quiero info") {
+    return { action: "start_quote" };
+  }
+  if (normalized === "ya no me interesa") {
+    return { action: "close" };
+  }
+  return null;
+}
+
 /** Nodes that end the run. */
 export function isTerminal(node_type: string): boolean {
   return node_type === "handoff" || node_type === "end";
@@ -1703,15 +1724,27 @@ async function handleReplyForActiveRun(
   return { consumed: true, flow_run_id: run.id, outcome: "completed" };
 }
 
-async function startNewRun(
+/**
+ * Shared insert+advance logic for starting a brand-new flow_run,
+ * entering directly at `nodeKey`. Used by both `startNewRun` (normal
+ * entry-trigger match — `nodeKey` is always `flow.entry_node_id`) and
+ * the exported `startFlowRunAtNode` below (started from OUTSIDE normal
+ * entry-trigger matching, at whatever node the caller already knows is
+ * the right one).
+ */
+async function insertAndAdvanceRun(
   db: AdminClient,
   flow: FlowRow,
-  input: DispatchInboundInput,
+  nodeKey: string,
+  contactId: string,
+  conversationId: string,
   nodes: Map<string, FlowNodeRow>,
+  startedVia: Record<string, unknown>,
 ): Promise<DispatchInboundResult> {
   // INSERT — partial unique index `idx_one_active_run_per_contact`
   // catches concurrent inserts with 23505. We catch and return as
-  // consumed:true (the parallel webhook handles it).
+  // consumed:true (the parallel webhook — or in startFlowRunAtNode's
+  // case, an already-active run from some other path — handles it).
   const { data: inserted, error: insErr } = await db
     .from("flow_runs")
     .insert({
@@ -1724,10 +1757,10 @@ async function startNewRun(
       // Audit: preserves the flow's author on the run row for log
       // attribution.
       user_id: flow.user_id,
-      contact_id: input.contactId,
-      conversation_id: input.conversationId,
+      contact_id: contactId,
+      conversation_id: conversationId,
       status: "active",
-      current_node_key: flow.entry_node_id,
+      current_node_key: nodeKey,
     })
     .select("*")
     .maybeSingle();
@@ -1737,14 +1770,14 @@ async function startNewRun(
     if (msg.includes("23505") || msg.includes("duplicate key")) {
       return { consumed: true, outcome: "duplicate_inbound_ignored" };
     }
-    console.error("[flows] startNewRun insert error:", insErr.message);
+    console.error("[flows] insertAndAdvanceRun insert error:", insErr.message);
     return { consumed: false, outcome: "no_match" };
   }
   const run = inserted as FlowRunRow;
-  await logEvent(db, run.id, "started", flow.entry_node_id, {
+  await logEvent(db, run.id, "started", nodeKey, {
     flow_id: flow.id,
     trigger_type: flow.trigger_type,
-    meta_message_id: input.message.meta_message_id,
+    ...startedVia,
   });
   // Bump the flow's execution counter — used by the builder UI to
   // surface "X runs since activation" on the flow card.
@@ -1763,10 +1796,79 @@ async function startNewRun(
   }
 
   // Run the advance loop starting from the entry node.
-  const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id!, nodes);
+  const outcome = await advanceFromNodeKey(db, run, nodeKey, nodes);
   return {
     consumed: true,
     flow_run_id: run.id,
     outcome: outcome.outcome === "advanced" ? "started" : outcome.outcome,
   };
+}
+
+async function startNewRun(
+  db: AdminClient,
+  flow: FlowRow,
+  input: DispatchInboundInput,
+  nodes: Map<string, FlowNodeRow>,
+): Promise<DispatchInboundResult> {
+  return insertAndAdvanceRun(
+    db,
+    flow,
+    flow.entry_node_id!,
+    input.contactId,
+    input.conversationId,
+    nodes,
+    { meta_message_id: input.message.meta_message_id },
+  );
+}
+
+/**
+ * Start a flow_run OUTSIDE the normal entry-trigger flow, entering
+ * directly at `nodeKey` — for a caller that already knows exactly
+ * which node is the right starting point, because Flow entry triggers
+ * (text/keyword-only — see `findEntryFlow`'s `if (message.kind !==
+ * "text") return null`) could never have matched what actually
+ * happened. Today's only caller: the webhook's template-button-reply
+ * handler — a WhatsApp template quick-reply tap arrives as Meta
+ * `type: 'button'`, structurally different from (and unhandled by) the
+ * `interactive` shape send_buttons/send_list use, and there's no
+ * active flow_run to advance either (the template was sent well after
+ * any prior conversation ended).
+ *
+ * Self-contained (own `supabaseAdmin()`, own flow/nodes load) so a
+ * caller outside this file's own dispatch loop — like the webhook —
+ * doesn't need to pre-load anything. Scoped to `accountId` defensively:
+ * a caller passing a `flowId` from the wrong account gets `no_match`,
+ * never a cross-tenant write.
+ */
+export async function startFlowRunAtNode(args: {
+  accountId: string;
+  flowId: string;
+  nodeKey: string;
+  contactId: string;
+  conversationId: string;
+  /** Logged on the 'started' flow_run_events row for audit context —
+   *  e.g. `{ reason: 'template_button_reply', button_text: '...' }`. */
+  startedVia: Record<string, unknown>;
+}): Promise<DispatchInboundResult> {
+  const db = supabaseAdmin();
+  const flow = await loadFlow(db, args.flowId);
+  if (!flow || flow.account_id !== args.accountId) {
+    return { consumed: false, outcome: "no_match" };
+  }
+  const nodes = await loadAllNodes(db, flow.id);
+  if (!nodes.has(args.nodeKey)) {
+    console.error(
+      `[flows] startFlowRunAtNode: node "${args.nodeKey}" not found in flow ${flow.id}`,
+    );
+    return { consumed: false, outcome: "no_match" };
+  }
+  return insertAndAdvanceRun(
+    db,
+    flow,
+    args.nodeKey,
+    args.contactId,
+    args.conversationId,
+    nodes,
+    args.startedVia,
+  );
 }
