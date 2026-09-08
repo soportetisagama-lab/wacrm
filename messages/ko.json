@@ -1948,6 +1948,7 @@
       "llmCalls": "LLM 호출",
       "autoReply": "자동 응답",
       "drafts": "초안",
+      "flowCollect": "플로우 수집기",
       "tokensPerDay": "일별 토큰",
       "byModel": "모델별",
       "tokCalls": "{tok} 토큰 · 호출 {calls}회",

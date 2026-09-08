@@ -1948,6 +1948,7 @@
       "llmCalls": "LLM calls",
       "autoReply": "Auto-reply",
       "drafts": "Drafts",
+      "flowCollect": "Flow collector",
       "tokensPerDay": "Tokens per day",
       "byModel": "By model",
       "tokCalls": "{tok} tok · {calls, plural, one {# call} other {# calls}}",
