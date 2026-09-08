@@ -1,0 +1,35 @@
+-- ============================================================
+-- Flows: per-node turn counter for the upcoming `collect_ai` node.
+--
+-- `collect_ai` (not yet implemented — engine.ts, piece 4 of this
+-- build) runs a multi-turn LLM sub-loop inside one node, capped by a
+-- per-node `max_turns` config value so a confused or adversarial
+-- customer can't keep the run alive — and the account's BYO provider
+-- key burning tokens — forever.
+--
+-- `reprompt_count` (migration 010) already exists but tracks a
+-- different thing: "the customer's reply didn't match anything" on
+-- send_buttons/send_list/collect_input, and is what every node's
+-- `fallback_policy.max_reprompts` exhaustion is measured against.
+-- Reusing it here would conflate "didn't understand" with "understood
+-- fine, just not done collecting yet", and would silently change the
+-- exhaust behavior of every OTHER node on the same flow. Hence a
+-- dedicated column instead of overloading reprompt_count.
+--
+-- Lifecycle (enforced in engine.ts, not here):
+--   - Reset to 0 when the run ENTERS a collect_ai node — mirrors how
+--     reprompt_count already resets to 0 on every successful match.
+--   - Incremented by 1 on each extractWithReply call made while
+--     suspended on that node.
+--   - Compared against that node's config.max_turns; hitting the cap
+--     forces a handoff instead of continuing to loop.
+--
+-- No CHECK (>= 0) added — reprompt_count (migration 010) carries none
+-- either; both are only ever written by the runner via +1/reset, so a
+-- DB-level bound would be redundant defense, not a real constraint.
+--
+-- Idempotent — safe to run multiple times.
+-- ============================================================
+
+ALTER TABLE flow_runs
+  ADD COLUMN IF NOT EXISTS ai_turn_count INTEGER NOT NULL DEFAULT 0;
