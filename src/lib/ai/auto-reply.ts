@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './admin-client'
+import type { AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
@@ -18,6 +19,79 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string
+}
+
+/** Sent to the customer when the per-conversation reply cap is reached
+ *  — see handleAutoReplyCapReached below. */
+const AUTO_REPLY_CAP_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+
+/**
+ * Mark a conversation as needing a human — pauses auto-reply on it
+ * (sticky until re-enabled) and routes to the configured handoff
+ * agent (null leaves it in the shared queue, matching the existing
+ * `on_conversation_assigned` notification path). Shared by every way
+ * `dispatchInboundToAiReply` exits toward a human: the model's own
+ * `[[HANDOFF]]` decision, and the two per-conversation reply-cap exits
+ * below (the cheap pre-check and the atomic-claim race loss).
+ */
+async function markNeedsHuman(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    conversationId: string
+    config: AiConfig
+    assignedAgentId: string | null
+    summary: string
+  },
+): Promise<void> {
+  const update: Record<string, unknown> = {
+    ai_autoreply_disabled: true,
+    ai_handoff_summary: args.summary,
+  }
+  // Only set the assignee when a target is configured AND the thread
+  // isn't already owned — never stomp an existing human assignment.
+  if (args.config.handoffAgentId && !args.assignedAgentId) {
+    update.assigned_agent_id = args.config.handoffAgentId
+  }
+  await db.from('conversations').update(update).eq('id', args.conversationId)
+}
+
+/**
+ * Reached the per-conversation reply cap (either the cheap pre-check
+ * before generating a reply, or lost the atomic-claim race after
+ * already generating one) — send a closing line so the customer isn't
+ * left with silence, then mark the conversation for a human the same
+ * way a model-decided handoff does. The send is wrapped in its own
+ * try/catch so a failed send still leaves the conversation correctly
+ * marked — the marking matters more than the message landing.
+ */
+async function handleAutoReplyCapReached(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    accountId: string
+    conversationId: string
+    contactId: string
+    configOwnerUserId: string
+    config: AiConfig
+    assignedAgentId: string | null
+  },
+): Promise<void> {
+  try {
+    await engineSendText({
+      accountId: args.accountId,
+      userId: args.configOwnerUserId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text: AUTO_REPLY_CAP_CLOSING_TEXT,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] cap-reached closing message send failed:', err)
+  }
+  await markNeedsHuman(db, {
+    conversationId: args.conversationId,
+    config: args.config,
+    assignedAgentId: args.assignedAgentId,
+    summary: `🤖 Se alcanzó el límite de ${args.config.autoReplyMaxPerConversation} respuestas automáticas por conversación.`,
+  })
 }
 
 /**
@@ -76,8 +150,25 @@ export async function dispatchInboundToAiReply(
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    // below (this read can race a concurrent inbound). Previously a
+    // bare `return` here — the customer got silence with no signal
+    // anywhere that a human should take over. handleAutoReplyCapReached
+    // sends a closing line and marks the conversation the same way a
+    // model-decided handoff does; because this returns immediately, a
+    // SECOND capped inbound never reaches this line at all — it exits
+    // earlier at the `ai_autoreply_disabled` check above, now true —
+    // so the closing message only ever sends once per cap event.
+    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      await handleAutoReplyCapReached(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+      })
+      return
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -134,26 +225,19 @@ export async function dispatchInboundToAiReply(
 
     if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
-      // this thread and hand it to a human. We (a) pause the bot here
-      // (sticky until re-enabled), (b) route the conversation to the
-      // configured handoff agent — null leaves it in the shared queue —
-      // and (c) leave a short internal note so whoever picks it up has
-      // context. Assigning fires the `on_conversation_assigned` trigger,
+      // this thread and hand it to a human. Assigning (inside
+      // markNeedsHuman) fires the `on_conversation_assigned` trigger,
       // which notifies the agent.
       const summary = buildHandoffSummary({
         messages,
         replyCount: conv.ai_reply_count ?? 0,
       })
-      const update: Record<string, unknown> = {
-        ai_autoreply_disabled: true,
-        ai_handoff_summary: summary,
-      }
-      // Only set the assignee when a target is configured AND the thread
-      // isn't already owned — never stomp an existing human assignment.
-      if (config.handoffAgentId && !conv.assigned_agent_id) {
-        update.assigned_agent_id = config.handoffAgentId
-      }
-      await db.from('conversations').update(update).eq('id', conversationId)
+      await markNeedsHuman(db, {
+        conversationId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        summary,
+      })
       return
     }
 
@@ -177,7 +261,22 @@ export async function dispatchInboundToAiReply(
       console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
       return
     }
-    if (claimed !== true) return // lost the per-conversation cap race
+    if (claimed !== true) {
+      // Lost the per-conversation cap race — a concurrent inbound took
+      // the last slot between our cheap pre-check and this atomic
+      // claim. The model's reply is discarded either way; treat it the
+      // same as reaching the cap normally rather than leaving the
+      // customer with silence.
+      await handleAutoReplyCapReached(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+      })
+      return
+    }
 
     await engineSendText({
       accountId,

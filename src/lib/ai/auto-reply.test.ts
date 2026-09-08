@@ -127,12 +127,27 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('does not send when the atomic slot claim loses the race', async () => {
+  it('sends a closing line and marks the conversation when the atomic slot claim loses the race', async () => {
     h.state.claim = false
     await dispatchInboundToAiReply(ARGS)
-    // It still attempts the claim, but the send is skipped.
+    // It still attempts the claim; the model's generated text is
+    // discarded, but the customer still gets a closing line instead of
+    // silence.
     expect(h.state.rpcCalls).toHaveLength(1)
-    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Un asesor va a continuar contigo en breve.',
+      }),
+    )
+    expect(h.engineSendText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(
+      '🤖 Se alcanzó el límite de 3 respuestas automáticas por conversación.',
+    )
   })
 
   it('skips when AI is off / not configured', async () => {
@@ -168,14 +183,67 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('skips when the per-conversation cap is reached', async () => {
+  it('sends a closing line and marks the conversation when the per-conversation cap is reached', async () => {
     h.state.conv = {
       assigned_agent_id: null,
       ai_autoreply_disabled: false,
       ai_reply_count: 3,
     }
     await dispatchInboundToAiReply(ARGS)
+    // Never even calls the provider — this is the cheap pre-check,
+    // before generateReply.
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Un asesor va a continuar contigo en breve.',
+      }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(
+      '🤖 Se alcanzó el límite de 3 respuestas automáticas por conversación.',
+    )
+    // No handoff target configured → conversation left unassigned,
+    // same convention as a model-decided handoff.
+    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('routes the cap-reached handoff to the configured agent, same as a model handoff', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload).toMatchObject({
+      ai_autoreply_disabled: true,
+      assigned_agent_id: 'agent-7',
+    })
+  })
+
+  it('a second capped inbound sends nothing further — ai_autoreply_disabled already true short-circuits it first', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: true, // as if the first capped message already set this
+      ai_reply_count: 3,
+    }
+    await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('the cap-reached note reflects the account\'s actual configured max, not a hardcoded number', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ autoReplyMaxPerConversation: 5 }))
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 5,
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(
+      '🤖 Se alcanzó el límite de 5 respuestas automáticas por conversación.',
+    )
   })
 
   it('skips when there is nothing to reply to', async () => {
