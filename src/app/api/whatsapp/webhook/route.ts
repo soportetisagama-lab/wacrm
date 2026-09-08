@@ -150,6 +150,12 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        errors?: Array<{
+          code: number
+          title?: string
+          message?: string
+          error_data?: { details?: string }
+        }>
       }>
     }
     field: string
@@ -429,7 +435,21 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  errors?: Array<{
+    code: number
+    title?: string
+    message?: string
+    error_data?: { details?: string }
+  }>
 }) {
+  // Meta includes errors[0] only on a `failed` status. `message` and
+  // `title` sometimes repeat the same text — prefer `message`, fall
+  // back to `title` so a failed send is diagnosable from the DB
+  // instead of a bare "failed" with no reason (issue found live: two
+  // failed template sends with nothing else captured anywhere).
+  const firstError = status.status === 'failed' ? status.errors?.[0] : undefined
+  const errorMessage = firstError ? firstError.message || firstError.title || null : undefined
+
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
@@ -437,7 +457,10 @@ async function handleStatusUpdate(status: {
   //    assume a single row.
   const { error: msgErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .update({
+      status: status.status,
+      ...(firstError && { error_code: firstError.code, error_message: errorMessage }),
+    })
     .eq('message_id', status.id)
 
   if (msgErr) {
@@ -472,6 +495,7 @@ async function handleStatusUpdate(status: {
     if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
     if (status.status === 'delivered') update.delivered_at = tsIso
     if (status.status === 'read') update.read_at = tsIso
+    if (firstError) update.error_message = errorMessage
 
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
