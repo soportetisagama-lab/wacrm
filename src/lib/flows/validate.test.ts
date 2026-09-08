@@ -516,6 +516,214 @@ describe("validateFlowForActivation — send_media", () => {
   });
 });
 
+describe("validateFlowForActivation — collect_ai", () => {
+  const baseFlow = { ...validFlow, entry_node_id: "s" };
+  const nodesWith = (
+    collectConfig: Record<string, unknown>,
+    extra: Array<{ node_key: string; node_type: string; config: Record<string, unknown> }> = [],
+  ) => [
+    { node_key: "s", node_type: "start", config: { next_node_key: "c" } },
+    { node_key: "c", node_type: "collect_ai", config: collectConfig },
+    { node_key: "h", node_type: "handoff", config: {} },
+    { node_key: "human", node_type: "handoff", config: {} },
+    ...extra,
+  ];
+
+  const validCollectConfig = {
+    fields: [
+      { key: "equipos", label: "Equipos", required: true },
+      { key: "ciudad", label: "Ciudad", required: true },
+      { key: "rubro", label: "Rubro", required: false },
+    ],
+    max_turns: 6,
+    next_node_key: "h",
+    handoff_node_key: "human",
+    handoff_fallback_text: "Un asesor te va a contactar en breve.",
+  };
+
+  it("passes on a fully-populated collect_ai node", () => {
+    const issues = validateFlowForActivation(baseFlow, nodesWith(validCollectConfig));
+    expect(issues).toEqual([]);
+  });
+
+  it("flags an empty fields list", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({ ...validCollectConfig, fields: [] }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "c" && i.field === "fields" && i.severity === "error"),
+    ).toBe(true);
+  });
+
+  it("flags a field with no key", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        ...validCollectConfig,
+        fields: [{ label: "Equipos", required: true }],
+      }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "c" && i.field === "fields.0.key"),
+    ).toBe(true);
+  });
+
+  it("flags a field key that isn't a valid identifier", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        ...validCollectConfig,
+        fields: [{ key: "2 equipos", label: "Equipos", required: true }],
+      }),
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "c" &&
+          i.field === "fields.0.key" &&
+          i.message.includes("alphanumeric"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags duplicate field keys", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        ...validCollectConfig,
+        fields: [
+          { key: "ciudad", label: "Ciudad", required: true },
+          { key: "ciudad", label: "Ciudad otra vez", required: false },
+        ],
+      }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "c" && i.message.includes("Duplicate field key")),
+    ).toBe(true);
+  });
+
+  it("flags a field with no label", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        ...validCollectConfig,
+        fields: [{ key: "equipos", required: true }],
+      }),
+    );
+    expect(
+      issues.some((i) => i.node_key === "c" && i.field === "fields.0.label"),
+    ).toBe(true);
+  });
+
+  it("warns when no field is marked required", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({
+        ...validCollectConfig,
+        fields: [{ key: "rubro", label: "Rubro", required: false }],
+      }),
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "c" &&
+          i.field === "fields" &&
+          i.severity === "warning" &&
+          i.message.includes("required"),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns when handoff_fallback_text is unset — provider failures would hand off silently", () => {
+    const { handoff_fallback_text: _drop, ...rest } = validCollectConfig;
+    const issues = validateFlowForActivation(baseFlow, nodesWith(rest));
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "c" &&
+          i.field === "handoff_fallback_text" &&
+          i.severity === "warning",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not warn about handoff_fallback_text when it's set", () => {
+    const issues = validateFlowForActivation(baseFlow, nodesWith(validCollectConfig));
+    expect(issues.some((i) => i.field === "handoff_fallback_text")).toBe(false);
+  });
+
+  it("flags missing/zero/non-integer max_turns", () => {
+    for (const bad of [undefined, 0, -1, 1.5]) {
+      const issues = validateFlowForActivation(
+        baseFlow,
+        nodesWith({ ...validCollectConfig, max_turns: bad }),
+      );
+      expect(
+        issues.some((i) => i.node_key === "c" && i.field === "max_turns"),
+      ).toBe(true);
+    }
+  });
+
+  it("flags missing next_node_key", () => {
+    const { next_node_key: _drop, ...rest } = validCollectConfig;
+    const issues = validateFlowForActivation(baseFlow, nodesWith(rest));
+    expect(
+      issues.some((i) => i.node_key === "c" && i.field === "next_node_key"),
+    ).toBe(true);
+  });
+
+  it("flags next_node_key pointing at a non-existent node", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({ ...validCollectConfig, next_node_key: "ghost" }),
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "c" &&
+          i.field === "next_node_key" &&
+          i.message.includes("ghost"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags handoff_node_key pointing at a non-existent node", () => {
+    const issues = validateFlowForActivation(
+      baseFlow,
+      nodesWith({ ...validCollectConfig, handoff_node_key: "ghost" }),
+    );
+    expect(
+      issues.some(
+        (i) =>
+          i.node_key === "c" &&
+          i.field === "handoff_node_key" &&
+          i.message.includes("ghost"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not require handoff_node_key — unset is valid (falls back to generic handoff)", () => {
+    const { handoff_node_key: _drop, ...rest } = validCollectConfig;
+    const issues = validateFlowForActivation(baseFlow, nodesWith(rest));
+    // No error about the collect_ai node itself — the only remaining
+    // issue is the fixture's now-orphaned "human" node (nothing else in
+    // this scenario points at it), which is correctly flagged, not a
+    // false positive on collect_ai.
+    expect(issues.every((i) => i.node_key !== "c")).toBe(true);
+  });
+
+  it("contributes both next_node_key and handoff_node_key to reachability", () => {
+    const set = reachableFromEntry("s", nodesWith(validCollectConfig));
+    expect(set).toEqual(new Set(["s", "c", "h", "human"]));
+  });
+
+  it("a handoff_node_key target with nothing else pointing at it is still reachable (not flagged orphan)", () => {
+    const issues = validateFlowForActivation(baseFlow, nodesWith(validCollectConfig));
+    expect(issues.some((i) => i.node_key === "human")).toBe(false);
+  });
+});
+
 describe("reachableFromEntry", () => {
   it("walks the graph from the entry", () => {
     const set = reachableFromEntry("start", validNodes);

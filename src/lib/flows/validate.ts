@@ -589,6 +589,136 @@ function validateNode(
       break;
     }
 
+    case "collect_ai": {
+      const cfg = node.config as {
+        intro_text?: string;
+        fields?: Array<{
+          key?: string;
+          label?: string;
+          description?: string;
+          required?: boolean;
+        }>;
+        system_context?: string;
+        max_turns?: number;
+        handoff_node_key?: string;
+        handoff_fallback_text?: string;
+        next_node_key?: string;
+      };
+
+      const fields = cfg.fields ?? [];
+      if (fields.length < 1) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "fields",
+          message: "Collect-AI needs at least one field to collect.",
+        });
+      }
+
+      const seenKeys = new Set<string>();
+      fields.forEach((f, i) => {
+        const field = `fields.${i}`;
+        if (!f.key?.trim()) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: `${field}.key`,
+            message: `Field ${i + 1} needs a key.`,
+          });
+        } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(f.key)) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: `${field}.key`,
+            message: `Field key "${f.key}" must be alphanumeric+underscore and start with a letter or underscore.`,
+          });
+        } else if (seenKeys.has(f.key)) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: `${field}.key`,
+            message: `Duplicate field key "${f.key}".`,
+          });
+        }
+        if (f.key) seenKeys.add(f.key);
+
+        if (!f.label?.trim()) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: `${field}.label`,
+            message: `Field ${i + 1} needs a label.`,
+          });
+        }
+      });
+
+      if (fields.length > 0 && !fields.some((f) => f.required)) {
+        issues.push({
+          severity: "warning",
+          scope: "node",
+          node_key: node.node_key,
+          field: "fields",
+          message:
+            "No field is marked required — the node may advance before collecting anything meaningful.",
+        });
+      }
+
+      if (!Number.isInteger(cfg.max_turns) || (cfg.max_turns as number) < 1) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "max_turns",
+          message: "Collect-AI needs max_turns to be a positive integer.",
+        });
+      }
+
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: "Collect-AI must point to a next node.",
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: `Collect-AI points to non-existent node "${cfg.next_node_key}".`,
+        });
+      }
+
+      if (cfg.handoff_node_key && !knownKeys.has(cfg.handoff_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "handoff_node_key",
+          message: `Collect-AI's handoff_node_key points to non-existent node "${cfg.handoff_node_key}".`,
+        });
+      }
+
+      if (!cfg.handoff_fallback_text?.trim()) {
+        issues.push({
+          severity: "warning",
+          scope: "node",
+          node_key: node.node_key,
+          field: "handoff_fallback_text",
+          message:
+            "No handoff_fallback_text set — a provider failure, exhausted max_turns, or an empty model reply will hand off silently, with no message to the customer.",
+        });
+      }
+      break;
+    }
+
     case "condition": {
       const cfg = node.config as {
         subject?: "var" | "tag" | "contact_field";
@@ -768,6 +898,21 @@ function outgoingEdges(node: NodeInput): string[] {
       const out: string[] = [];
       if (cfg.true_next) out.push(cfg.true_next);
       if (cfg.false_next) out.push(cfg.false_next);
+      return out;
+    }
+    case "collect_ai": {
+      // Two possible exits: the success path (next_node_key) and the
+      // handoff path (handoff_node_key, when configured — unset falls
+      // back to the generic pending-conversation handoff, which isn't
+      // a graph edge). Both must count for reachability, same as
+      // condition's true_next/false_next.
+      const cfg = node.config as {
+        next_node_key?: string;
+        handoff_node_key?: string;
+      };
+      const out: string[] = [];
+      if (cfg.next_node_key) out.push(cfg.next_node_key);
+      if (cfg.handoff_node_key) out.push(cfg.handoff_node_key);
       return out;
     }
     case "send_buttons": {
