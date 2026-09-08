@@ -204,6 +204,18 @@ export interface CollectAiNodeConfig {
    */
   handoff_node_key?: string;
   /**
+   * Sent instead of calling the model when the customer's reply isn't
+   * text — an image, audio, sticker, or video with no caption. The
+   * webhook collapses every inbound kind into a single text-shaped
+   * message, using an empty string when there's no caption, so this is
+   * the only signal the engine has for "the customer sent media, not
+   * words." extractWithReply is never invoked for these turns: no
+   * provider call, no ai_turn_count spent. Optional — falls back to a
+   * built-in default (engine.ts's DEFAULT_NON_TEXT_REPLY_TEXT) when
+   * unset, so every node gets sane behavior without configuring this.
+   */
+  non_text_reply_text?: string;
+  /**
    * Message sent to the customer when handing off WITHOUT a courtesy
    * message from the model itself — i.e. every handoff reason except
    * `model_handoff` (provider failure, max_turns exhausted, or an

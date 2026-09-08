@@ -579,6 +579,11 @@ async function sendListAndSuspend(
 // (types.ts) and `decideCollectAiOutcome` above for the full contract.
 // ============================================================
 
+/** Default for CollectAiNodeConfig.non_text_reply_text when a node
+ *  doesn't configure one. */
+const DEFAULT_NON_TEXT_REPLY_TEXT =
+  "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?";
+
 /** Reset the node-visit turn counter to 0. Mirrors how `reprompt_count`
  *  already resets to 0 on every successful match elsewhere in this file. */
 async function resetAiTurnCount(db: AdminClient, run: FlowRunRow): Promise<void> {
@@ -920,6 +925,26 @@ export async function handleCollectAiReply(
   const cfg = node.config as unknown as CollectAiNodeConfig;
   const result = await runCollectAiTurn(db, run, cfg);
   return handleCollectAiOutcome(db, run, node, cfg, nodes, result);
+}
+
+/**
+ * Handle a non-text reply (image/audio/sticker/video with no caption)
+ * while suspended on a collect_ai node. Exported alongside
+ * `handleCollectAiReply` as its own testable seam — kept separate
+ * rather than folded into `handleCollectAiReply` so this guard-and-skip
+ * path doesn't ripple into that function's existing signature/tests.
+ * Never calls extractWithReply: no provider call, no ai_turn_count
+ * spent — just the node's configured (or default) fixed reply, reusing
+ * the same send-and-stay-suspended helper as intro_text/continue.
+ */
+export async function handleCollectAiNonTextReply(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<{ outcome: "advanced" | "completed" }> {
+  const cfg = node.config as unknown as CollectAiNodeConfig;
+  const text = cfg.non_text_reply_text?.trim() || DEFAULT_NON_TEXT_REPLY_TEXT;
+  return sendCollectAiTextAndSuspend(db, run, node, text);
 }
 
 async function executeHandoff(
@@ -1440,7 +1465,18 @@ async function handleReplyForActiveRun(
   // not happen — this node never sends buttons/lists) falls through to
   // the generic fallback path unchanged, same as any other unrecognized
   // node/message combination.
+  //
+  // The webhook collapses every inbound kind into this same text-shaped
+  // message, using an empty string when there's no caption — so a blank
+  // `message.text` here means the customer sent media (image, audio,
+  // sticker, video), not that they typed nothing. That case skips
+  // extractWithReply entirely (handleCollectAiNonTextReply): no
+  // provider call, no ai_turn_count spent.
   if (message.kind === "text" && currentNode.node_type === "collect_ai") {
+    if (!message.text.trim()) {
+      const outcome = await handleCollectAiNonTextReply(db, run, currentNode);
+      return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+    }
     const outcome = await handleCollectAiReply(db, run, currentNode, nodes);
     return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
   }

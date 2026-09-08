@@ -26,6 +26,7 @@ import {
   collectAiRequiredFieldsPresent,
   enterCollectAiNode,
   handleCollectAiReply,
+  handleCollectAiNonTextReply,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -971,5 +972,62 @@ describe("handleCollectAiReply", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(inserts.some((i) => i.table === "ai_usage_log")).toBe(false);
+  });
+});
+
+describe("handleCollectAiNonTextReply", () => {
+  it("sends the built-in default when the node has no non_text_reply_text configured, without calling extractWithReply", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() }); // no non_text_reply_text
+
+    const outcome = await handleCollectAiNonTextReply(db, run, node);
+
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+      }),
+    );
+  });
+
+  it("sends the node's configured non_text_reply_text instead of the default when set", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({
+      config: collectAiConfig({ non_text_reply_text: "Por ahora no puedo ver fotos, ¿me lo contás en texto?" }),
+    });
+
+    await handleCollectAiNonTextReply(db, run, node);
+
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Por ahora no puedo ver fotos, ¿me lo contás en texto?" }),
+    );
+  });
+
+  it("never spends a turn — ai_turn_count is untouched", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ ai_turn_count: 2 });
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiNonTextReply(db, run, node);
+
+    expect(run.ai_turn_count).toBe(2);
+  });
+
+  it("stays suspended on the same node (does not advance or complete)", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "collect" });
+    const node = makeNode({ node_key: "collect", config: collectAiConfig() });
+
+    const outcome = await handleCollectAiNonTextReply(db, run, node);
+
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(
+      updates.some(
+        (u) => u.table === "flow_runs" && u.payload.current_node_key === "collect",
+      ),
+    ).toBe(true);
   });
 });
