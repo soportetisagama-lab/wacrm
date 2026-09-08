@@ -1111,7 +1111,7 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
+  const { contentText, mediaUrl, mediaType, interactiveReplyId, filename } =
     await parseMessageContent(message, accessToken)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
@@ -1133,7 +1133,7 @@ async function processMessage(
   // Insert message — field names MUST match the messages table schema
   // (see supabase/migrations/001_initial_schema.sql):
   //   conversation_id, sender_type, content_type, content_text,
-  //   media_url, template_name, message_id, status, created_at
+  //   media_url, filename, template_name, message_id, status, created_at
   // `mediaType` is intentionally unused — the schema has no media_type
   // column; the MIME type is only used to construct the proxy URL during
   // parseMessageContent. Silence the unused-var warning:
@@ -1171,6 +1171,7 @@ async function processMessage(
     content_type: contentType,
     content_text: contentText,
     media_url: mediaUrl,
+    filename,
     message_id: message.id,
     status: 'delivered',
     created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
@@ -1383,6 +1384,10 @@ async function parseMessageContent(
    * tap with the right affordance. Null for everything else.
    */
   interactiveReplyId: string | null
+  /** Document-only: the filename Meta reported, kept separate from
+   *  contentText (the caption) so the inbox's document card can show a
+   *  short filename instead of falling back to a long caption. */
+  filename: string | null
 }> {
   // getMediaUrl signature is (mediaId, accessToken) — earlier code had
   // the args swapped, so every verification hit an invalid Meta URL and
@@ -1410,6 +1415,7 @@ async function parseMessageContent(
     mediaUrl: null,
     mediaType: null,
     interactiveReplyId: null,
+    filename: null,
   }
 
   switch (message.type) {
@@ -1442,8 +1448,13 @@ async function parseMessageContent(
       if (message.document?.id) {
         return {
           ...empty,
-          contentText:
-            message.document.caption || message.document.filename || null,
+          // Split from filename (below) — content_text is now the real
+          // caption only, or null. A document with no caption now falls
+          // back to `[document]` for conversations.last_message_text,
+          // same as image/video/audio already do — previously document
+          // was the one type using its filename as a pseudo-caption.
+          contentText: message.document.caption || null,
+          filename: message.document.filename || null,
           mediaUrl: await verifyAndBuildUrl(message.document.id),
           mediaType: message.document.mime_type,
         }

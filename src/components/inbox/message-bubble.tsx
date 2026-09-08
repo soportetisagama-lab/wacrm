@@ -123,7 +123,12 @@ function MessageContent({
 
     case "document":
       if (!message.media_url) {
-        return <MediaUnavailable label={message.content_text || t("document")} t={t} />;
+        return (
+          <MediaUnavailable
+            label={message.filename || message.content_text || t("document")}
+            t={t}
+          />
+        );
       }
       return <MediaDocumentBubble message={message} t={t} />;
 

@@ -253,24 +253,36 @@ export function MediaDocumentBubble({
   t: Translator;
 }) {
   const { downloading, download } = useMediaDownload(message, t);
+  const label = message.filename || message.content_text || t("document");
+  // Only show the caption separately when we ALSO have a distinct
+  // filename — otherwise content_text IS the label already (legacy
+  // messages sent before the filename column existed, or an inbound
+  // document with no filename captured), and showing it twice would
+  // be redundant.
+  const caption = message.filename ? message.content_text : null;
 
   return (
-    <div className="flex items-center gap-2">
-      <a
-        href={message.media_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
-      >
-        <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{message.content_text || t("document")}</span>
-      </a>
-      <MediaActionButton
-        icon={Download}
-        label={t("download")}
-        onClick={download}
-        busy={downloading}
-      />
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <a
+          href={message.media_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
+        >
+          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <span className="truncate font-medium">{label}</span>
+        </a>
+        <MediaActionButton
+          icon={Download}
+          label={t("download")}
+          onClick={download}
+          busy={downloading}
+        />
+      </div>
+      {caption && (
+        <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>
+      )}
     </div>
   );
 }
