@@ -18,6 +18,8 @@
  * references in JSONB.
  */
 
+import type { ExtractionField } from "@/lib/ai/schema";
+
 // ============================================================
 // Node configs (discriminated union by node_type)
 // ============================================================
@@ -159,6 +161,63 @@ export interface CollectInputNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Runs a multi-turn LLM sub-loop that asks the customer free-text
+ * questions until every `required` field in `fields` is captured,
+ * asking only about what's still missing each turn (see
+ * `lib/ai/schema.ts`'s `buildExtractionPrompt`) — then advances.
+ *
+ * Reuses `ExtractionField` from `lib/ai/schema` (the exact shape
+ * `extractWithReply` consumes) rather than a parallel field-spec type
+ * here, so the node config and the AI call it drives can't drift.
+ */
+export interface CollectAiNodeConfig {
+  /**
+   * Optional first message sent when the node is entered. When unset,
+   * the engine makes one `extractWithReply` call with no known values
+   * so the model generates the opening question itself.
+   */
+  intro_text?: string;
+  /**
+   * Fields to collect. Each `field.key` becomes `flow_runs.vars[key]`
+   * once captured — same var-storage contract as `collect_input`'s
+   * `var_key`. At least one field, and at least one `required`
+   * (enforced by the validator, not here).
+   */
+  fields: ExtractionField[];
+  /**
+   * Business-specific instructions merged into the extraction prompt
+   * (e.g. valid categories for a field). Optional.
+   */
+  system_context?: string;
+  /**
+   * Cap on `extractWithReply` calls made within this node before the
+   * engine forces a handoff instead of continuing to loop. Measured
+   * by `flow_runs.ai_turn_count` (migration 044), which is distinct
+   * from `reprompt_count` — see that migration's comment for why.
+   */
+  max_turns: number;
+  /**
+   * Node to advance to when `max_turns` is hit without completing, or
+   * when the model itself signals `handoff: true`. Falls back to the
+   * flow's own handoff-on-exhaust behavior when unset.
+   */
+  handoff_node_key?: string;
+  /**
+   * Message sent to the customer when handing off WITHOUT a courtesy
+   * message from the model itself — i.e. every handoff reason except
+   * `model_handoff` (provider failure, max_turns exhausted, or an
+   * empty/unusable model reply). Without this, those three exits are
+   * silent: the run ends but the customer never finds out why the bot
+   * stopped answering. Optional for backward compatibility with nodes
+   * created before this field existed, but strongly recommended — see
+   * the validator's warning when it's unset.
+   */
+  handoff_fallback_text?: string;
+  /** Node to advance to once every required field is captured. */
+  next_node_key: string;
+}
+
 export type ConditionOperator =
   | "equals"
   | "contains"
@@ -200,12 +259,16 @@ export interface SetTagNodeConfig {
 export type EndNodeConfig = Record<string, never>;
 
 /**
- * Total union — every concrete node_type the v1 engine understands.
- * Add new node types here and the engine's switch will flag missing
- * cases via TypeScript's exhaustiveness check.
+ * Total union — every concrete node_type the engine understands (plus
+ * `collect_ai`, whose engine support is still being built — see that
+ * type's own doc comment). Add new node types here and the engine's
+ * switch will flag missing cases via TypeScript's exhaustiveness
+ * check.
  *
- * v1.5+ additions (collect_input, condition, set_tag, http_fetch) will
- * extend this union — out-of-scope for the v1 engine PR.
+ * `http_fetch` remains reserved for a future v2: it has neither a
+ * config type here nor a validator/engine case, but is already
+ * present in `flow_nodes.node_type`'s DB CHECK constraint (migration
+ * 010) as a forward-compat placeholder.
  */
 export type FlowNodeConfig =
   | { node_type: "start"; config: StartNodeConfig }
@@ -214,6 +277,7 @@ export type FlowNodeConfig =
   | { node_type: "send_list"; config: SendListNodeConfig }
   | { node_type: "send_media"; config: SendMediaNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
+  | { node_type: "collect_ai"; config: CollectAiNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
@@ -318,6 +382,12 @@ export interface FlowRunRow {
   last_prompt_message_id: string | null;
   vars: Record<string, unknown>;
   reprompt_count: number;
+  /** Model calls made inside the run's CURRENT collect_ai node visit.
+   *  Reset to 0 on entering a collect_ai node; compared against that
+   *  node's config.max_turns (migration 044). Unrelated to
+   *  reprompt_count — see that migration's comment for why they're
+   *  separate counters. */
+  ai_turn_count: number;
   started_at: string;
   last_advanced_at: string;
   ended_at: string | null;
