@@ -42,7 +42,13 @@ import {
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
+import { loadAiConfig } from "@/lib/ai/config";
+import { buildConversationContext } from "@/lib/ai/context";
+import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
+import type { ExtractionField } from "@/lib/ai/schema";
+import { logAiUsage } from "@/lib/ai/usage";
 import {
+  type CollectAiNodeConfig,
   type CollectInputNodeConfig,
   type ConditionNodeConfig,
   type DispatchInboundInput,
@@ -127,7 +133,8 @@ export function isSuspending(node_type: string): boolean {
   return (
     node_type === "send_buttons" ||
     node_type === "send_list" ||
-    node_type === "collect_input"
+    node_type === "collect_input" ||
+    node_type === "collect_ai"
   );
 }
 
@@ -189,6 +196,87 @@ export function evaluateConditionPredicate(args: {
       if (args.subjectValue === undefined) return false;
       return args.subjectValue.includes(args.configValue ?? "");
   }
+}
+
+/** Why a `collect_ai` node exited toward a handoff instead of `next_node_key`. */
+export type CollectAiHandoffReason =
+  | "provider_error"
+  | "model_handoff"
+  | "max_turns_exhausted"
+  | "empty_reply";
+
+export type CollectAiOutcome =
+  | { kind: "handoff"; reason: CollectAiHandoffReason; message?: string }
+  | { kind: "complete"; message: string }
+  | { kind: "continue"; message: string };
+
+/** True iff every `required` field already has a non-blank string value in `vars`. */
+export function collectAiRequiredFieldsPresent(
+  fields: ExtractionField[],
+  vars: Record<string, unknown>,
+): boolean {
+  return fields
+    .filter((f) => f.required)
+    .every((f) => typeof vars[f.key] === "string" && (vars[f.key] as string).trim().length > 0);
+}
+
+/**
+ * Pure decision for one `collect_ai` turn — no I/O. The caller has
+ * already (a) run `extractWithReply` (or gotten `null` on a provider
+ * failure) and (b) merged any extracted fields into `vars` and bumped
+ * `turnCount`. This just decides what happens next:
+ *
+ *   - `result === null` (network/timeout/invalid-key/malformed
+ *     extraction) → handoff. Never leave the customer waiting on a
+ *     failed call.
+ *   - The model set `handoff: true` → handoff, forwarding its
+ *     `reply_text` as a courtesy message when it gave one.
+ *   - `done: true` AND every required field is actually present in
+ *     `vars` → complete. (The `vars` check is authoritative, not the
+ *     model's self-report alone — a model that says `done` without
+ *     having filled every required field doesn't get to end the
+ *     loop.)
+ *   - `turnCount >= maxTurns` without completing → handoff
+ *     (exhausted); this is checked AFTER the just-spent turn, so the
+ *     node gets exactly `maxTurns` model calls, not `maxTurns + 1`.
+ *   - An empty `reply_text` when not done → handoff. Mirrors
+ *     `dispatchInboundToAiReply`'s `if (handoff || !text)` rule: an
+ *     unusable reply is treated as an implicit handoff rather than
+ *     leaving the customer with silence or an invented canned line.
+ *   - Otherwise → continue, asking `reply_text` and staying suspended
+ *     on this node.
+ */
+export function decideCollectAiOutcome(args: {
+  result: ExtractResult | null;
+  fields: ExtractionField[];
+  /** `run.vars` AFTER the caller has already merged this turn's extraction. */
+  vars: Record<string, unknown>;
+  /** `run.ai_turn_count` AFTER the caller has already incremented it for this call. */
+  turnCount: number;
+  maxTurns: number;
+}): CollectAiOutcome {
+  const { result, fields, vars, turnCount, maxTurns } = args;
+
+  if (!result) {
+    return { kind: "handoff", reason: "provider_error" };
+  }
+  if (result.handoff) {
+    return {
+      kind: "handoff",
+      reason: "model_handoff",
+      message: result.replyText.trim() || undefined,
+    };
+  }
+  if (result.done && collectAiRequiredFieldsPresent(fields, vars)) {
+    return { kind: "complete", message: result.replyText.trim() };
+  }
+  if (turnCount >= maxTurns) {
+    return { kind: "handoff", reason: "max_turns_exhausted" };
+  }
+  if (!result.replyText.trim()) {
+    return { kind: "handoff", reason: "empty_reply" };
+  }
+  return { kind: "continue", message: result.replyText.trim() };
 }
 
 // ============================================================
@@ -484,6 +572,356 @@ async function sendListAndSuspend(
   return { outcome: "advanced", node_key: node.node_key };
 }
 
+// ============================================================
+// collect_ai node — a multi-turn LLM sub-loop that fills `fields`
+// from free-text conversation, asking only about what's still
+// missing, then advances. See CollectAiNodeConfig's doc comment
+// (types.ts) and `decideCollectAiOutcome` above for the full contract.
+// ============================================================
+
+/** Reset the node-visit turn counter to 0. Mirrors how `reprompt_count`
+ *  already resets to 0 on every successful match elsewhere in this file. */
+async function resetAiTurnCount(db: AdminClient, run: FlowRunRow): Promise<void> {
+  const { error } = await db
+    .from("flow_runs")
+    .update({ ai_turn_count: 0 })
+    .eq("id", run.id);
+  if (!error) run.ai_turn_count = 0;
+}
+
+async function incrementAiTurnCount(db: AdminClient, run: FlowRunRow): Promise<void> {
+  const next = (run.ai_turn_count ?? 0) + 1;
+  const { error } = await db
+    .from("flow_runs")
+    .update({ ai_turn_count: next })
+    .eq("id", run.id);
+  if (!error) run.ai_turn_count = next;
+}
+
+/**
+ * Merge only the non-empty values `extractWithReply` returned this
+ * turn into `run.vars` — never overwrites an already-captured field
+ * with an absent/empty extraction, since the model not mentioning a
+ * field this turn must not erase a previous answer. No-ops (no write)
+ * when there's nothing new, same defensive style as `set_tag`'s
+ * failure handling below.
+ */
+async function mergeCollectAiFields(
+  db: AdminClient,
+  run: FlowRunRow,
+  extracted: Record<string, string>,
+): Promise<void> {
+  if (Object.keys(extracted).length === 0) return;
+  const newVars = { ...run.vars, ...extracted };
+  const { error } = await db.from("flow_runs").update({ vars: newVars }).eq("id", run.id);
+  if (!error) run.vars = newVars;
+}
+
+function collectAiCollectedKeys(
+  fields: ExtractionField[],
+  vars: Record<string, unknown>,
+): string[] {
+  return fields
+    .filter((f) => typeof vars[f.key] === "string" && (vars[f.key] as string).trim())
+    .map((f) => f.key);
+}
+
+/**
+ * Make one `extractWithReply` call for this node: loads the account's
+ * AI config, builds the known-vs-missing field view from `run.vars`,
+ * and feeds the same recent-conversation context the auto-reply bot
+ * uses (`buildConversationContext`) — so the opening call already
+ * sees whatever text triggered entry into this node (e.g. a keyword
+ * flow whose trigger message already contains everything). Returns
+ * `null` on ANY failure — missing/inactive AI config, network error,
+ * timeout, invalid key, malformed extraction — so the caller can
+ * route to a handoff instead of throwing mid-run (this function NEVER
+ * throws, mirroring `dispatchInboundToAiReply`'s own contract).
+ */
+async function runCollectAiTurn(
+  db: AdminClient,
+  run: FlowRunRow,
+  cfg: CollectAiNodeConfig,
+): Promise<ExtractResult | null> {
+  let config;
+  try {
+    config = await loadAiConfig(db, run.account_id);
+  } catch (err) {
+    console.error(
+      "[flows] collect_ai loadAiConfig failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+  if (!config) {
+    console.error(
+      `[flows] collect_ai node fired for account ${run.account_id} with no active AI config — handing off.`,
+    );
+    return null;
+  }
+
+  const knownValues: Record<string, string> = {};
+  for (const f of cfg.fields) {
+    const v = run.vars[f.key];
+    if (typeof v === "string" && v.trim()) knownValues[f.key] = v;
+  }
+
+  const messages = run.conversation_id
+    ? await buildConversationContext(db, run.conversation_id)
+    : [];
+
+  try {
+    const result = await extractWithReply({
+      config,
+      fields: cfg.fields,
+      knownValues,
+      systemContext: cfg.system_context,
+      messages,
+    });
+    // Fire-and-forget, same as dispatchInboundToAiReply's own call site
+    // — logAiUsage never throws, and awaiting it would only add latency
+    // to the customer-facing send for zero benefit. Logged under its
+    // own 'flow_collect' mode so the Usage tab can break this node's
+    // spend out from auto-reply/draft rather than folding it in.
+    void logAiUsage(db, {
+      accountId: run.account_id,
+      conversationId: run.conversation_id,
+      mode: "flow_collect",
+      provider: config.provider,
+      model: config.model,
+      usage: result.usage,
+    });
+    return result;
+  } catch (err) {
+    console.error(
+      "[flows] collect_ai extractWithReply failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Route a collect_ai exit that isn't a clean `done` toward its
+ * configured `handoff_node_key`, or — when unset — straight to a
+ * human via the same conversation-pending mechanics `executeHandoff`
+ * uses below. Whatever was already merged into `run.vars` travels
+ * with the run either way, so a human (or the next node) sees
+ * whatever got captured before the loop bailed.
+ *
+ * `message` is the model's own courtesy line (only ever set for
+ * `model_handoff`) — the other three handoff reasons (provider
+ * failure, max_turns exhausted, empty reply) have no model text to
+ * fall back on, so without `cfg.handoff_fallback_text` those exits
+ * are silent: the customer sees the bot just stop replying. Prefer
+ * the model's message when there is one; otherwise fall back to the
+ * flow author's configured text, and only stay silent if neither is
+ * set (backward-compatible default for nodes saved before this field
+ * existed).
+ */
+async function handOffFromCollectAi(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  nodes: Map<string, FlowNodeRow>,
+  reason: CollectAiHandoffReason,
+  message?: string,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  const outgoingText = message?.trim() || cfg.handoff_fallback_text?.trim();
+  if (outgoingText) {
+    try {
+      await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id!,
+        contactId: run.contact_id!,
+        text: outgoingText,
+      });
+    } catch (err) {
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "collect_ai_handoff_message_send_failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await logEvent(db, run.id, "handoff", node.node_key, {
+    node_type: "collect_ai",
+    reason,
+    collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+  });
+
+  if (cfg.handoff_node_key) {
+    return advanceFromNodeKey(db, run, cfg.handoff_node_key, nodes);
+  }
+
+  if (run.conversation_id) {
+    await db
+      .from("conversations")
+      .update({ status: "pending", updated_at: new Date().toISOString() })
+      .eq("id", run.conversation_id);
+  }
+  await endRun(db, run.id, "handed_off", `collect_ai_${reason}`);
+  return { outcome: "handed_off" };
+}
+
+/**
+ * Send `text` on a collect_ai node and mark the run suspended there.
+ * Idempotent when it's already the current node (the "still missing
+ * fields, ask again" case on a reply turn) — `advanceCurrentNodeKey`'s
+ * expected-old-key check just matches itself. A Meta-send failure
+ * here is an infra failure, not an AI one — mirrors collect_input's
+ * own prompt-send handling: hard-fail the run rather than leave it in
+ * an undefined state.
+ */
+async function sendCollectAiTextAndSuspend(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  text: string,
+): Promise<{ outcome: "advanced" | "completed" }> {
+  try {
+    const { whatsapp_message_id } = await engineSendText({
+      accountId: run.account_id,
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      text,
+    });
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      node_type: "collect_ai",
+      whatsapp_message_id,
+    });
+  } catch (err) {
+    await logEvent(db, run.id, "error", node.node_key, {
+      reason: "collect_ai_send_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    await endRun(db, run.id, "failed", "collect_ai_send_failed");
+    return { outcome: "completed" };
+  }
+  const advanced = await advanceCurrentNodeKey(db, run.id, run.current_node_key, node.node_key);
+  if (!advanced) {
+    await logEvent(db, run.id, "error", node.node_key, {
+      reason: "lost_race_during_advance",
+    });
+  }
+  return { outcome: "advanced" };
+}
+
+/**
+ * Shared conclusion of one collect_ai turn — used both by the node's
+ * entry call (no intro_text configured) and by every reply while
+ * suspended on it. Bumps `ai_turn_count` + merges extracted fields
+ * (skipped when `result` is null — nothing to merge on a failed
+ * call), then dispatches on `decideCollectAiOutcome`.
+ */
+async function handleCollectAiOutcome(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  nodes: Map<string, FlowNodeRow>,
+  result: ExtractResult | null,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  if (result) {
+    await incrementAiTurnCount(db, run);
+    await mergeCollectAiFields(db, run, result.fields);
+  }
+
+  const decision = decideCollectAiOutcome({
+    result,
+    fields: cfg.fields,
+    vars: run.vars,
+    turnCount: run.ai_turn_count,
+    maxTurns: cfg.max_turns,
+  });
+
+  if (decision.kind === "handoff") {
+    return handOffFromCollectAi(db, run, node, cfg, nodes, decision.reason, decision.message);
+  }
+
+  if (decision.kind === "complete") {
+    if (decision.message) {
+      try {
+        const { whatsapp_message_id } = await engineSendText({
+          accountId: run.account_id,
+          userId: run.user_id,
+          conversationId: run.conversation_id!,
+          contactId: run.contact_id!,
+          text: decision.message,
+        });
+        await logEvent(db, run.id, "message_sent", node.node_key, {
+          node_type: "collect_ai",
+          whatsapp_message_id,
+          closing: true,
+        });
+      } catch (err) {
+        // Best-effort — the run still completed successfully even if
+        // this closing line didn't land.
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "collect_ai_closing_send_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    await logEvent(db, run.id, "node_entered", node.node_key, {
+      node_type: "collect_ai",
+      collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+    });
+    return advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
+  }
+
+  // decision.kind === "continue"
+  return sendCollectAiTextAndSuspend(db, run, node, decision.message);
+}
+
+/**
+ * Enter a collect_ai node for the first time (advancing into it from
+ * a prior node, or as a flow's entry node). Resets `ai_turn_count` to
+ * 0 for this fresh visit. `intro_text`, when configured, is sent
+ * verbatim (zero token cost — matches collect_input's deterministic
+ * prompt_text); otherwise one extractWithReply call is made with no
+ * known values yet so the model drafts the opening question itself
+ * from the surrounding conversation.
+ */
+export async function enterCollectAiNode(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  nodes: Map<string, FlowNodeRow>,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  const cfg = node.config as unknown as CollectAiNodeConfig;
+  await resetAiTurnCount(db, run);
+
+  if (cfg.intro_text && cfg.intro_text.trim()) {
+    return sendCollectAiTextAndSuspend(db, run, node, interpolateVars(cfg.intro_text, run.vars));
+  }
+
+  const result = await runCollectAiTurn(db, run, cfg);
+  return handleCollectAiOutcome(db, run, node, cfg, nodes, result);
+}
+
+/**
+ * Process one customer text reply while suspended on a collect_ai
+ * node. Exported (alongside `enterCollectAiNode`) as the two seams
+ * `engine.test.ts` drives directly with `extractWithReply` mocked —
+ * together they cover the full collect_ai lifecycle without needing
+ * to fixture the rest of the dispatch pipeline (flows/flow_nodes
+ * lookups, idempotency, the bot-eligibility gate, etc.).
+ */
+export async function handleCollectAiReply(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  nodes: Map<string, FlowNodeRow>,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  const cfg = node.config as unknown as CollectAiNodeConfig;
+  const result = await runCollectAiTurn(db, run, cfg);
+  return handleCollectAiOutcome(db, run, node, cfg, nodes, result);
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
@@ -734,6 +1172,9 @@ async function advanceFromNodeKey(
         });
       }
       return { outcome: "advanced" };
+    }
+    if (node.node_type === "collect_ai") {
+      return enterCollectAiNode(db, run, node, nodes);
     }
     if (node.node_type === "condition") {
       const cfg = node.config as unknown as ConditionNodeConfig;
@@ -988,6 +1429,20 @@ async function handleReplyForActiveRun(
   if (!currentNode) {
     await endRun(db, run.id, "failed", "current_node_not_found");
     return { consumed: true, flow_run_id: run.id, outcome: "no_match" };
+  }
+
+  // collect_ai owns its own turn-by-turn control flow (extractWithReply,
+  // then continue/complete/handoff via decideCollectAiOutcome) — it has
+  // no "matched vs unmatched" notion and no fallback_policy reprompt
+  // cycle, so every text reply on this node type is handled here and
+  // returns early, bypassing the matched/fallback machinery below
+  // entirely. A stray interactive_reply on a collect_ai node (should
+  // not happen — this node never sends buttons/lists) falls through to
+  // the generic fallback path unchanged, same as any other unrecognized
+  // node/message combination.
+  if (message.kind === "text" && currentNode.node_type === "collect_ai") {
+    const outcome = await handleCollectAiReply(db, run, currentNode, nodes);
+    return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
   }
 
   // Three ways a reply can advance:
