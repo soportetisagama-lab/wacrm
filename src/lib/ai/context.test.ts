@@ -3,12 +3,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildConversationContext } from './context'
 
 /** Minimal fake matching the query chain in buildConversationContext:
- *  from().select().eq().eq().order().limit() → { data, error }. */
+ *  from().select().eq().or().order().limit() → { data, error }. */
 function fakeDb(rows: unknown[]): SupabaseClient {
   const chain = {
     from: () => chain,
     select: () => chain,
     eq: () => chain,
+    or: () => chain,
     order: () => chain,
     limit: () => Promise.resolve({ data: rows, error: null }),
   }
@@ -45,6 +46,32 @@ describe('buildConversationContext', () => {
         { sender_type: 'customer', content_text: '   ' },
         { sender_type: 'customer', content_text: null },
         { sender_type: 'customer', content_text: 'real' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([{ role: 'user', content: 'real' }])
+  })
+
+  it('uses the transcript as content for a transcribed audio message', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        {
+          sender_type: 'customer',
+          content_type: 'audio',
+          content_text: null,
+          transcript: 'quiero cotizar dos cocinas',
+        },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([{ role: 'user', content: 'quiero cotizar dos cocinas' }])
+  })
+
+  it('drops an audio message whose transcript is an empty string', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        { sender_type: 'customer', content_type: 'audio', content_text: null, transcript: '' },
+        { sender_type: 'customer', content_type: 'text', content_text: 'real' },
       ]),
       'conv-1',
     )

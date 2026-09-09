@@ -8,8 +8,11 @@ import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
+import { transcribeAudio } from './transcribe'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { decrypt } from '@/lib/whatsapp/encryption'
+import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -30,6 +33,29 @@ interface DispatchArgs {
    * field existed.
    */
   isTextMessage: boolean
+  /**
+   * Present only when the inbound was itself an audio message (voice
+   * note or audio file) — set by the webhook from the raw Meta payload,
+   * independent of `isTextMessage` (which stays `false` for audio; this
+   * is an additive escape hatch, not a reclassification). Its mere
+   * presence is the only signal `dispatchInboundToAiReply` uses to
+   * attempt transcription — absent for every other media type.
+   */
+  audio?: {
+    /** Meta's media id (message.audio.id) — used to fetch our own
+     *  download URL via getMediaUrl, independent of (and redundant
+     *  with) the one parseMessageContent already fetched to build the
+     *  proxy `media_url`; that URL is never persisted, so there's
+     *  nothing to reuse here. */
+    mediaId: string
+    /** Meta's reported mime type, passed through to transcribeAudio for
+     *  its filename-extension mapping. */
+    mimeType: string
+    /** uuid of the just-inserted `messages` row for this inbound — the
+     *  row `transcript` gets written back onto after a successful
+     *  Whisper call. */
+    messageDbId: string
+  }
 }
 
 /** Sent to the customer whenever auto-reply hands a conversation off to
@@ -159,6 +185,72 @@ async function handleAutoReplyCapReached(
 }
 
 /**
+ * Attempt to transcribe an inbound voice note and persist the result.
+ * Returns the trimmed transcript text when there's something usable to
+ * hand the model, or `null` when there isn't — covering BOTH failure
+ * (download/transcription error, swallowed and logged here) AND a
+ * legitimate empty transcription (silence, a too-short clip): neither
+ * case is a signal callers need to tell apart, so both collapse to the
+ * same `null` → same `sendNonTextFallback` the caller already has.
+ *
+ * `messages.transcript` is written only when Whisper actually
+ * responded — even with empty text, since that's a meaningfully
+ * different outcome from "never got that far" (download/API failure,
+ * which leaves the column NULL). Nothing is persisted before that
+ * point: a download that succeeds but is followed by a transcription
+ * failure leaves no trace on the row.
+ */
+async function transcribeInboundAudio(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    accountId: string
+    audio: NonNullable<DispatchArgs['audio']>
+    embeddingsApiKey: string
+  },
+): Promise<string | null> {
+  const { accountId, audio, embeddingsApiKey } = args
+  try {
+    const { data: waConfig, error: waErr } = await db
+      .from('whatsapp_config')
+      .select('access_token')
+      .eq('account_id', accountId)
+      .single()
+    if (waErr || !waConfig) {
+      console.error(
+        `[ai auto-reply] transcription skipped for account ${accountId}: whatsapp_config not found.`,
+      )
+      return null
+    }
+    const accessToken = decrypt(waConfig.access_token)
+
+    const mediaInfo = await getMediaUrl({ mediaId: audio.mediaId, accessToken })
+    const { buffer } = await downloadMedia({
+      downloadUrl: mediaInfo.url,
+      accessToken,
+    })
+
+    const result = await transcribeAudio({
+      apiKey: embeddingsApiKey,
+      audio: buffer,
+      mimeType: audio.mimeType,
+    })
+
+    const { error: updateErr } = await db
+      .from('messages')
+      .update({ transcript: result.text })
+      .eq('id', audio.messageDbId)
+    if (updateErr) {
+      console.error('[ai auto-reply] failed to persist transcript:', updateErr)
+    }
+
+    return result.text.trim() || null
+  } catch (err) {
+    console.error('[ai auto-reply] audio transcription failed:', err)
+    return null
+  }
+}
+
+/**
  * AI auto-reply for a freshly-arrived inbound message.
  *
  * Invoked from the WhatsApp webhook's `after()` block, only when no
@@ -185,7 +277,7 @@ async function handleAutoReplyCapReached(
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  const { accountId, conversationId, contactId, configOwnerUserId, isTextMessage } = args
+  const { accountId, conversationId, contactId, configOwnerUserId, isTextMessage, audio } = args
 
   try {
     const db = supabaseAdmin()
@@ -244,10 +336,27 @@ export async function dispatchInboundToAiReply(
     // for auto-reply right now; it's just that there's no usable text
     // to hand the model. Short-circuits before buildConversationContext
     // /generateReply/claim_ai_reply_slot entirely: no provider call, no
-    // reply-cap spend.
+    // reply-cap spend — EXCEPT for the audio-transcription attempt
+    // below, which only runs when the account opted in.
     if (!isTextMessage) {
-      await sendNonTextFallback({ accountId, conversationId, contactId, configOwnerUserId })
-      return
+      let transcript: string | null = null
+      // Both flags are required together — an enabled switch with no
+      // (or a corrupt) embeddings key is treated the same as disabled,
+      // never as an error. Defensive at the data layer: 2c's UI should
+      // keep these in sync, but this can't assume it always did.
+      if (audio && config.transcribeAudioEnabled && config.embeddingsApiKey) {
+        transcript = await transcribeInboundAudio(db, {
+          accountId,
+          audio,
+          embeddingsApiKey: config.embeddingsApiKey,
+        })
+      }
+      if (transcript === null) {
+        await sendNonTextFallback({ accountId, conversationId, contactId, configOwnerUserId })
+        return
+      }
+      // Usable transcript — fall through to the normal text path below,
+      // exactly as if this had arrived as a text message.
     }
 
     const messages = await buildConversationContext(db, conversationId)

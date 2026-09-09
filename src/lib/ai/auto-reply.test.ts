@@ -8,12 +8,18 @@ const h = vi.hoisted(() => ({
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
+  transcribeAudio: vi.fn(),
+  getMediaUrl: vi.fn(),
+  downloadMedia: vi.fn(),
+  decrypt: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
+    waConfig: null as Record<string, unknown> | null,
+    transcriptUpdate: null as Record<string, unknown> | null,
   },
 }))
 
@@ -21,7 +27,13 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
+vi.mock('./transcribe', () => ({ transcribeAudio: h.transcribeAudio }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
+vi.mock('@/lib/whatsapp/meta-api', () => ({
+  getMediaUrl: h.getMediaUrl,
+  downloadMedia: h.downloadMedia,
+}))
+vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: h.decrypt }))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
@@ -35,6 +47,29 @@ vi.mock('./admin-client', () => ({
             Promise.resolve({ data: h.state.autoResponders, error: null }),
         }
         return chain
+      }
+      if (table === 'whatsapp_config') {
+        // .select().eq().single() → decrypted access_token source
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          single: () =>
+            Promise.resolve({
+              data: h.state.waConfig,
+              error: h.state.waConfig ? null : { message: 'not found' },
+            }),
+        }
+        return chain
+      }
+      if (table === 'messages') {
+        // .update({ transcript }).eq('id', ...) — writes the transcript
+        // back onto the inbound audio row.
+        return {
+          update: (payload: Record<string, unknown>) => {
+            h.state.transcriptUpdate = payload
+            return { eq: () => Promise.resolve({ error: null }) }
+          },
+        }
       }
       // conversations
       return {
@@ -93,11 +128,17 @@ beforeEach(() => {
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
+  h.state.waConfig = { access_token: 'enc-token' }
+  h.state.transcriptUpdate = null
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
   h.generateReply.mockResolvedValue({ text: 'Hello!', handoff: false })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
+  h.transcribeAudio.mockResolvedValue({ text: 'quiero cotizar dos cocinas', durationSeconds: 4 })
+  h.getMediaUrl.mockResolvedValue({ url: 'https://meta.example/audio.ogg', mimeType: 'audio/ogg' })
+  h.downloadMedia.mockResolvedValue({ buffer: Buffer.from('bytes'), contentType: 'audio/ogg' })
+  h.decrypt.mockImplementation((v: string) => `plain:${v}`)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -338,5 +379,170 @@ describe('dispatchInboundToAiReply — handoff', () => {
     h.engineSendText.mockRejectedValue(new Error('meta send failed'))
     await dispatchInboundToAiReply(ARGS)
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('dispatchInboundToAiReply — audio transcription', () => {
+  const AUDIO_ARGS = {
+    ...ARGS,
+    isTextMessage: false,
+    audio: { mediaId: 'media-1', mimeType: 'audio/ogg', messageDbId: 'msg-1' },
+  }
+
+  it('falls back to the text-only nudge when transcribe_audio_enabled is off — never calls transcribeAudio', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: false, embeddingsApiKey: 'sk-embed' }),
+    )
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('falls back the same way when enabled but there is no embeddings key — treated as disabled, not an error', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: null }),
+    )
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('never attempts transcription for non-audio media, even with the feature on — no `audio` field means no transcript', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('on success: downloads with the account access token, transcribes with the embeddings key, persists the transcript, and continues to the normal reply', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+
+    expect(h.getMediaUrl).toHaveBeenCalledWith({ mediaId: 'media-1', accessToken: 'plain:enc-token' })
+    expect(h.downloadMedia).toHaveBeenCalledWith({
+      downloadUrl: 'https://meta.example/audio.ogg',
+      accessToken: 'plain:enc-token',
+    })
+    expect(h.transcribeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'sk-embed', mimeType: 'audio/ogg' }),
+    )
+    expect(h.state.transcriptUpdate).toEqual({ transcript: 'quiero cotizar dos cocinas' })
+
+    // Falls through to the normal text path — buildConversationContext,
+    // generateReply and the real send all run, same as any text inbound.
+    expect(h.buildConversationContext).toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+
+  it('an empty transcription (silence) still gets persisted but falls back to the text-only nudge, not the normal reply path', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.transcribeAudio.mockResolvedValue({ text: '', durationSeconds: 1 })
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+
+    expect(h.state.transcriptUpdate).toEqual({ transcript: '' })
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('a whitespace-only transcription is also treated as empty', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.transcribeAudio.mockResolvedValue({ text: '   ', durationSeconds: 1 })
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('a transcription failure falls back to the text-only nudge and persists nothing', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.transcribeAudio.mockRejectedValue(new Error('Whisper rejected the file'))
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+
+    expect(h.state.transcriptUpdate).toBeNull()
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('a download failure (getMediaUrl/downloadMedia) falls back the same way and never calls transcribeAudio', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.getMediaUrl.mockRejectedValue(new Error('Meta media fetch failed'))
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.state.transcriptUpdate).toBeNull()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('a missing whatsapp_config falls back the same way, without ever calling transcribeAudio', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.state.waConfig = null
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+
+    expect(h.getMediaUrl).not.toHaveBeenCalled()
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('still respects the reply cap for audio — a capped conversation never even attempts transcription', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }),
+    )
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+    }
+    await dispatchInboundToAiReply(AUDIO_ARGS)
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
   })
 })
