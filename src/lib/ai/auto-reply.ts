@@ -8,11 +8,9 @@ import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
-import { transcribeAudio } from './transcribe'
+import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
-import { decrypt } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -41,21 +39,7 @@ interface DispatchArgs {
    * presence is the only signal `dispatchInboundToAiReply` uses to
    * attempt transcription — absent for every other media type.
    */
-  audio?: {
-    /** Meta's media id (message.audio.id) — used to fetch our own
-     *  download URL via getMediaUrl, independent of (and redundant
-     *  with) the one parseMessageContent already fetched to build the
-     *  proxy `media_url`; that URL is never persisted, so there's
-     *  nothing to reuse here. */
-    mediaId: string
-    /** Meta's reported mime type, passed through to transcribeAudio for
-     *  its filename-extension mapping. */
-    mimeType: string
-    /** uuid of the just-inserted `messages` row for this inbound — the
-     *  row `transcript` gets written back onto after a successful
-     *  Whisper call. */
-    messageDbId: string
-  }
+  audio?: InboundAudioRef
 }
 
 /** Sent to the customer whenever auto-reply hands a conversation off to
@@ -182,72 +166,6 @@ async function handleAutoReplyCapReached(
     assignedAgentId: args.assignedAgentId,
     summary: `🤖 Se alcanzó el límite de ${args.config.autoReplyMaxPerConversation} respuestas automáticas por conversación.`,
   })
-}
-
-/**
- * Attempt to transcribe an inbound voice note and persist the result.
- * Returns the trimmed transcript text when there's something usable to
- * hand the model, or `null` when there isn't — covering BOTH failure
- * (download/transcription error, swallowed and logged here) AND a
- * legitimate empty transcription (silence, a too-short clip): neither
- * case is a signal callers need to tell apart, so both collapse to the
- * same `null` → same `sendNonTextFallback` the caller already has.
- *
- * `messages.transcript` is written only when Whisper actually
- * responded — even with empty text, since that's a meaningfully
- * different outcome from "never got that far" (download/API failure,
- * which leaves the column NULL). Nothing is persisted before that
- * point: a download that succeeds but is followed by a transcription
- * failure leaves no trace on the row.
- */
-async function transcribeInboundAudio(
-  db: ReturnType<typeof supabaseAdmin>,
-  args: {
-    accountId: string
-    audio: NonNullable<DispatchArgs['audio']>
-    embeddingsApiKey: string
-  },
-): Promise<string | null> {
-  const { accountId, audio, embeddingsApiKey } = args
-  try {
-    const { data: waConfig, error: waErr } = await db
-      .from('whatsapp_config')
-      .select('access_token')
-      .eq('account_id', accountId)
-      .single()
-    if (waErr || !waConfig) {
-      console.error(
-        `[ai auto-reply] transcription skipped for account ${accountId}: whatsapp_config not found.`,
-      )
-      return null
-    }
-    const accessToken = decrypt(waConfig.access_token)
-
-    const mediaInfo = await getMediaUrl({ mediaId: audio.mediaId, accessToken })
-    const { buffer } = await downloadMedia({
-      downloadUrl: mediaInfo.url,
-      accessToken,
-    })
-
-    const result = await transcribeAudio({
-      apiKey: embeddingsApiKey,
-      audio: buffer,
-      mimeType: audio.mimeType,
-    })
-
-    const { error: updateErr } = await db
-      .from('messages')
-      .update({ transcript: result.text })
-      .eq('id', audio.messageDbId)
-    if (updateErr) {
-      console.error('[ai auto-reply] failed to persist transcript:', updateErr)
-    }
-
-    return result.text.trim() || null
-  } catch (err) {
-    console.error('[ai auto-reply] audio transcription failed:', err)
-    return null
-  }
 }
 
 /**

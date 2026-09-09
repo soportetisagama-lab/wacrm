@@ -44,6 +44,7 @@ import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
 import { buildConversationContext } from "@/lib/ai/context";
+import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-audio";
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
@@ -1008,6 +1009,54 @@ export async function handleCollectAiNonTextReply(
   return sendCollectAiTextAndSuspend(db, run, node, text);
 }
 
+/**
+ * Handle a blank-text reply while suspended on a collect_ai node —
+ * the same situation `handleCollectAiNonTextReply` handles, except
+ * this is the entry point when the reply carries `audio` (a voice
+ * note specifically): attempts a transcription first, before falling
+ * back to the fixed non-text reply. Exported alongside
+ * `handleCollectAiNonTextReply` as its own testable seam, same reason:
+ * keeps `handleReplyForActiveRun` from having to fixture the gate/
+ * transcription logic just to exercise its own dispatch.
+ *
+ * Same gate as `dispatchInboundToAiReply`'s own audio handling
+ * (lib/ai/auto-reply.ts): `transcribeAudioEnabled` and
+ * `embeddingsApiKey` both required, treated as "off" otherwise — never
+ * an error. `transcribeInboundAudio` never throws and returns `null`
+ * for every failure mode (download error, transcription error, empty
+ * transcript), all of which fall through to the exact same
+ * `handleCollectAiNonTextReply` call as when there's no audio at all.
+ *
+ * On a usable transcript, does NOT pass it to `handleCollectAiReply` —
+ * that function never takes reply text as a parameter; it always
+ * re-reads the conversation via `buildConversationContext`, which
+ * already surfaces a transcribed audio message as if it were text
+ * (see context.ts). Persisting the transcript (inside
+ * `transcribeInboundAudio`) is the entire job here.
+ */
+export async function handleCollectAiBlankReply(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  nodes: Map<string, FlowNodeRow>,
+  audio?: InboundAudioRef,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  if (audio) {
+    const config = await loadAiConfig(db, run.account_id);
+    if (config?.transcribeAudioEnabled && config.embeddingsApiKey) {
+      const transcript = await transcribeInboundAudio(db, {
+        accountId: run.account_id,
+        audio,
+        embeddingsApiKey: config.embeddingsApiKey,
+      });
+      if (transcript) {
+        return handleCollectAiReply(db, run, node, nodes);
+      }
+    }
+  }
+  return handleCollectAiNonTextReply(db, run, node);
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
@@ -1531,11 +1580,14 @@ async function handleReplyForActiveRun(
   // message, using an empty string when there's no caption — so a blank
   // `message.text` here means the customer sent media (image, audio,
   // sticker, video), not that they typed nothing. That case skips
-  // extractWithReply entirely (handleCollectAiNonTextReply): no
-  // provider call, no ai_turn_count spent.
+  // extractWithReply entirely (handleCollectAiBlankReply →
+  // handleCollectAiNonTextReply): no provider call, no ai_turn_count
+  // spent — UNLESS `message.audio` is set (a voice note specifically)
+  // and the account opted into transcription, which
+  // handleCollectAiBlankReply tries first before falling back.
   if (message.kind === "text" && currentNode.node_type === "collect_ai") {
     if (!message.text.trim()) {
-      const outcome = await handleCollectAiNonTextReply(db, run, currentNode);
+      const outcome = await handleCollectAiBlankReply(db, run, currentNode, nodes, message.audio);
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
     }
     const outcome = await handleCollectAiReply(db, run, currentNode, nodes);

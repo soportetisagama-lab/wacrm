@@ -1198,8 +1198,9 @@ async function processMessage(
       interactive_reply_id: interactiveReplyId,
     })
     // Needed to later write messages.transcript back onto this exact row
-    // (dispatchInboundToAiReply's audio-transcription path) — every other
-    // caller ignores this and behaves as before.
+    // (the audio-transcription path, both dispatchInboundToAiReply and
+    // the collect_ai reply path) — every other caller ignores this and
+    // behaves as before.
     .select('id')
     .single()
 
@@ -1207,6 +1208,19 @@ async function processMessage(
     console.error('Error inserting message:', msgError)
     return
   }
+
+  // Shared by both audio-transcription call sites below (dispatchInboundToAiReply
+  // and dispatchInboundToFlows) — computed once so the two never drift.
+  // Only ever set for an actual audio inbound; every other media type
+  // (image/video/sticker/document) leaves it undefined.
+  const inboundAudioRef =
+    message.type === 'audio' && message.audio?.id
+      ? {
+          mediaId: message.audio.id,
+          mimeType: message.audio.mime_type,
+          messageDbId: insertedMessage.id,
+        }
+      : undefined
 
   // Update conversation
   const { error: convError } = await supabaseAdmin()
@@ -1299,6 +1313,7 @@ async function processMessage(
                 kind: 'text',
                 text: contentText ?? message.text?.body ?? '',
                 meta_message_id: message.id,
+                audio: inboundAudioRef,
               },
         isFirstInboundMessage,
       })
@@ -1385,14 +1400,7 @@ async function processMessage(
       // Only audio carries this — the sole signal dispatchInboundToAiReply
       // uses to attempt transcription instead of the fixed "text only"
       // nudge. Every other non-text media type leaves it undefined.
-      audio:
-        message.type === 'audio' && message.audio?.id
-          ? {
-              mediaId: message.audio.id,
-              mimeType: message.audio.mime_type,
-              messageDbId: insertedMessage.id,
-            }
-          : undefined,
+      audio: inboundAudioRef,
     })
   }
 

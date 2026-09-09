@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/ai/generate", () => ({ extractWithReply: vi.fn() }));
 vi.mock("@/lib/ai/config", () => ({ loadAiConfig: vi.fn() }));
 vi.mock("@/lib/ai/context", () => ({ buildConversationContext: vi.fn() }));
+vi.mock("@/lib/ai/inbound-audio", () => ({ transcribeInboundAudio: vi.fn() }));
 vi.mock("./meta-send", () => ({
   engineSendText: vi.fn(),
   engineSendInteractiveButtons: vi.fn(),
@@ -27,12 +28,14 @@ import {
   enterCollectAiNode,
   handleCollectAiReply,
   handleCollectAiNonTextReply,
+  handleCollectAiBlankReply,
   shouldSendCollectAiNudge,
   resolveTemplateButtonAction,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
 import { buildConversationContext } from "@/lib/ai/context";
+import { transcribeInboundAudio } from "@/lib/ai/inbound-audio";
 import { engineSendText } from "./meta-send";
 import type { AiConfig } from "@/lib/ai/types";
 import type { CollectAiNodeConfig, FlowNodeRow, FlowRunRow } from "./types";
@@ -771,6 +774,7 @@ const mockExtract = vi.mocked(extractWithReply);
 const mockLoadAiConfig = vi.mocked(loadAiConfig);
 const mockBuildContext = vi.mocked(buildConversationContext);
 const mockSendText = vi.mocked(engineSendText);
+const mockTranscribe = vi.mocked(transcribeInboundAudio);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1117,5 +1121,105 @@ describe("handleCollectAiNonTextReply", () => {
         (u) => u.table === "flow_runs" && u.payload.current_node_key === "collect",
       ),
     ).toBe(true);
+  });
+});
+
+const AUDIO_REF = { mediaId: "media-1", mimeType: "audio/ogg", messageDbId: "msg-1" };
+
+describe("handleCollectAiBlankReply", () => {
+  it("with no audio: behaves exactly like handleCollectAiNonTextReply — never calls transcribeInboundAudio", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    const outcome = await handleCollectAiBlankReply(db, run, node, new Map(), undefined);
+
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+      }),
+    );
+  });
+
+  it("with audio but transcribe_audio_enabled off: falls back to the fixed non-text reply, never calls transcribeInboundAudio", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: false, embeddingsApiKey: "sk-embed" }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiBlankReply(db, run, node, new Map(), AUDIO_REF);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+      }),
+    );
+  });
+
+  it("with audio but no embeddings key: same fallback, even with the switch on — treated as disabled, not an error", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: null }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiBlankReply(db, run, node, new Map(), AUDIO_REF);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+      }),
+    );
+  });
+
+  it("on a usable transcript: calls transcribeInboundAudio with the account's embeddings key, then falls through to handleCollectAiReply (extractWithReply, ai_turn_count bumped) instead of the fixed reply", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: "sk-embed" }));
+    mockTranscribe.mockResolvedValue("quiero cotizar dos cocinas");
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Y la ciudad?" }));
+    const { db } = makeFakeDb();
+    const run = makeRun({ ai_turn_count: 0 });
+    const node = makeNode({ config: collectAiConfig() });
+
+    const outcome = await handleCollectAiBlankReply(db, run, node, new Map(), AUDIO_REF);
+
+    expect(mockTranscribe).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        accountId: "acct-1",
+        audio: AUDIO_REF,
+        embeddingsApiKey: "sk-embed",
+      }),
+    );
+    // Fell through to the normal turn — same as any text reply.
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(run.ai_turn_count).toBe(1);
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¿Y la ciudad?" }),
+    );
+  });
+
+  it("an empty/failed transcription (transcribeInboundAudio returns null) falls back to the fixed non-text reply, without ever calling extractWithReply", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: "sk-embed" }));
+    mockTranscribe.mockResolvedValue(null);
+    const { db } = makeFakeDb();
+    const run = makeRun({ ai_turn_count: 0 });
+    const node = makeNode({ config: collectAiConfig() });
+
+    const outcome = await handleCollectAiBlankReply(db, run, node, new Map(), AUDIO_REF);
+
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(run.ai_turn_count).toBe(0);
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+      }),
+    );
   });
 });

@@ -19,6 +19,7 @@
  */
 
 import type { ExtractionField } from "@/lib/ai/schema";
+import type { InboundAudioRef } from "@/lib/ai/inbound-audio";
 
 // ============================================================
 // Node configs (discriminated union by node_type)
@@ -463,6 +464,19 @@ export type ParsedInbound =
       text: string;
       /** Meta's `messages[0].id` — used for idempotency. */
       meta_message_id: string;
+      /**
+       * Present only when this inbound was itself an audio message
+       * (voice note or audio file) — `text` is `""` in that case. Set
+       * by the webhook from the raw Meta payload; its mere presence is
+       * the only signal `handleReplyForActiveRun` uses to attempt a
+       * collect_ai transcription instead of going straight to the
+       * fixed non-text reply. Mirrors `DispatchArgs.audio` in
+       * lib/ai/auto-reply.ts — same shape (`InboundAudioRef`), same
+       * data, independent field because the two dispatch paths
+       * (Flows vs. the general auto-reply assistant) never both fire
+       * for the same inbound.
+       */
+      audio?: InboundAudioRef;
     }
   | {
       kind: "interactive_reply";
