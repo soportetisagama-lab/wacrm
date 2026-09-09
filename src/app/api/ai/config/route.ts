@@ -167,6 +167,7 @@ export async function POST(request: Request) {
           autoReplyMaxPerConversation: maxPer,
           handoffAgentId: null,
           embeddingsApiKey: null,
+          transcribeAudioEnabled: false,
         })
       } catch (err) {
         if (err instanceof AiError) {

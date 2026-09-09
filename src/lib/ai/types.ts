@@ -29,6 +29,11 @@ export interface AiConfig {
    *  knowledge base is embedded and semantic retrieval turns on; when
    *  null, retrieval falls back to lexical full-text search. */
   embeddingsApiKey: string | null
+  /** Opt-in switch for Whisper voice-note transcription. Off by
+   *  default (real per-audio cost); also requires `embeddingsApiKey`
+   *  to be set to actually run — callers must check both. Not wired to
+   *  anything yet (piece 2a: schema + config plumbing only). */
+  transcribeAudioEnabled: boolean
 }
 
 /** A single conversation turn in the shape both providers accept. */

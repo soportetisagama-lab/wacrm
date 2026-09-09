@@ -27,6 +27,7 @@ const ROW = {
   auto_reply_enabled: false,
   auto_reply_max_per_conversation: 3,
   embeddings_api_key: null,
+  transcribe_audio_enabled: false,
 }
 
 describe('loadAiConfig requireActive', () => {
@@ -47,5 +48,23 @@ describe('loadAiConfig requireActive', () => {
     expect(
       await loadAiConfig(dbReturning(null), 'acct', { requireActive: false }),
     ).toBeNull()
+  })
+})
+
+describe('loadAiConfig transcribeAudioEnabled', () => {
+  it('reads transcribe_audio_enabled: true through to transcribeAudioEnabled', async () => {
+    const config = await loadAiConfig(
+      dbReturning({ ...ROW, transcribe_audio_enabled: true }),
+      'acct',
+      { requireActive: false },
+    )
+    expect(config!.transcribeAudioEnabled).toBe(true)
+  })
+
+  it('reads transcribe_audio_enabled: false through to transcribeAudioEnabled', async () => {
+    const config = await loadAiConfig(dbReturning(ROW), 'acct', {
+      requireActive: false,
+    })
+    expect(config!.transcribeAudioEnabled).toBe(false)
   })
 })
