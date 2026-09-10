@@ -40,6 +40,7 @@ import {
   engineSendText,
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
+import { isWithinBusinessHours } from "./business-hours";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -466,7 +467,7 @@ async function loadConversationGateInfo(
   return (data as { status: string; assigned_agent_id: string | null } | null) ?? null;
 }
 
-async function findEntryFlow(
+export async function findEntryFlow(
   db: AdminClient,
   accountId: string,
   message: ParsedInbound,
@@ -488,6 +489,34 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
+
+  // Re-entry keywords ("menú"/"menu") are independent of trigger_type —
+  // checked first, against EVERY active flow, before the normal
+  // per-trigger_type matching below. Stored in trigger_config.reentry_keywords
+  // (plain JSONB, no schema change) so any flow — regardless of its primary
+  // trigger_type — can opt into "show the menu again" re-entry. Only reached
+  // when there's no active flow_run for this contact (dispatchInboundToFlows
+  // never calls findEntryFlow otherwise) — a run already in progress (e.g.
+  // mid collect_ai) is deliberately left alone; see the design note this
+  // implements (Opción A).
+  //
+  // Exact match only — never "contains" — so a message that merely mentions
+  // the word ("¿tienen menú del día?") doesn't accidentally retrigger it.
+  for (const flow of typed) {
+    const reentryKeywords = (
+      flow.trigger_config as { reentry_keywords?: string[] } | null
+    )?.reentry_keywords;
+    if (
+      reentryKeywords?.length &&
+      matchesKeywordTrigger(message.text, {
+        keywords: reentryKeywords,
+        match_type: "exact",
+      })
+    ) {
+      return flow;
+    }
+  }
+
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       if (matchesKeywordTrigger(
@@ -734,7 +763,9 @@ async function runCollectAiTurn(
   }
 
   const messages = run.conversation_id
-    ? await buildConversationContext(db, run.conversation_id)
+    ? await buildConversationContext(db, run.conversation_id, undefined, {
+        includeImages: config.visionEnabled,
+      })
     : [];
 
   try {
@@ -744,6 +775,9 @@ async function runCollectAiTurn(
       knownValues,
       systemContext: cfg.system_context,
       messages,
+      // Empty/omitted when the node offers no documents — the schema
+      // then never exposes a `send_document` slot at all (schema.ts).
+      documents: cfg.documents?.map((d) => ({ key: d.key, label: d.label })),
     });
     // Fire-and-forget, same as dispatchInboundToAiReply's own call site
     // — logAiUsage never throws, and awaiting it would only add latency
@@ -795,7 +829,25 @@ async function handOffFromCollectAi(
   reason: CollectAiHandoffReason,
   message?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
-  const outgoingText = message?.trim() || cfg.handoff_fallback_text?.trim();
+  // Outside business hours, the configured after-hours text wins over
+  // EVERYTHING else — including the model's own courtesy line — because
+  // the model has no clock and must never be the one deciding
+  // time-sensitive wording. Only kicks in when the node actually
+  // configured `handoff_fallback_text_after_hours`; unset means this
+  // whole check is skipped and behavior is identical to before it
+  // existed. Scoped to this one function only — every other node type,
+  // the welcome menu, and collect_ai's own continue/complete sends
+  // never call isWithinBusinessHours at all.
+  const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
+  const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
+  const outgoingText = useAfterHoursText
+    ? afterHoursText!
+    : message?.trim() || cfg.handoff_fallback_text?.trim();
+  // True only when `outgoingText` actually ended up being the model's
+  // own courtesy line (`message`, model_handoff only) — the static
+  // `handoff_fallback_text` / after-hours fallback is author-written,
+  // not AI-generated, same distinction the inbox badge relies on.
+  const usedModelMessage = !useAfterHoursText && Boolean(message?.trim());
   if (outgoingText) {
     try {
       await engineSendText({
@@ -804,6 +856,7 @@ async function handOffFromCollectAi(
         conversationId: run.conversation_id!,
         contactId: run.contact_id!,
         text: outgoingText,
+        aiGenerated: usedModelMessage,
       });
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
@@ -847,6 +900,10 @@ async function sendCollectAiTextAndSuspend(
   run: FlowRunRow,
   node: FlowNodeRow,
   text: string,
+  /** False for `intro_text` (author-written, static); true for a
+   *  model-drafted follow-up question (`decideCollectAiOutcome`'s
+   *  `continue` case) — see each call site. */
+  aiGenerated: boolean,
 ): Promise<{ outcome: "advanced" | "completed" }> {
   try {
     const { whatsapp_message_id } = await engineSendText({
@@ -855,6 +912,7 @@ async function sendCollectAiTextAndSuspend(
       conversationId: run.conversation_id!,
       contactId: run.contact_id!,
       text,
+      aiGenerated,
     });
     await logEvent(db, run.id, "message_sent", node.node_key, {
       node_type: "collect_ai",
@@ -878,11 +936,58 @@ async function sendCollectAiTextAndSuspend(
 }
 
 /**
+ * Send the document the customer asked for this turn (Opción B), if
+ * any. A pure side effect alongside whatever continue/complete/handoff
+ * `decideCollectAiOutcome` also produces — requesting a catalog mid-
+ * collection doesn't interrupt the field-gathering loop, so this is
+ * dispatched independently of (and before) that decision. Best-effort:
+ * a failed send is logged but never blocks the turn's normal reply —
+ * the customer still gets `reply_text` either way.
+ */
+async function sendCollectAiDocumentIfRequested(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  result: ExtractResult | null,
+): Promise<void> {
+  if (!result?.sendDocument) return;
+  const doc = cfg.documents?.find((d) => d.key === result.sendDocument);
+  // Absent despite passing parseExtraction's own key check would mean
+  // cfg.documents changed between building the schema and this call —
+  // stale, not a bug to crash over. Silently skip; reply_text still sends.
+  if (!doc) return;
+
+  try {
+    await engineSendMedia({
+      accountId: run.account_id,
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      kind: doc.media_type,
+      link: doc.media_url,
+      caption: doc.caption,
+      filename: doc.filename,
+    });
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      node_type: "collect_ai",
+      document_key: doc.key,
+    });
+  } catch (err) {
+    await logEvent(db, run.id, "error", node.node_key, {
+      reason: "collect_ai_document_send_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Shared conclusion of one collect_ai turn — used both by the node's
  * entry call (no intro_text configured) and by every reply while
  * suspended on it. Bumps `ai_turn_count` + merges extracted fields
  * (skipped when `result` is null — nothing to merge on a failed
- * call), then dispatches on `decideCollectAiOutcome`.
+ * call), sends a requested document if any, then dispatches on
+ * `decideCollectAiOutcome`.
  */
 async function handleCollectAiOutcome(
   db: AdminClient,
@@ -896,6 +1001,8 @@ async function handleCollectAiOutcome(
     await incrementAiTurnCount(db, run);
     await mergeCollectAiFields(db, run, result.fields);
   }
+
+  await sendCollectAiDocumentIfRequested(db, run, node, cfg, result);
 
   const decision = decideCollectAiOutcome({
     result,
@@ -918,6 +1025,9 @@ async function handleCollectAiOutcome(
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
           text: decision.message,
+          // decision.message on "complete" is always result.replyText
+          // (decideCollectAiOutcome) — the model's own closing line.
+          aiGenerated: true,
         });
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "collect_ai",
@@ -940,8 +1050,9 @@ async function handleCollectAiOutcome(
     return advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
   }
 
-  // decision.kind === "continue"
-  return sendCollectAiTextAndSuspend(db, run, node, decision.message);
+  // decision.kind === "continue" — decision.message is always
+  // result.replyText (decideCollectAiOutcome), model-drafted.
+  return sendCollectAiTextAndSuspend(db, run, node, decision.message, true);
 }
 
 /**
@@ -963,7 +1074,14 @@ export async function enterCollectAiNode(
   await resetAiTurnCount(db, run);
 
   if (cfg.intro_text && cfg.intro_text.trim()) {
-    return sendCollectAiTextAndSuspend(db, run, node, interpolateVars(cfg.intro_text, run.vars));
+    // Author-written, static — not the model.
+    return sendCollectAiTextAndSuspend(
+      db,
+      run,
+      node,
+      interpolateVars(cfg.intro_text, run.vars),
+      false,
+    );
   }
 
   const result = await runCollectAiTurn(db, run, cfg);
@@ -1006,7 +1124,8 @@ export async function handleCollectAiNonTextReply(
 ): Promise<{ outcome: "advanced" | "completed" }> {
   const cfg = node.config as unknown as CollectAiNodeConfig;
   const text = cfg.non_text_reply_text?.trim() || DEFAULT_NON_TEXT_REPLY_TEXT;
-  return sendCollectAiTextAndSuspend(db, run, node, text);
+  // Fixed reply (author-configured or the hardcoded default) — not the model.
+  return sendCollectAiTextAndSuspend(db, run, node, text, false);
 }
 
 /**
@@ -1033,6 +1152,16 @@ export async function handleCollectAiNonTextReply(
  * already surfaces a transcribed audio message as if it were text
  * (see context.ts). Persisting the transcript (inside
  * `transcribeInboundAudio`) is the entire job here.
+ *
+ * `isImageMessage` is the same idea, simpler: unlike audio, there's no
+ * secondary key and no transcription-equivalent step to attempt — the
+ * webhook already persisted the image's Storage copy synchronously
+ * (piece b) before this ever runs, so the gate is just `visionEnabled`.
+ * On success, `handleCollectAiReply` re-reads `buildConversationContext`
+ * (now with `includeImages`, via `runCollectAiTurn`), which already
+ * surfaces the persisted image as vision content — nothing else to do
+ * here. Mutually exclusive with the `audio` branch — a single inbound
+ * is never both.
  */
 export async function handleCollectAiBlankReply(
   db: AdminClient,
@@ -1040,6 +1169,7 @@ export async function handleCollectAiBlankReply(
   node: FlowNodeRow,
   nodes: Map<string, FlowNodeRow>,
   audio?: InboundAudioRef,
+  isImageMessage?: boolean,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
   if (audio) {
     const config = await loadAiConfig(db, run.account_id);
@@ -1052,6 +1182,11 @@ export async function handleCollectAiBlankReply(
       if (transcript) {
         return handleCollectAiReply(db, run, node, nodes);
       }
+    }
+  } else if (isImageMessage) {
+    const config = await loadAiConfig(db, run.account_id);
+    if (config?.visionEnabled) {
+      return handleCollectAiReply(db, run, node, nodes);
     }
   }
   return handleCollectAiNonTextReply(db, run, node);
@@ -1529,7 +1664,11 @@ export async function dispatchInboundToFlows(
   }
 }
 
-async function handleReplyForActiveRun(
+// Exported alongside enterCollectAiNode/handleCollectAiReply as its own
+// testable seam — engine.test.ts drives it directly with a
+// pre-constructed run/node/message, without needing to fixture
+// dispatchInboundToFlows's own active-run lookup + idempotency check.
+export async function handleReplyForActiveRun(
   db: AdminClient,
   run: FlowRunRow,
   message: ParsedInbound,
@@ -1583,11 +1722,19 @@ async function handleReplyForActiveRun(
   // extractWithReply entirely (handleCollectAiBlankReply →
   // handleCollectAiNonTextReply): no provider call, no ai_turn_count
   // spent — UNLESS `message.audio` is set (a voice note specifically)
-  // and the account opted into transcription, which
+  // and the account opted into transcription, or `message.isImageMessage`
+  // is set and the account opted into vision — both of which
   // handleCollectAiBlankReply tries first before falling back.
   if (message.kind === "text" && currentNode.node_type === "collect_ai") {
     if (!message.text.trim()) {
-      const outcome = await handleCollectAiBlankReply(db, run, currentNode, nodes, message.audio);
+      const outcome = await handleCollectAiBlankReply(
+        db,
+        run,
+        currentNode,
+        nodes,
+        message.audio,
+        message.isImageMessage,
+      );
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
     }
     const outcome = await handleCollectAiReply(db, run, currentNode, nodes);
@@ -1657,6 +1804,21 @@ async function handleReplyForActiveRun(
       })
     ) {
       matched = cfg.handoff_node_key;
+    } else if (cfg.release_unmatched_text_to_assistant) {
+      // Free text that isn't a button tap and isn't an escalation
+      // keyword (checked above — always wins first) — end the run and
+      // let the webhook fall through to the general auto-reply
+      // assistant with this same inbound message, instead of applying
+      // fallback_policy. Ends the run (rather than leaving it active,
+      // the way fallback_policy's own "ignore" action does) so a LATER
+      // message can match an entry trigger again — dispatchInboundToFlows
+      // never even looks at entry triggers while an active run exists.
+      await endRun(db, run.id, "completed", "released_to_assistant");
+      return {
+        consumed: false,
+        flow_run_id: run.id,
+        outcome: "released_to_assistant",
+      };
     }
   }
 

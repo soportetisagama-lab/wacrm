@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mocked BEFORE importing ./engine so its module-level import binds to
 // these mocks — engine.ts calls extractWithReply/loadAiConfig/
@@ -29,16 +29,29 @@ import {
   handleCollectAiReply,
   handleCollectAiNonTextReply,
   handleCollectAiBlankReply,
+  handleReplyForActiveRun,
   shouldSendCollectAiNudge,
   resolveTemplateButtonAction,
+  findEntryFlow,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
 import { buildConversationContext } from "@/lib/ai/context";
 import { transcribeInboundAudio } from "@/lib/ai/inbound-audio";
-import { engineSendText } from "./meta-send";
+import {
+  engineSendText,
+  engineSendMedia,
+  engineSendInteractiveList,
+  engineSendInteractiveButtons,
+} from "./meta-send";
 import type { AiConfig } from "@/lib/ai/types";
-import type { CollectAiNodeConfig, FlowNodeRow, FlowRunRow } from "./types";
+import type {
+  CollectAiNodeConfig,
+  FlowNodeRow,
+  FlowRunRow,
+  FlowRow,
+  ParsedInbound,
+} from "./types";
 
 describe("matchReplyId", () => {
   it("returns null for nodes without options", () => {
@@ -406,6 +419,81 @@ describe("isConversationBotEligible", () => {
 });
 
 // ============================================================
+// findEntryFlow — reentry_keywords
+// ============================================================
+
+/** Minimal fake db for findEntryFlow: only needs to serve the
+ *  `.from("flows").select().eq().eq().order()` chain used to load the
+ *  account's active flows. */
+function makeFlowsFakeDb(flows: Partial<FlowRow>[]) {
+  return {
+    from: (table: string) => {
+      if (table !== "flows") throw new Error(`unexpected table ${table}`);
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => Promise.resolve({ data: flows, error: null }),
+      };
+      return chain;
+    },
+  } as never;
+}
+
+function textMessage(text: string): ParsedInbound {
+  return { kind: "text", text, meta_message_id: "wamid.test" };
+}
+
+const FAQ_BOT_FLOW: Partial<FlowRow> = {
+  id: "flow-faq",
+  account_id: "acct-1",
+  status: "active",
+  trigger_type: "first_inbound_message",
+  trigger_config: { reentry_keywords: ["menu", "menú"] },
+  entry_node_id: "start",
+};
+
+describe("findEntryFlow — reentry_keywords", () => {
+  it("matches a flow whose primary trigger_type did NOT fire, via reentry_keywords", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    // isFirstInbound: false — first_inbound_message would never match on
+    // its own; only reentry_keywords should.
+    const flow = await findEntryFlow(db, "acct-1", textMessage("menú"), false);
+    expect(flow?.id).toBe("flow-faq");
+  });
+
+  it("is case-insensitive", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(db, "acct-1", textMessage("MENU"), false);
+    expect(flow?.id).toBe("flow-faq");
+  });
+
+  it("requires an exact match — a sentence merely containing the keyword does not retrigger", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      textMessage("¿tienen menú del día?"),
+      false,
+    );
+    expect(flow).toBeNull();
+  });
+
+  it("does nothing when the flow has no reentry_keywords configured (no regression)", async () => {
+    const db = makeFlowsFakeDb([{ ...FAQ_BOT_FLOW, trigger_config: {} }]);
+    const flow = await findEntryFlow(db, "acct-1", textMessage("menú"), false);
+    expect(flow).toBeNull();
+  });
+
+  it("falls through to the normal trigger_type loop when no reentry match", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    // isFirstInbound: true — should match via the primary trigger_type
+    // instead, for an unrelated message.
+    const flow = await findEntryFlow(db, "acct-1", textMessage("hola"), true);
+    expect(flow?.id).toBe("flow-faq");
+  });
+});
+
+// ============================================================
 // collect_ai — pure decision logic
 // ============================================================
 
@@ -449,12 +537,14 @@ function extractResult(overrides: Partial<{
   replyText: string;
   done: boolean;
   handoff: boolean;
+  sendDocument: string | null;
 }> = {}) {
   return {
     fields: {},
     replyText: "¿En qué ciudad?",
     done: false,
     handoff: false,
+    sendDocument: null,
     usage: null,
     ...overrides,
   };
@@ -703,6 +793,8 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     handoffAgentId: null,
     embeddingsApiKey: null,
     transcribeAudioEnabled: false,
+    visionEnabled: false,
+    documents: [],
     ...overrides,
   };
 }
@@ -774,6 +866,7 @@ const mockExtract = vi.mocked(extractWithReply);
 const mockLoadAiConfig = vi.mocked(loadAiConfig);
 const mockBuildContext = vi.mocked(buildConversationContext);
 const mockSendText = vi.mocked(engineSendText);
+const mockSendMedia = vi.mocked(engineSendMedia);
 const mockTranscribe = vi.mocked(transcribeInboundAudio);
 
 beforeEach(() => {
@@ -781,6 +874,7 @@ beforeEach(() => {
   mockLoadAiConfig.mockResolvedValue(aiConfig());
   mockBuildContext.mockResolvedValue([{ role: "user", content: "hola" }]);
   mockSendText.mockResolvedValue({ whatsapp_message_id: "wamid.test" } as never);
+  mockSendMedia.mockResolvedValue({ whatsapp_message_id: "wamid.media" } as never);
 });
 
 describe("enterCollectAiNode", () => {
@@ -793,8 +887,9 @@ describe("enterCollectAiNode", () => {
 
     expect(outcome).toEqual({ outcome: "advanced" });
     expect(mockExtract).not.toHaveBeenCalled();
+    // Static, author-written text — must NOT carry the inbox's AI badge.
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "¿Qué necesitas cotizar?" }),
+      expect.objectContaining({ text: "¿Qué necesitas cotizar?", aiGenerated: false }),
     );
     expect(run.ai_turn_count).toBe(0);
     expect(updates.some((u) => u.table === "flow_runs" && u.payload.ai_turn_count === 0)).toBe(true);
@@ -813,8 +908,12 @@ describe("enterCollectAiNode", () => {
     expect(outcome).toEqual({ outcome: "advanced" });
     expect(mockExtract).toHaveBeenCalledTimes(1);
     expect(mockExtract.mock.calls[0][0]).toMatchObject({ knownValues: {} });
+    // Model-drafted question — must carry the inbox's AI badge.
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "¿Qué equipos, en qué ciudad, y qué rubro?" }),
+      expect.objectContaining({
+        text: "¿Qué equipos, en qué ciudad, y qué rubro?",
+        aiGenerated: true,
+      }),
     );
     expect(run.ai_turn_count).toBe(1);
   });
@@ -890,7 +989,10 @@ describe("handleCollectAiReply", () => {
 
     expect(outcome).toEqual({ outcome: "completed" });
     expect(run.vars.rubro).toBe("restaurante");
-    expect(mockSendText).toHaveBeenCalledWith(expect.objectContaining({ text: "¡Listo, gracias!" }));
+    // The closing line is the model's own text — must carry the AI badge.
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¡Listo, gracias!", aiGenerated: true }),
+    );
   });
 
   it("max_turns exhausted without done routes to handoff_node_key, carrying partial vars along", async () => {
@@ -947,7 +1049,7 @@ describe("handleCollectAiReply", () => {
 
     expect(outcome).toEqual({ outcome: "handed_off" });
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Ok, te comunico con un asesor." }),
+      expect.objectContaining({ text: "Ok, te comunico con un asesor.", aiGenerated: true }),
     );
   });
 
@@ -976,9 +1078,11 @@ describe("handleCollectAiReply", () => {
     const outcome = await handleCollectAiReply(db, run, node, new Map());
 
     expect(outcome).toEqual({ outcome: "handed_off" });
+    // Author-written fallback text, not the model — no AI badge.
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
+        aiGenerated: false,
       }),
     );
   });
@@ -994,7 +1098,7 @@ describe("handleCollectAiReply", () => {
     await handleCollectAiReply(db, run, node, new Map());
 
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Un asesor te contactará pronto." }),
+      expect.objectContaining({ text: "Un asesor te contactará pronto.", aiGenerated: false }),
     );
   });
 
@@ -1011,7 +1115,10 @@ describe("handleCollectAiReply", () => {
     await handleCollectAiReply(db, run, node, new Map());
 
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Puntual: te comunico con un asesor ya mismo." }),
+      expect.objectContaining({
+        text: "Puntual: te comunico con un asesor ya mismo.",
+        aiGenerated: true,
+      }),
     );
     expect(mockSendText).not.toHaveBeenCalledWith(
       expect.objectContaining({ text: "Texto genérico del nodo." }),
@@ -1065,6 +1172,157 @@ describe("handleCollectAiReply", () => {
 
     expect(inserts.some((i) => i.table === "ai_usage_log")).toBe(false);
   });
+
+  describe("document send (Opción B)", () => {
+    const DOCUMENTS: CollectAiNodeConfig["documents"] = [
+      {
+        key: "catalogo",
+        label: "Catálogo de productos",
+        media_type: "document",
+        media_url: "https://storage.example/catalogo.pdf",
+        filename: "catalogo.pdf",
+      },
+    ];
+
+    it("sends the matching document via engineSendMedia when the model sets send_document, alongside the normal reply_text", async () => {
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({ config: collectAiConfig({ documents: DOCUMENTS }) });
+      mockExtract.mockResolvedValue(
+        extractResult({ sendDocument: "catalogo", replyText: "¡Acá tienes! ¿En qué ciudad estás?" }),
+      );
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "document",
+          link: "https://storage.example/catalogo.pdf",
+          filename: "catalogo.pdf",
+        }),
+      );
+      // The document doesn't replace the conversational reply.
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "¡Acá tienes! ¿En qué ciudad estás?" }),
+      );
+    });
+
+    it("never calls engineSendMedia when send_document is null", async () => {
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({ config: collectAiConfig({ documents: DOCUMENTS }) });
+      mockExtract.mockResolvedValue(extractResult({ sendDocument: null }));
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendMedia).not.toHaveBeenCalled();
+    });
+
+    it("skips the send (without throwing) when the key no longer matches any configured document", async () => {
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      // No `documents` configured at all on this node.
+      const node = makeNode({ config: collectAiConfig() });
+      mockExtract.mockResolvedValue(extractResult({ sendDocument: "catalogo" }));
+
+      const outcome = await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendMedia).not.toHaveBeenCalled();
+      expect(outcome.outcome).toBe("advanced");
+    });
+
+    it("a failed document send is logged but the normal reply still goes out", async () => {
+      const { db, inserts } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({ config: collectAiConfig({ documents: DOCUMENTS }) });
+      mockExtract.mockResolvedValue(
+        extractResult({ sendDocument: "catalogo", replyText: "¿En qué ciudad estás?" }),
+      );
+      mockSendMedia.mockRejectedValue(new Error("Meta rejected the media"));
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      const errorEvent = inserts.find(
+        (i) => i.table === "flow_run_events" && i.payload.event_type === "error",
+      );
+      expect(errorEvent?.payload.payload).toMatchObject({
+        reason: "collect_ai_document_send_failed",
+      });
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "¿En qué ciudad estás?" }),
+      );
+    });
+  });
+
+  describe("business-hours handoff closing text", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("outside business hours: sends handoff_fallback_text_after_hours, overriding even the model's own courtesy message", async () => {
+      vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({
+        config: collectAiConfig({
+          handoff_fallback_text: "Un asesor te contactará pronto.",
+          handoff_fallback_text_after_hours: "Estamos fuera de horario, te contactamos mañana.",
+        }),
+      });
+      mockExtract.mockResolvedValue(
+        extractResult({ handoff: true, replyText: "Ok, te comunico con un asesor." }),
+      );
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Estamos fuera de horario, te contactamos mañana.",
+          aiGenerated: false,
+        }),
+      );
+    });
+
+    it("within business hours: unaffected — the model's courtesy message still wins as before", async () => {
+      vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({
+        config: collectAiConfig({
+          handoff_fallback_text: "Un asesor te contactará pronto.",
+          handoff_fallback_text_after_hours: "Estamos fuera de horario, te contactamos mañana.",
+        }),
+      });
+      mockExtract.mockResolvedValue(
+        extractResult({ handoff: true, replyText: "Ok, te comunico con un asesor." }),
+      );
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Ok, te comunico con un asesor.", aiGenerated: true }),
+      );
+    });
+
+    it("no handoff_fallback_text_after_hours configured: behavior is unchanged regardless of the time", async () => {
+      vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed, but irrelevant here
+      const { db } = makeFakeDb();
+      const run = makeRun();
+      const node = makeNode({
+        config: collectAiConfig({ handoff_fallback_text: "Un asesor te contactará pronto." }),
+      });
+      mockExtract.mockRejectedValue(new Error("timeout")); // provider_error — no model message
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Un asesor te contactará pronto.", aiGenerated: false }),
+      );
+    });
+  });
 });
 
 describe("handleCollectAiNonTextReply", () => {
@@ -1080,6 +1338,7 @@ describe("handleCollectAiNonTextReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
       }),
     );
   });
@@ -1094,7 +1353,10 @@ describe("handleCollectAiNonTextReply", () => {
     await handleCollectAiNonTextReply(db, run, node);
 
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Por ahora no puedo ver fotos, ¿me lo contás en texto?" }),
+      expect.objectContaining({
+        text: "Por ahora no puedo ver fotos, ¿me lo contás en texto?",
+        aiGenerated: false,
+      }),
     );
   });
 
@@ -1140,6 +1402,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
       }),
     );
   });
@@ -1157,6 +1420,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
       }),
     );
   });
@@ -1173,6 +1437,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
       }),
     );
   });
@@ -1219,7 +1484,208 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
       }),
     );
+  });
+
+  it("with an image but vision_enabled off: falls back to the fixed non-text reply, never calls extractWithReply", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: false }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiBlankReply(db, run, node, new Map(), undefined, true);
+
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
+      }),
+    );
+  });
+
+  it("with an image and vision_enabled on: falls through to handleCollectAiReply — extractWithReply runs, buildConversationContext gets includeImages:true, ai_turn_count bumped", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }));
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Y para cuándo lo necesitás?" }));
+    const { db } = makeFakeDb();
+    const run = makeRun({ ai_turn_count: 0 });
+    const node = makeNode({ config: collectAiConfig() });
+
+    const outcome = await handleCollectAiBlankReply(db, run, node, new Map(), undefined, true);
+
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(mockBuildContext).toHaveBeenCalledWith(db, "conv-1", undefined, {
+      includeImages: true,
+    });
+    expect(run.ai_turn_count).toBe(1);
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¿Y para cuándo lo necesitás?" }),
+    );
+  });
+
+  it("a video/sticker/document inbound (isImageMessage absent) never triggers the vision fallthrough, even with vision_enabled on", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiBlankReply(db, run, node, new Map(), undefined, undefined);
+
+    expect(mockExtract).not.toHaveBeenCalled();
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        aiGenerated: false,
+      }),
+    );
+  });
+});
+
+describe("runCollectAiTurn — includeImages wiring", () => {
+  it("passes includeImages matching config.visionEnabled to buildConversationContext, for both text and image turns", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }));
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(mockBuildContext).toHaveBeenCalledWith(db, "conv-1", undefined, {
+      includeImages: true,
+    });
+  });
+
+  it("passes includeImages:false when vision_enabled is off, same as today's plain-text behavior", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: false }));
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+    const { db } = makeFakeDb();
+    const run = makeRun();
+    const node = makeNode({ config: collectAiConfig() });
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(mockBuildContext).toHaveBeenCalledWith(db, "conv-1", undefined, {
+      includeImages: false,
+    });
+  });
+});
+
+describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () => {
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({
+      whatsapp_message_id: "wamid.list",
+    } as never);
+    vi.mocked(engineSendInteractiveButtons).mockResolvedValue({
+      whatsapp_message_id: "wamid.buttons",
+    } as never);
+  });
+
+  function topicsNode(configOverrides: Record<string, unknown> = {}): FlowNodeRow {
+    return makeNode({
+      node_key: "topics",
+      node_type: "send_list",
+      config: {
+        text: "¿En qué te ayudamos?",
+        button_label: "Ver opciones",
+        sections: [
+          {
+            title: "Menú",
+            rows: [{ reply_id: "precios", title: "Precios", next_node_key: "precios_node" }],
+          },
+        ],
+        unmatched_text_keywords: ["asesor", "humano"],
+        handoff_node_key: "human_handoff",
+        ...configOverrides,
+      },
+    });
+  }
+
+  it("a button tap still advances normally when the flag is on", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const nextNode = makeNode({ node_key: "precios_node", node_type: "end", config: {} });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "interactive_reply", reply_id: "precios", reply_title: "Precios", meta_message_id: "wamid.1" },
+      new Map([["topics", node], ["precios_node", nextNode]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(result.outcome).not.toBe("released_to_assistant");
+  });
+
+  it("an escalation keyword still wins over the release flag — 'asesor' still hands off, never released", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: { note: "escalated" },
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.2" },
+      new Map([["topics", node], ["human_handoff", handoffNode]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(result.outcome).not.toBe("released_to_assistant");
+  });
+
+  it("flag off: genuinely unmatched text falls through to the normal fallback_policy, unchanged", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 0 });
+    const node = topicsNode(); // no release flag
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.3" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(result.outcome).toBe("fallback_fired");
+    expect(
+      updates.some(
+        (u) => u.table === "flow_runs" && u.payload.end_reason === "released_to_assistant",
+      ),
+    ).toBe(false);
+  });
+
+  it("flag on: genuinely unmatched text ends the run and releases to the general assistant", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.4" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result).toEqual({
+      consumed: false,
+      flow_run_id: "run-1",
+      outcome: "released_to_assistant",
+    });
+    const endUpdate = updates.find(
+      (u) => u.table === "flow_runs" && u.payload.status === "completed",
+    );
+    expect(endUpdate?.payload).toMatchObject({
+      status: "completed",
+      end_reason: "released_to_assistant",
+    });
   });
 });
