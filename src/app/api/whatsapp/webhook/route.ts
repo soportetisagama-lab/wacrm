@@ -1420,8 +1420,20 @@ async function processMessage(
   // caption on a photo/video/document must NOT be treated as usable
   // chat text (buildConversationContext filters non-text content_types
   // out entirely, so the model would never actually see it).
+  // Note: no `!interactiveReplyId` exclusion here — a button/list tap
+  // that no flow consumed (its flow_run already ended, e.g. via
+  // handoff, before the tap arrived) used to fall into a gap where
+  // NEITHER Flows nor the AI assistant ever answered it: Flows had
+  // nothing active to match it against, and this call was skipped
+  // outright because it looked like a tap. `contentText` already holds
+  // the tapped option's human-readable title (e.g. "🖼️ Catálogo
+  // digital") — same as any other inbound text — so it flows through
+  // the normal isTextMessage:true path below. buildConversationContext
+  // (lib/ai/context.ts) was widened to include content_type='interactive'
+  // rows so the model actually sees what was tapped, not just older
+  // text around it.
   const isNonTextMedia = NON_TEXT_AUTO_REPLY_MEDIA_TYPES.has(message.type)
-  if (!flowConsumed && !interactiveReplyId && (isNonTextMedia || inboundText.trim())) {
+  if (!flowConsumed && (isNonTextMedia || inboundText.trim())) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,

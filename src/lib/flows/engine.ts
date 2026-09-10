@@ -98,10 +98,27 @@ export function matchReplyId(
   return null;
 }
 
+/** Escape regex metacharacters in a literal string before embedding it
+ *  in a RegExp — needles come from user-configured keywords, not from
+ *  a fixed literal set, so this can't assume they're regex-safe. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Case-insensitive contains/exact match against a list of keywords.
- * Used by the trigger evaluator. Stable enough that the v3 builder
- * UI can preview matches by passing canned strings.
+ * Case-insensitive contains/exact/word match against a list of
+ * keywords. Used by the trigger evaluator. Stable enough that the v3
+ * builder UI can preview matches by passing canned strings.
+ *
+ * `match_type: "word"` sits between "exact" (the whole message, and
+ * nothing else, must equal the keyword) and "contains" (the keyword
+ * anywhere, even mid-word — "menudo" would match "menu"): it matches
+ * the keyword as a whole word, bounded by non-letter/digit characters
+ * or the start/end of the message. Added for `reentry_keywords`
+ * ("menú") — real customer phrasing like "quiero el menú" or
+ * "muéstrame el menú" needs to match, which "exact" misses entirely
+ * and "contains" would over-match on (e.g. inside an unrelated longer
+ * word).
  */
 export function matchesKeywordTrigger(
   text: string,
@@ -113,7 +130,15 @@ export function matchesKeywordTrigger(
   for (const raw of cfg.keywords) {
     if (!raw) continue;
     const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
-    if (matchType === "exact" ? haystack === needle : haystack.includes(needle)) {
+    if (matchType === "exact") {
+      if (haystack === needle) return true;
+    } else if (matchType === "word") {
+      const re = new RegExp(
+        `(?:^|[^\\p{L}\\p{N}])${escapeRegExp(needle)}(?:[^\\p{L}\\p{N}]|$)`,
+        "u",
+      );
+      if (re.test(haystack)) return true;
+    } else if (haystack.includes(needle)) {
       return true;
     }
   }
@@ -468,6 +493,52 @@ async function loadConversationGateInfo(
   return (data as { status: string; assigned_agent_id: string | null } | null) ?? null;
 }
 
+/**
+ * Re-entry keywords ("menú"/"menu") are independent of trigger_type —
+ * matched against EVERY active flow's `trigger_config.reentry_keywords`
+ * (plain JSONB, no schema change), regardless of that flow's primary
+ * trigger_type. Exported as its own function (not just inlined in
+ * `findEntryFlow`) because it's also the one thing `dispatchInboundToFlows`
+ * checks when the conversation is 'pending' with nobody actually
+ * assigned yet — see the design note there for why "menú" specifically
+ * is allowed to break through that gate when nothing else is.
+ *
+ * `match_type: "word"` (not "exact"): real customer phrasing like
+ * "quiero el menú" or "muéstrame el menú" needs to match — "exact"
+ * only matched a message that was the word and nothing else.
+ */
+export async function findReentryFlow(
+  db: AdminClient,
+  accountId: string,
+  message: ParsedInbound,
+): Promise<FlowRow | null> {
+  if (message.kind !== "text") return null;
+
+  const { data: flows, error } = await db
+    .from("flows")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
+  if (error || !flows) return null;
+
+  for (const flow of flows as FlowRow[]) {
+    const reentryKeywords = (
+      flow.trigger_config as { reentry_keywords?: string[] } | null
+    )?.reentry_keywords;
+    if (
+      reentryKeywords?.length &&
+      matchesKeywordTrigger(message.text, {
+        keywords: reentryKeywords,
+        match_type: "word",
+      })
+    ) {
+      return flow;
+    }
+  }
+  return null;
+}
+
 export async function findEntryFlow(
   db: AdminClient,
   accountId: string,
@@ -478,6 +549,15 @@ export async function findEntryFlow(
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
   if (message.kind !== "text") return null;
+
+  // Checked first, before the normal per-trigger_type matching below —
+  // see findReentryFlow's own doc comment. Only reached when there's no
+  // active flow_run for this contact (dispatchInboundToFlows never
+  // calls findEntryFlow otherwise) — a run already in progress (e.g.
+  // mid collect_ai) is deliberately left alone; see the design note
+  // this implements (Opción A).
+  const reentryFlow = await findReentryFlow(db, accountId, message);
+  if (reentryFlow) return reentryFlow;
 
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
@@ -491,33 +571,6 @@ export async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
-
-  // Re-entry keywords ("menú"/"menu") are independent of trigger_type —
-  // checked first, against EVERY active flow, before the normal
-  // per-trigger_type matching below. Stored in trigger_config.reentry_keywords
-  // (plain JSONB, no schema change) so any flow — regardless of its primary
-  // trigger_type — can opt into "show the menu again" re-entry. Only reached
-  // when there's no active flow_run for this contact (dispatchInboundToFlows
-  // never calls findEntryFlow otherwise) — a run already in progress (e.g.
-  // mid collect_ai) is deliberately left alone; see the design note this
-  // implements (Opción A).
-  //
-  // Exact match only — never "contains" — so a message that merely mentions
-  // the word ("¿tienen menú del día?") doesn't accidentally retrigger it.
-  for (const flow of typed) {
-    const reentryKeywords = (
-      flow.trigger_config as { reentry_keywords?: string[] } | null
-    )?.reentry_keywords;
-    if (
-      reentryKeywords?.length &&
-      matchesKeywordTrigger(message.text, {
-        keywords: reentryKeywords,
-        match_type: "exact",
-      })
-    ) {
-      return flow;
-    }
-  }
 
   // Memoized so a message never gets classified twice, even in the
   // unusual case where more than one active flow uses trigger_type
@@ -911,10 +964,11 @@ async function handOffFromCollectAi(
   }
 
   if (run.conversation_id) {
-    await db
-      .from("conversations")
-      .update({ status: "pending", updated_at: new Date().toISOString() })
-      .eq("id", run.conversation_id);
+    await markConversationPendingHandoff(
+      db,
+      run.conversation_id,
+      `🤖 El asistente derivó la conversación a un asesor (collect_ai: ${reason}).`,
+    );
   }
   await endRun(db, run.id, "handed_off", `collect_ai_${reason}`);
   return { outcome: "handed_off" };
@@ -1232,16 +1286,15 @@ async function executeHandoff(
   node: FlowNodeRow,
 ): Promise<void> {
   const cfg = node.config as { assign_to?: string; note?: string };
-  const convUpdate: Record<string, unknown> = {
-    status: "pending",
-    updated_at: new Date().toISOString(),
-  };
-  if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
   if (run.conversation_id) {
-    await db
-      .from("conversations")
-      .update(convUpdate)
-      .eq("id", run.conversation_id);
+    await markConversationPendingHandoff(
+      db,
+      run.conversation_id,
+      cfg.note
+        ? `🤖 El bot derivó la conversación a un asesor: ${cfg.note}`
+        : "🤖 El bot derivó la conversación a un asesor.",
+      cfg.assign_to,
+    );
   }
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
@@ -1315,6 +1368,38 @@ function interpolateVars(template: string, vars: Record<string, unknown>): strin
     const v = vars[key];
     return v === undefined || v === null ? "" : String(v);
   });
+}
+
+/**
+ * Shared conversation-side effect of every flow handoff (collect_ai's
+ * own handoff, a `handoff` node, or fallback_policy exhaustion): mark
+ * the thread `pending` AND disable the general assistant's auto-reply
+ * on it in the SAME write. The two must always move together — a
+ * handoff the customer was just told about ("un asesor va a continuar
+ * contigo") must never leave one of the two systems (Flows vs the AI
+ * auto-reply) still willing to answer while the other has already
+ * stood down.
+ *
+ * Bug this fixes: a flow-side handoff used to only set `status`, never
+ * `ai_autoreply_disabled` — so `dispatchInboundToAiReply` (which only
+ * ever checks `ai_autoreply_disabled`/`assigned_agent_id`, never
+ * `status`) kept answering new free-text messages on a thread the flow
+ * had already told the customer a human would take over.
+ */
+async function markConversationPendingHandoff(
+  db: AdminClient,
+  conversationId: string,
+  summary: string,
+  assignTo?: string,
+): Promise<void> {
+  const update: Record<string, unknown> = {
+    status: "pending",
+    ai_autoreply_disabled: true,
+    ai_handoff_summary: summary,
+    updated_at: new Date().toISOString(),
+  };
+  if (assignTo) update.assigned_agent_id = assignTo;
+  await db.from("conversations").update(update).eq("id", conversationId);
 }
 
 async function endRun(
@@ -1673,7 +1758,35 @@ export async function dispatchInboundToFlows(
       input.conversationId,
     );
     if (!isConversationBotEligible(conversationGate)) {
-      return { consumed: false, outcome: "no_match" };
+      // A human who has actually CLAIMED the thread (assigned_agent_id
+      // set) is never overridden — full stop, no exceptions.
+      if (conversationGate?.assigned_agent_id) {
+        return { consumed: false, outcome: "no_match" };
+      }
+      // The remaining ineligible case is `status === 'pending'` with
+      // nobody actually assigned yet — a handoff happened but no agent
+      // has picked it up. "menú" is an explicit, deliberate request
+      // from the customer to go back to the bot, not an automatic
+      // trigger firing on its own — honor it so a customer stuck after
+      // an unanswered handoff isn't stranded with no way back to the
+      // bot. Every OTHER trigger type still requires full eligibility.
+      const reentryFlow = await findReentryFlow(db, input.accountId, input.message);
+      if (!reentryFlow || !reentryFlow.entry_node_id) {
+        return { consumed: false, outcome: "no_match" };
+      }
+      // The customer explicitly asked to restart — the old handoff
+      // state no longer applies. Mirrors, in reverse, what
+      // markConversationPendingHandoff sets on the way in.
+      await db
+        .from("conversations")
+        .update({
+          status: "open",
+          ai_autoreply_disabled: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", input.conversationId);
+      const reentryNodes = await loadAllNodes(db, reentryFlow.id);
+      return startNewRun(db, reentryFlow, input, reentryNodes);
     }
 
     // No active run, conversation not human-owned → look for a flow
@@ -1957,10 +2070,11 @@ export async function handleReplyForActiveRun(
   }
   if (action.type === "handoff") {
     if (run.conversation_id) {
-      await db
-        .from("conversations")
-        .update({ status: "pending", updated_at: new Date().toISOString() })
-        .eq("id", run.conversation_id);
+      await markConversationPendingHandoff(
+        db,
+        run.conversation_id,
+        "🤖 El bot derivó la conversación a un asesor tras varios intentos sin una respuesta reconocida.",
+      );
     }
     await logEvent(db, run.id, "handoff", run.current_node_key, {
       reason: "fallback_exhausted",

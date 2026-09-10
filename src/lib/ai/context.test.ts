@@ -28,6 +28,29 @@ function fakeDb(rows: unknown[]): SupabaseClient {
   return chain as unknown as SupabaseClient
 }
 
+describe('buildConversationContext — SQL filter', () => {
+  it('includes content_type=interactive in the OR filter, with and without includeImages', async () => {
+    const orCalls: string[] = []
+    const chain = {
+      from: () => chain,
+      select: () => chain,
+      eq: () => chain,
+      or: (filter: string) => {
+        orCalls.push(filter)
+        return chain
+      },
+      order: () => chain,
+      limit: () => Promise.resolve({ data: [], error: null }),
+    }
+    await buildConversationContext(chain as unknown as SupabaseClient, 'conv-1')
+    await buildConversationContext(chain as unknown as SupabaseClient, 'conv-1', undefined, {
+      includeImages: true,
+    })
+    expect(orCalls[0]).toContain('content_type.eq.interactive')
+    expect(orCalls[1]).toContain('content_type.eq.interactive')
+  })
+})
+
 describe('buildConversationContext', () => {
   it('maps sender_type to role and returns chronological order', async () => {
     // DB returns newest-first (created_at DESC); the fn reverses it.
@@ -62,6 +85,21 @@ describe('buildConversationContext', () => {
       'conv-1',
     )
     expect(out).toEqual([{ role: 'user', content: 'real' }])
+  })
+
+  it('surfaces an interactive (button/list) tap using its human-readable title, like any other text message', async () => {
+    // Regression guard: a button/list tap that no Flow run was left to
+    // consume used to be completely invisible to the model — the SQL
+    // filter excluded content_type='interactive' outright, so the
+    // general assistant would see whatever text came BEFORE the tap,
+    // never what the customer actually tapped.
+    const out = await buildConversationContext(
+      fakeDb([
+        { sender_type: 'customer', content_type: 'interactive', content_text: '🖼️ Catálogo digital' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([{ role: 'user', content: '🖼️ Catálogo digital' }])
   })
 
   it('uses the transcript as content for a transcribed audio message', async () => {

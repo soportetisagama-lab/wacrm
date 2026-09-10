@@ -222,6 +222,14 @@ async function markNeedsHuman(
   },
 ): Promise<void> {
   const update: Record<string, unknown> = {
+    // Also mark the thread 'pending' — mirrors markConversationPendingHandoff
+    // (lib/flows/engine.ts) so the two independent "this needs a human"
+    // signals (Flows' isConversationBotEligible checks `status`; this
+    // module only ever checked `ai_autoreply_disabled`) always move
+    // together. Without this, a Flow could still start a fresh run over
+    // a conversation the general assistant had already handed off,
+    // since `status` would still read 'open'.
+    status: 'pending',
     ai_autoreply_disabled: true,
     ai_handoff_summary: args.summary,
   }
@@ -320,18 +328,22 @@ export async function runAutoReplyNow(
 
     // Deterministic, user-configured responders win over the LLM — the
     // caller already excludes messages a Flow consumed. Message-level
-    // automations (`new_message_received` / `keyword_match`) are
-    // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
+    // automations (`new_message_received` / `keyword_match` /
+    // `interactive_reply`) are dispatched independently for this same
+    // inbound and may send their own reply, so if the account has any
+    // active one we stand down to avoid double-texting the customer.
+    // `interactive_reply` included since the webhook now also calls
+    // this function for a button/list tap no Flow run was left to
+    // consume — an account with BOTH an active interactive_reply
+    // automation and general auto-reply enabled must not answer it
+    // twice. (Relationship triggers like `first_inbound_message` don't
+    // count — they're not per-message auto-responders.)
     const { data: autoResponders } = await db
       .from('automations')
       .select('id')
       .eq('account_id', accountId)
       .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
+      .in('trigger_type', ['new_message_received', 'keyword_match', 'interactive_reply'])
       .limit(1)
     if (autoResponders && autoResponders.length > 0) return
 
@@ -555,8 +567,15 @@ export async function runAutoReplyNow(
     // (claim_ai_reply_slot's increment above only touched the DB row,
     // not this in-memory object) — so `=== 0` correctly means "this is
     // about to be the first reply ever sent in this conversation".
+    // Skipped when the model's own text already mentions menú/menu —
+    // e.g. the account's business-context system prompt already taught
+    // it to say "escribe *menú* para ver las opciones otra vez" — so
+    // the customer never sees the hint said twice in one message.
+    const mentionsMenuAlready = /men[uú]/i.test(text)
     const outgoingText =
-      conv.ai_reply_count === 0 ? `${text}${FIRST_REPLY_MENU_HINT}` : text
+      conv.ai_reply_count === 0 && !mentionsMenuAlready
+        ? `${text}${FIRST_REPLY_MENU_HINT}`
+        : text
 
     await engineSendText({
       accountId,

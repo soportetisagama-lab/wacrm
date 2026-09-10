@@ -5,7 +5,7 @@ import { fetchImageBlock } from './image-block'
 
 interface DbMessage {
   sender_type: 'customer' | 'agent' | 'bot'
-  content_type: 'text' | 'audio' | 'image'
+  content_type: 'text' | 'audio' | 'image' | 'interactive'
   content_text: string | null
   transcript: string | null
   /** Only selected when `includeImages` is true (see below). */
@@ -21,14 +21,20 @@ interface DbMessage {
  * reads naturally and the most recent customer message lands last.
  *
  * Text handling (unchanged regardless of `includeImages`): non-text
- * messages (media, templates, interactive) are excluded — they carry
- * no text to model, EXCEPT a transcribed voice note (content_type=
- * 'audio' with a non-null `transcript`), whose transcript is used as
- * if it were content_text — see `transcribeInboundAudio` (lib/ai/
- * inbound-audio.ts), the only writer of that column. A transcript of
- * `''` (Whisper ran, got nothing) is fetched too but then dropped by
- * the same blank-content filter as any other empty message, same as
- * `transcript IS NULL` never being selected in the first place.
+ * messages (media, templates) are excluded — they carry no text to
+ * model, EXCEPT a transcribed voice note (content_type='audio' with a
+ * non-null `transcript`), whose transcript is used as if it were
+ * content_text — see `transcribeInboundAudio` (lib/ai/inbound-audio.ts),
+ * the only writer of that column — and a button/list tap
+ * (content_type='interactive'), whose `content_text` already holds the
+ * tapped option's human-readable title (e.g. "🖼️ Catálogo digital",
+ * set by the webhook same as any other message). Without this, a tap
+ * that no Flow run was left to consume was invisible to the model
+ * entirely — it would see whatever text came before the tap, never the
+ * tap itself. A transcript of `''` (Whisper ran, got nothing) is
+ * fetched too but then dropped by the same blank-content filter as any
+ * other empty message, same as `transcript IS NULL` never being
+ * selected in the first place.
  *
  * `includeImages` (default false — every existing caller gets today's
  * exact behavior, unchanged) opts into also surfacing content_type=
@@ -61,8 +67,8 @@ export async function buildConversationContext(
     ? 'sender_type, content_type, content_text, transcript, media_storage_url, is_sticker'
     : 'sender_type, content_type, content_text, transcript'
   const filter = includeImages
-    ? 'content_type.eq.text,and(content_type.eq.audio,transcript.not.is.null),content_type.eq.image'
-    : 'content_type.eq.text,and(content_type.eq.audio,transcript.not.is.null)'
+    ? 'content_type.eq.text,content_type.eq.interactive,and(content_type.eq.audio,transcript.not.is.null),content_type.eq.image'
+    : 'content_type.eq.text,content_type.eq.interactive,and(content_type.eq.audio,transcript.not.is.null)'
 
   const { data, error } = await db
     .from('messages')

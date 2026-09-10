@@ -877,6 +877,18 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     )
   })
 
+  it('does NOT duplicate the hint when the model already mentions menú/menu on its own', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    h.generateReply.mockResolvedValue({
+      text: 'Atendemos de lunes a viernes. Escribe *menú* para ver las opciones otra vez.',
+      handoff: false,
+    })
+    await runAutoReplyNow(ARGS)
+    const sentText = h.engineSendText.mock.calls[0][0].text as string
+    expect(sentText).toBe('Atendemos de lunes a viernes. Escribe *menú* para ver las opciones otra vez.')
+    expect(sentText.match(/men[uú]/gi)).toHaveLength(1)
+  })
+
   it('is deterministic, not model-generated — the model\'s own text never contains it', async () => {
     h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
     h.generateReply.mockResolvedValue({ text: 'Claro, te ayudo con eso.', handoff: false })

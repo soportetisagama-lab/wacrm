@@ -18,6 +18,15 @@ vi.mock("./meta-send", () => ({
   engineSendMedia: vi.fn(),
 }));
 
+// Only dispatchInboundToFlows (and startFlowRunAtNode, untested today)
+// call supabaseAdmin() internally rather than taking `db` as a
+// parameter — every other exported function under test gets its fake
+// db injected directly, so this mock is inert for the rest of the file.
+const adminDbHolder: { current: unknown } = { current: null };
+vi.mock("./admin-client", () => ({
+  supabaseAdmin: () => adminDbHolder.current,
+}));
+
 import {
   matchReplyId,
   matchesKeywordTrigger,
@@ -36,6 +45,7 @@ import {
   shouldSendCollectAiNudge,
   resolveTemplateButtonAction,
   findEntryFlow,
+  dispatchInboundToFlows,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -189,6 +199,31 @@ describe("matchesKeywordTrigger", () => {
     const cfg = { keywords: ["", "support", ""] };
     expect(matchesKeywordTrigger("support center", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nope", cfg)).toBe(false);
+  });
+
+  describe("match_type='word'", () => {
+    const cfg = { keywords: ["menu", "menú"], match_type: "word" as const };
+
+    it("matches the bare word", () => {
+      expect(matchesKeywordTrigger("menú", cfg)).toBe(true);
+      expect(matchesKeywordTrigger("Menu", cfg)).toBe(true);
+    });
+
+    it("matches the word inside a real sentence", () => {
+      expect(matchesKeywordTrigger("quiero el menú", cfg)).toBe(true);
+      expect(matchesKeywordTrigger("muéstrame el menú", cfg)).toBe(true);
+      expect(matchesKeywordTrigger("No deseo ver el catálogo, quiero el menú", cfg)).toBe(true);
+    });
+
+    it("does not match when the keyword is embedded inside a longer word", () => {
+      expect(matchesKeywordTrigger("quiero pedir un menudo", cfg)).toBe(false);
+      expect(matchesKeywordTrigger("menudencia", cfg)).toBe(false);
+    });
+
+    it("matches at the very start or end of the message (no boundary character needed there)", () => {
+      expect(matchesKeywordTrigger("menú!", cfg)).toBe(true);
+      expect(matchesKeywordTrigger("¡menú", cfg)).toBe(true);
+    });
   });
 });
 
@@ -482,13 +517,25 @@ describe("findEntryFlow — reentry_keywords", () => {
     expect(flow?.id).toBe("flow-faq");
   });
 
-  it("requires an exact match — a sentence merely containing the keyword does not retrigger", async () => {
+  it("matches as a whole word inside a real sentence — 'quiero el menú', not just the bare word", async () => {
     const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
     const flow = await findEntryFlow(
       db,
       "acct-1",
       "conv-1",
-      textMessage("¿tienen menú del día?"),
+      textMessage("No deseo ver el catálogo, quiero el menú"),
+      false,
+    );
+    expect(flow?.id).toBe("flow-faq");
+  });
+
+  it("does not match a keyword embedded inside an unrelated longer word", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("Quiero pedir un menudo"),
       false,
     );
     expect(flow).toBeNull();
@@ -612,6 +659,161 @@ describe("findEntryFlow — first-inbound context classification", () => {
       true,
     );
     expect(flow?.id).toBe("flow-faq");
+  });
+});
+
+// ============================================================
+// dispatchInboundToFlows — reentry override on a stranded 'pending'
+// conversation (Bug B: "menú" must break through a handoff nobody
+// answered, but never when an agent has actually claimed the thread).
+// ============================================================
+
+/**
+ * Generic Supabase-style chain: every intermediate call (.select/.eq/
+ * .order/.limit) returns the same object, so it supports both an
+ * explicit terminal (.maybeSingle()) and being awaited directly
+ * (.then()) — whichever pattern the real code under test happens to
+ * use for that table.
+ */
+function reentryChain(terminal: () => Promise<{ data: unknown; error: unknown }>) {
+  const obj: Record<string, unknown> = {
+    select: () => obj,
+    eq: () => obj,
+    order: () => obj,
+    limit: () => obj,
+    maybeSingle: () => terminal(),
+    then: (resolve: (v: { data: unknown; error: unknown }) => void) =>
+      terminal().then(resolve),
+  };
+  return obj;
+}
+
+function makeReentryOverrideFakeDb(opts: {
+  conversationGate: { status: string; assigned_agent_id: string | null } | null;
+  flows: Partial<FlowRow>[];
+  flowNodes: Partial<FlowNodeRow>[];
+}) {
+  const conversationUpdates: Record<string, unknown>[] = [];
+  const flowRunInserts: Record<string, unknown>[] = [];
+
+  const db = {
+    from: (table: string) => {
+      if (table === "flow_runs") {
+        return {
+          ...reentryChain(() => Promise.resolve({ data: [], error: null })), // no active run
+          insert: (payload: Record<string, unknown>) => {
+            flowRunInserts.push(payload);
+            return reentryChain(() =>
+              Promise.resolve({ data: { id: "run-new", ...payload }, error: null }),
+            );
+          },
+          update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+        };
+      }
+      if (table === "conversations") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: opts.conversationGate, error: null }),
+            }),
+          }),
+          update: (payload: Record<string, unknown>) => {
+            conversationUpdates.push(payload);
+            return { eq: () => Promise.resolve({ error: null }) };
+          },
+        };
+      }
+      if (table === "flows") {
+        return reentryChain(() => Promise.resolve({ data: opts.flows, error: null }));
+      }
+      if (table === "flow_nodes") {
+        return reentryChain(() => Promise.resolve({ data: opts.flowNodes, error: null }));
+      }
+      if (table === "flow_run_events") {
+        return { insert: () => Promise.resolve({ error: null }) };
+      }
+      if (table === "messages") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table in reentry-override test: ${table}`);
+    },
+    rpc: () => Promise.resolve({ data: null, error: null }),
+  };
+  return { db, conversationUpdates, flowRunInserts };
+}
+
+const FAQ_FLOW_ENDING_IMMEDIATELY: Partial<FlowRow> = {
+  id: "flow-faq",
+  account_id: "acct-1",
+  status: "active",
+  trigger_type: "first_inbound_message",
+  trigger_config: { reentry_keywords: ["menu", "menú"] },
+  entry_node_id: "end", // reaches a terminal node in one step — no Meta sends needed
+};
+const END_NODE: Partial<FlowNodeRow> = { node_key: "end", node_type: "end", config: {} };
+
+function reentryInput(text: string) {
+  return {
+    accountId: "acct-1",
+    userId: "user-1",
+    contactId: "contact-1",
+    conversationId: "conv-1",
+    message: { kind: "text" as const, text, meta_message_id: "wamid.reentry" },
+    isFirstInboundMessage: false,
+  };
+}
+
+describe("dispatchInboundToFlows — reentry override on a stranded pending conversation", () => {
+  it("'menú' restarts the flow when pending with nobody assigned — clearing status and ai_autoreply_disabled", async () => {
+    const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+      conversationGate: { status: "pending", assigned_agent_id: null },
+      flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
+      flowNodes: [END_NODE],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(result.consumed).toBe(true);
+    expect(flowRunInserts).toHaveLength(1);
+    expect(
+      conversationUpdates.some((u) => u.status === "open" && u.ai_autoreply_disabled === false),
+    ).toBe(true);
+  });
+
+  it("does NOT restart when an agent has actually claimed the thread, even for 'menú'", async () => {
+    const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+      conversationGate: { status: "pending", assigned_agent_id: "agent-1" },
+      flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
+      flowNodes: [END_NODE],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(flowRunInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(0);
+  });
+
+  it("a genuinely unrelated message does not restart the flow, and leaves the conversation untouched", async () => {
+    const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+      conversationGate: { status: "pending", assigned_agent_id: null },
+      flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
+      flowNodes: [END_NODE],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("Esta bien en a qué hora?"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(flowRunInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(0);
   });
 });
 
@@ -1153,6 +1355,17 @@ describe("handleCollectAiReply", () => {
     expect(outcome).toEqual({ outcome: "handed_off" });
     expect(
       updates.some((u) => u.table === "conversations" && u.payload.status === "pending"),
+    ).toBe(true);
+    // Regression guard: a collect_ai handoff used to only set `status`,
+    // never `ai_autoreply_disabled` — leaving dispatchInboundToAiReply
+    // (which never checks `status`) free to keep auto-replying on a
+    // thread the flow had already told the customer a human would
+    // take over. Both must always be set together — see
+    // markConversationPendingHandoff.
+    expect(
+      updates.some(
+        (u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true,
+      ),
     ).toBe(true);
     expect(
       updates.some((u) => u.table === "flow_runs" && u.payload.status === "handed_off"),
@@ -1744,7 +1957,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
   });
 
   it("an escalation keyword still wins over the release flag — 'asesor' still hands off, never released", async () => {
-    const { db } = makeFakeDb();
+    const { db, updates } = makeFakeDb();
     const run = makeRun({ current_node_key: "topics" });
     const node = topicsNode({ release_unmatched_text_to_assistant: true });
     const handoffNode = makeNode({
@@ -1762,6 +1975,17 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
 
     expect(result.consumed).toBe(true);
     expect(result.outcome).not.toBe("released_to_assistant");
+    // Regression guard: executeHandoff (the `handoff` node type) used
+    // to only set `status`, never `ai_autoreply_disabled` — see the
+    // same fix on the collect_ai handoff path above.
+    expect(
+      updates.some((u) => u.table === "conversations" && u.payload.status === "pending"),
+    ).toBe(true);
+    expect(
+      updates.some(
+        (u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true,
+      ),
+    ).toBe(true);
   });
 
   it("flag off: genuinely unmatched text falls through to the normal fallback_policy, unchanged", async () => {
