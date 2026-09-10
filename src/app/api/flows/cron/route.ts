@@ -5,12 +5,15 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
 import { DEFAULT_NUDGE_TEXT, shouldSendCollectAiNudge } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
 import type { CollectAiNodeConfig } from '@/lib/flows/types'
+import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
 
 /**
- * Sweep abandoned active flow runs, and nudge collect_ai runs that
- * have gone quiet before they reach that point.
+ * Sweep abandoned active flow runs, nudge collect_ai runs that have gone
+ * quiet before they reach that point, and recover orphaned AI-debounce
+ * windows.
  *
- * Two independent jobs share this one scan of active runs:
+ * Three independent jobs share this endpoint (the first two share one scan
+ * of active runs; the third scans `conversations` instead):
  *
  *   1. Timeout: reads each active run's parent-flow
  *      `fallback_policy.on_timeout_hours` (default 24h) and marks any
@@ -31,6 +34,21 @@ import type { CollectAiNodeConfig } from '@/lib/flows/types'
  *      (`contacts.ai_nudge_opt_out` — set by the webhook's
  *      `flagNudgeOptOutIfRequested`, checked here, never here itself).
  *
+ *   3. Debounce recovery: `dispatchInboundToAiReply` (lib/ai/auto-reply.ts)
+ *      debounces a burst of text messages by having the first one's
+ *      webhook invocation sleep a few seconds before replying, so it can
+ *      answer the whole burst at once. If THAT invocation's serverless
+ *      instance dies mid-sleep (rare, but `after()` callbacks aren't
+ *      immune to it), the conversation's `ai_debounce_until` is left set
+ *      in the future with nobody left to act on it — no later message is
+ *      guaranteed to arrive and re-trigger it. This sweep finds any
+ *      conversation whose window is older than
+ *      `DEBOUNCE_SWEEP_GRACE_SECONDS` (comfortably longer than the
+ *      debounce wait + provider-call budget a live owner would still be
+ *      inside) and answers it directly via `runAutoReplyNow` — the same
+ *      function the debounce wrapper itself calls once its own wait
+ *      settles.
+ *
  * Auth: re-uses `AUTOMATION_CRON_SECRET` so operators only have one
  * secret to provision. The two endpoints (`/api/automations/cron`
  * and this one) are independent operations; we keep them on separate
@@ -40,7 +58,10 @@ import type { CollectAiNodeConfig } from '@/lib/flows/types'
  * pinger / a native crontab). Pick an interval comfortably shorter
  * than the smallest `nudge_after_minutes` any collect_ai node uses —
  * a 24h-only deployment could get away with hourly, but nudges need
- * finer granularity than that.
+ * finer granularity than that. The debounce-recovery job additionally
+ * wants an interval well under `DEBOUNCE_SWEEP_GRACE_SECONDS` (90s
+ * today) so an orphaned window doesn't sit unanswered for long — aim
+ * for 60s or less.
  */
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
@@ -80,7 +101,10 @@ export async function GET(request: Request) {
     console.error('[flows-cron] active-run scan failed:', error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  if (!runs?.length) return NextResponse.json({ swept: 0, nudged: 0 })
+  if (!runs?.length) {
+    const debounceRecovered = await sweepOrphanedDebounceWindows(admin, now)
+    return NextResponse.json({ swept: 0, nudged: 0, debounceRecovered })
+  }
 
   type Row = {
     id: string
@@ -138,7 +162,68 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ swept, nudged })
+  const debounceRecovered = await sweepOrphanedDebounceWindows(admin, now)
+  return NextResponse.json({ swept, nudged, debounceRecovered })
+}
+
+/**
+ * Find every conversation whose AI-debounce window (`ai_debounce_until`,
+ * migration 058) is older than `DEBOUNCE_SWEEP_GRACE_SECONDS` and answer
+ * it directly — recovery path for a debounce "owner" instance that died
+ * mid-wait (see this file's own doc comment, job 3, for the full story).
+ *
+ * The UPDATE...RETURNING below IS the recovery claim: clearing
+ * `ai_debounce_until` and deciding "this row is mine to process" happen in
+ * the same atomic write, so a concurrent sweep run (overlapping schedules)
+ * or a still-alive owner finishing at the same instant loses the race
+ * cleanly — its own write/read just doesn't see the row anymore. No
+ * separate lock/RPC needed here, unlike `claim_ai_debounce_window`: that
+ * one needs the OLD value to decide ownership; this one only needs "was it
+ * still set past the cutoff", which a single conditional UPDATE already
+ * answers.
+ */
+async function sweepOrphanedDebounceWindows(
+  admin: ReturnType<typeof supabaseAdmin>,
+  now: Date,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - DEBOUNCE_SWEEP_GRACE_SECONDS * 1000).toISOString()
+
+  const { data: recovered, error } = await admin
+    .from('conversations')
+    .update({ ai_debounce_until: null })
+    .lt('ai_debounce_until', cutoff)
+    .select('id, account_id, contact_id')
+
+  if (error) {
+    console.error('[flows-cron] debounce sweep query failed:', error.message)
+    return 0
+  }
+  if (!recovered?.length) return 0
+
+  let processed = 0
+  for (const conv of recovered as { id: string; account_id: string; contact_id: string }[]) {
+    // whatsapp_config is account-scoped and UNIQUE(account_id) (see
+    // migration 017 / the ai_configs doc comment) — one row per account.
+    const { data: wc } = await admin
+      .from('whatsapp_config')
+      .select('user_id')
+      .eq('account_id', conv.account_id)
+      .maybeSingle()
+    if (!wc) continue // no WhatsApp config for this account — nothing to send with
+
+    console.warn(
+      `[flows-cron] recovering orphaned AI-debounce window for conversation ${conv.id} — an owner instance likely died mid-wait.`,
+    )
+    await runAutoReplyNow({
+      accountId: conv.account_id,
+      conversationId: conv.id,
+      contactId: conv.contact_id,
+      configOwnerUserId: wc.user_id as string,
+      isTextMessage: true,
+    })
+    processed += 1
+  }
+  return processed
 }
 
 /**

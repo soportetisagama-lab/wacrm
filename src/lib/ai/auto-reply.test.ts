@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
+  engineSendMedia: vi.fn(),
   transcribeAudio: vi.fn(),
   getMediaUrl: vi.fn(),
   downloadMedia: vi.fn(),
@@ -20,6 +21,17 @@ const h = vi.hoisted(() => ({
     rpcCalls: [] as { name: string; args: unknown }[],
     waConfig: null as Record<string, unknown> | null,
     transcriptUpdate: null as Record<string, unknown> | null,
+    // Debounce (claim_ai_debounce_window + ai_debounce_until bookkeeping) —
+    // kept separate from `updatePayload`/`claim` above so every existing
+    // assertion on those two keeps meaning exactly what it meant before
+    // debounce existed.
+    debounceClaim: null as { is_owner: boolean; wait_until: string } | null,
+    debounceClaimError: null as { message: string } | null,
+    // Values returned by successive `.select('ai_debounce_until')` reads
+    // inside the recheck loop, one per call; an empty/exhausted queue
+    // reads back as "no active window" (settles immediately).
+    debounceRecheckQueue: [] as (string | null)[],
+    debounceUpdates: [] as Record<string, unknown>[],
   },
 }))
 
@@ -28,7 +40,10 @@ vi.mock('./context', () => ({ buildConversationContext: h.buildConversationConte
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
 vi.mock('./transcribe', () => ({ transcribeAudio: h.transcribeAudio }))
-vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
+vi.mock('@/lib/flows/meta-send', () => ({
+  engineSendText: h.engineSendText,
+  engineSendMedia: h.engineSendMedia,
+}))
 vi.mock('@/lib/whatsapp/meta-api', () => ({
   getMediaUrl: h.getMediaUrl,
   downloadMedia: h.downloadMedia,
@@ -73,26 +88,48 @@ vi.mock('./admin-client', () => ({
       }
       // conversations
       return {
-        select: () => ({
+        select: (cols?: string) => ({
           eq: () => ({
-            maybeSingle: () =>
-              Promise.resolve({ data: h.state.conv, error: null }),
+            maybeSingle: () => {
+              // The debounce recheck loop only ever selects this exact
+              // column — distinguish it from the eligibility-gate select
+              // (`assigned_agent_id, ai_autoreply_disabled, ai_reply_count`)
+              // so both can be driven independently from the same fake.
+              if (cols === 'ai_debounce_until') {
+                const next = h.state.debounceRecheckQueue.shift() ?? null
+                return Promise.resolve({
+                  data: next ? { ai_debounce_until: next } : null,
+                  error: null,
+                })
+              }
+              return Promise.resolve({ data: h.state.conv, error: null })
+            },
           }),
         }),
         update: (payload: Record<string, unknown>) => {
-          h.state.updatePayload = payload
+          if ('ai_debounce_until' in payload) {
+            h.state.debounceUpdates.push(payload)
+          } else {
+            h.state.updatePayload = payload
+          }
           return { eq: () => Promise.resolve({ error: null }) }
         },
       }
     },
     rpc: (name: string, args: unknown) => {
       h.state.rpcCalls.push({ name, args })
+      if (name === 'claim_ai_debounce_window') {
+        return Promise.resolve({
+          data: h.state.debounceClaim ? [h.state.debounceClaim] : [],
+          error: h.state.debounceClaimError,
+        })
+      }
       return Promise.resolve({ data: h.state.claim, error: null })
     },
   }),
 }))
 
-import { dispatchInboundToAiReply } from './auto-reply'
+import { dispatchInboundToAiReply, runAutoReplyNow } from './auto-reply'
 
 const ARGS = {
   accountId: 'acct-1',
@@ -114,6 +151,8 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     handoffAgentId: null,
     embeddingsApiKey: null,
     transcribeAudioEnabled: false,
+    visionEnabled: false,
+    documents: [],
     ...overrides,
   }
 }
@@ -130,11 +169,23 @@ beforeEach(() => {
   h.state.rpcCalls = []
   h.state.waConfig = { access_token: 'enc-token' }
   h.state.transcriptUpdate = null
+  // Default: this message is the only one — already-past wait_until so
+  // the debounce wrapper settles immediately and every existing
+  // assertion below keeps testing the same "single message" behavior it
+  // always did.
+  h.state.debounceClaim = {
+    is_owner: true,
+    wait_until: new Date(Date.now() - 1000).toISOString(),
+  }
+  h.state.debounceClaimError = null
+  h.state.debounceRecheckQueue = []
+  h.state.debounceUpdates = []
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
   h.generateReply.mockResolvedValue({ text: 'Hello!', handoff: false })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
+  h.engineSendMedia.mockResolvedValue({ whatsapp_message_id: 'm-media' })
   h.transcribeAudio.mockResolvedValue({ text: 'quiero cotizar dos cocinas', durationSeconds: 4 })
   h.getMediaUrl.mockResolvedValue({ url: 'https://meta.example/audio.ogg', mimeType: 'audio/ogg' })
   h.downloadMedia.mockResolvedValue({ buffer: Buffer.from('bytes'), contentType: 'audio/ogg' })
@@ -146,6 +197,10 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.state.rpcCalls).toEqual([
       {
+        name: 'claim_ai_debounce_window',
+        args: { p_conversation_id: 'conv-1', p_window_seconds: 6 },
+      },
+      {
         name: 'claim_ai_reply_slot',
         args: { conversation_id: 'conv-1', max_replies: 3 },
       },
@@ -153,6 +208,10 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: 'conv-1', text: 'Hello!' }),
     )
+    // The processing lock + final clear are debounce bookkeeping, tracked
+    // separately from the business-logic `updatePayload` assertions below.
+    expect(h.state.debounceUpdates).toHaveLength(2)
+    expect(h.state.debounceUpdates[1]).toEqual({ ai_debounce_until: null })
   })
 
   it('grounds the reply in retrieved knowledge', async () => {
@@ -175,8 +234,11 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     await dispatchInboundToAiReply(ARGS)
     // It still attempts the claim; the model's generated text is
     // discarded, but the customer still gets a closing line instead of
-    // silence.
-    expect(h.state.rpcCalls).toHaveLength(1)
+    // silence. rpcCalls[0] is the debounce claim (every text inbound
+    // makes that one first); rpcCalls[1] is the reply-slot claim this
+    // test is actually about.
+    expect(h.state.rpcCalls).toHaveLength(2)
+    expect(h.state.rpcCalls[1].name).toBe('claim_ai_reply_slot')
     expect(h.engineSendText).toHaveBeenCalledTimes(1)
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -344,8 +406,11 @@ describe('dispatchInboundToAiReply — handoff', () => {
     // The prompt instructs the model to reply with exactly [[HANDOFF]]
     // and nothing else, so `text` is always empty here — the customer
     // must still get the fixed closing line, not silence, and never
-    // the raw (empty) generated text via the normal send path.
-    expect(h.state.rpcCalls).toHaveLength(0)
+    // the raw (empty) generated text via the normal send path. Only the
+    // debounce claim runs here — a model-decided handoff exits before
+    // ever reaching claim_ai_reply_slot.
+    expect(h.state.rpcCalls).toHaveLength(1)
+    expect(h.state.rpcCalls[0].name).toBe('claim_ai_debounce_window')
     expect(h.engineSendText).toHaveBeenCalledTimes(1)
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -544,5 +609,246 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
     )
+  })
+})
+
+describe('dispatchInboundToAiReply — vision fallthrough', () => {
+  const IMAGE_ARGS = { ...ARGS, isTextMessage: false, isImageMessage: true }
+
+  it('always passes includeImages to buildConversationContext, matching visionEnabled', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }))
+    await dispatchInboundToAiReply(ARGS) // a plain text turn, not an image
+    expect(h.buildConversationContext).toHaveBeenCalledWith(
+      expect.anything(),
+      'conv-1',
+      undefined,
+      { includeImages: true },
+    )
+  })
+
+  it('falls back to the text-only nudge when visionEnabled is off, even for a live inbound photo', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: false }))
+    await dispatchInboundToAiReply(IMAGE_ARGS)
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('falls through to the normal reply path for a live inbound photo when visionEnabled is on', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }))
+    await dispatchInboundToAiReply(IMAGE_ARGS)
+    expect(h.buildConversationContext).toHaveBeenCalledWith(
+      expect.anything(),
+      'conv-1',
+      undefined,
+      { includeImages: true },
+    )
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+
+  it('never treats a non-image media inbound as a vision fallthrough, even with visionEnabled on', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }))
+    // isImageMessage absent — e.g. a video/document/sticker inbound.
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('still respects the reply cap for a live photo — a capped conversation never reaches buildConversationContext', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }))
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 3 }
+    await dispatchInboundToAiReply(IMAGE_ARGS)
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
+  })
+})
+
+describe('dispatchInboundToAiReply — document send (Opción B)', () => {
+  const CATALOGO = {
+    key: 'catalogo',
+    label: 'Catálogo de productos',
+    media_type: 'document' as const,
+    media_url: 'https://storage.example/catalogo.pdf',
+    filename: 'catalogo.pdf',
+  }
+
+  it('sends the matching document via engineSendMedia when generateReply returns sendDocument, alongside the normal reply', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.generateReply.mockResolvedValue({
+      text: '¡Acá tienes!',
+      handoff: false,
+      sendDocument: 'catalogo',
+    })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.engineSendMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'document',
+        link: 'https://storage.example/catalogo.pdf',
+        filename: 'catalogo.pdf',
+      }),
+    )
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '¡Acá tienes!' }),
+    )
+  })
+
+  it('never calls engineSendMedia when generateReply returns no sendDocument', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.generateReply.mockResolvedValue({ text: 'Hola!', handoff: false, sendDocument: null })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.engineSendMedia).not.toHaveBeenCalled()
+  })
+
+  it('skips the send (without throwing) when the key no longer matches any configured document', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [] }))
+    h.generateReply.mockResolvedValue({
+      text: '¡Acá tienes!',
+      handoff: false,
+      sendDocument: 'catalogo',
+    })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.engineSendMedia).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '¡Acá tienes!' }),
+    )
+  })
+
+  it('sends the document even on a turn that also ends in handoff', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true, sendDocument: 'catalogo' })
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.engineSendMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'document', link: 'https://storage.example/catalogo.pdf' }),
+    )
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
+  })
+
+  it('a failed document send is logged but the normal reply still goes out', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.generateReply.mockResolvedValue({
+      text: '¡Acá tienes!',
+      handoff: false,
+      sendDocument: 'catalogo',
+    })
+    h.engineSendMedia.mockRejectedValue(new Error('Meta rejected the media'))
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '¡Acá tienes!' }),
+    )
+  })
+})
+
+describe('dispatchInboundToAiReply — debounce', () => {
+  it('a follower (is_owner: false) returns immediately without touching gates, the provider, or claim_ai_reply_slot', async () => {
+    h.state.debounceClaim = { is_owner: false, wait_until: new Date(Date.now() + 6000).toISOString() }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.loadAiConfig).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.rpcCalls).toEqual([
+      {
+        name: 'claim_ai_debounce_window',
+        args: { p_conversation_id: 'conv-1', p_window_seconds: 6 },
+      },
+    ])
+    // A follower never became the owner — it must not clear a window some
+    // OTHER, still-active owner is mid-way through.
+    expect(h.state.debounceUpdates).toHaveLength(0)
+  })
+
+  it('the owner waits out an extension the recheck loop observes, then proceeds', async () => {
+    // First recheck sees a still-future value (a follower extended the
+    // window); second recheck sees it already elapsed → settles.
+    h.state.debounceRecheckQueue = [new Date(Date.now() + 5).toISOString(), null]
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+    expect(h.state.debounceRecheckQueue).toHaveLength(0) // both reads consumed
+  })
+
+  it('a claim_ai_debounce_window error fails OPEN to the immediate path instead of dropping the reply', async () => {
+    h.state.debounceClaim = null
+    h.state.debounceClaimError = { message: 'function not found' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+    // Fell through to the immediate path — never reached the
+    // processing-lock/clear bookkeeping, since no window was ever claimed.
+    expect(h.state.debounceUpdates).toHaveLength(0)
+  })
+
+  it('clears ai_debounce_until even when an eligibility gate blocks the send (not just on the happy path)', async () => {
+    h.loadAiConfig.mockResolvedValue(null) // AI off — runAutoReplyNow no-ops
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.debounceUpdates.at(-1)).toEqual({ ai_debounce_until: null })
+  })
+
+  it('a non-text inbound never claims a debounce window', async () => {
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.state.rpcCalls.some((c) => c.name === 'claim_ai_debounce_window')).toBe(false)
+    expect(h.state.debounceUpdates).toHaveLength(0)
+  })
+
+  it('respects the hard wait cap instead of waiting forever on repeated extensions', async () => {
+    vi.useFakeTimers()
+    try {
+      // wait_until already due, but the recheck queue keeps reporting a
+      // fresh future extension every time — without a hard cap this would
+      // never settle.
+      h.state.debounceRecheckQueue = Array.from({ length: 50 }, () =>
+        new Date(Date.now() + 5000).toISOString(),
+      )
+      const p = dispatchInboundToAiReply(ARGS)
+      // Advance well past MAX_DEBOUNCE_WAIT_SECONDS (15s) worth of sleeps.
+      await vi.advanceTimersByTimeAsync(20_000)
+      await p
+      expect(h.engineSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Hello!' }),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('runAutoReplyNow — called directly (mirrors the cron sweep call site)', () => {
+  it('behaves identically to the debounced happy path, with no debounce bookkeeping at all', async () => {
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+    expect(h.state.rpcCalls).toEqual([
+      {
+        name: 'claim_ai_reply_slot',
+        args: { conversation_id: 'conv-1', max_replies: 3 },
+      },
+    ])
+    expect(h.state.debounceUpdates).toHaveLength(0)
   })
 })
