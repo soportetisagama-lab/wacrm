@@ -1,6 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildConversationContext } from './context'
+
+function okImageResponse(mimeType: string, base64: string): Response {
+  // Buffer.from(...).buffer is the pooled underlying ArrayBuffer, which
+  // can be larger than the Buffer's own byteLength — copy into a
+  // freshly-sized Uint8Array first so its .buffer is exactly the bytes.
+  const bytes = new Uint8Array(Buffer.from(base64, 'base64'))
+  return {
+    ok: true,
+    headers: { get: (name: string) => (name === 'content-type' ? mimeType : null) },
+    arrayBuffer: async () => bytes.buffer,
+  } as unknown as Response
+}
 
 /** Minimal fake matching the query chain in buildConversationContext:
  *  from().select().eq().or().order().limit() → { data, error }. */
@@ -76,5 +88,137 @@ describe('buildConversationContext', () => {
       'conv-1',
     )
     expect(out).toEqual([{ role: 'user', content: 'real' }])
+  })
+
+  describe('includeImages', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+    })
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('excludes image rows when includeImages is not passed (default false) — regression guard', async () => {
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: 'look at this',
+            is_sticker: false,
+            media_storage_url: 'https://storage.example/photo.jpg',
+          },
+        ]),
+        'conv-1',
+      )
+      expect(out).toEqual([])
+    })
+
+    it('builds an image + caption block for a real photo with a persisted copy', async () => {
+      const base64 = Buffer.from('fake').toString('base64')
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okImageResponse('image/jpeg', base64)))
+
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: 'is this covered under warranty?',
+            is_sticker: false,
+            media_storage_url: 'https://storage.example/photo.jpg',
+          },
+        ]),
+        'conv-1',
+        undefined,
+        { includeImages: true },
+      )
+      expect(out).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'image', mimeType: 'image/jpeg', base64 },
+            { type: 'text', text: 'is this covered under warranty?' },
+          ],
+        },
+      ])
+    })
+
+    it('excludes a sticker even with includeImages: true, and never fetches it', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: null,
+            is_sticker: true,
+            // Set on purpose, to prove is_sticker is checked independently
+            // of media_storage_url (the second of two defenses).
+            media_storage_url: 'https://storage.example/sticker.webp',
+          },
+        ]),
+        'conv-1',
+        undefined,
+        { includeImages: true },
+      )
+      expect(out).toEqual([])
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('falls back to caption-only when a real photo has no persisted copy yet', async () => {
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: 'is this covered under warranty?',
+            is_sticker: false,
+            media_storage_url: null,
+          },
+        ]),
+        'conv-1',
+        undefined,
+        { includeImages: true },
+      )
+      expect(out).toEqual([{ role: 'user', content: 'is this covered under warranty?' }])
+    })
+
+    it('drops a real photo with no persisted copy and no caption', async () => {
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: null,
+            is_sticker: false,
+            media_storage_url: null,
+          },
+        ]),
+        'conv-1',
+        undefined,
+        { includeImages: true },
+      )
+      expect(out).toEqual([])
+    })
+
+    it('falls back to caption-only when the persisted copy fails to fetch', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false } as unknown as Response))
+
+      const out = await buildConversationContext(
+        fakeDb([
+          {
+            sender_type: 'customer',
+            content_type: 'image',
+            content_text: 'is this covered under warranty?',
+            is_sticker: false,
+            media_storage_url: 'https://storage.example/gone.jpg',
+          },
+        ]),
+        'conv-1',
+        undefined,
+        { includeImages: true },
+      )
+      expect(out).toEqual([{ role: 'user', content: 'is this covered under warranty?' }])
+    })
   })
 })

@@ -62,6 +62,20 @@ interface DispatchArgs {
 const AUTO_REPLY_HANDOFF_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
 
 /**
+ * Appended, deterministically (never model-generated), to the assistant's
+ * FIRST reply in a conversation (`conv.ai_reply_count === 0`) —
+ * regardless of whether that reply happened because the first-inbound
+ * classifier (lib/ai/classify-first-inbound.ts) found context and skipped
+ * the welcome menu, or because the account simply has no menu flow at
+ * all. A deterministic append never depends on the model remembering a
+ * system-prompt instruction, which a cheaper/smaller model can drop.
+ * Reuses the `reentry_keywords` mechanism already wired into
+ * `findEntryFlow` (lib/flows/engine.ts) for the actual "menú" re-match —
+ * no new code needed there.
+ */
+const FIRST_REPLY_MENU_HINT = '\n\nSi quieres ver todas nuestras opciones, escribe menú.'
+
+/**
  * Same wording as collect_ai's DEFAULT_NON_TEXT_REPLY_TEXT
  * (lib/flows/engine.ts) — kept as an independent constant rather than
  * imported across the ai/flows module boundary for a single string
@@ -537,12 +551,19 @@ export async function runAutoReplyNow(
       return
     }
 
+    // conv.ai_reply_count still reflects the count BEFORE this reply
+    // (claim_ai_reply_slot's increment above only touched the DB row,
+    // not this in-memory object) — so `=== 0` correctly means "this is
+    // about to be the first reply ever sent in this conversation".
+    const outgoingText =
+      conv.ai_reply_count === 0 ? `${text}${FIRST_REPLY_MENU_HINT}` : text
+
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text,
+      text: outgoingText,
       aiGenerated: true,
     })
   } catch (err) {

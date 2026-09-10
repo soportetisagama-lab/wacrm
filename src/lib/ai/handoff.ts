@@ -1,4 +1,4 @@
-import type { ChatMessage } from './types'
+import { textOf, type ChatMessage } from './types'
 
 /** Longest the quoted customer message runs before we ellipsize it —
  *  keeps the internal note to a glanceable one-liner. */
@@ -25,7 +25,7 @@ export function buildHandoffSummary(args: {
 
   const lastCustomer = [...messages]
     .reverse()
-    .find((m) => m.role === 'user' && m.content.trim())
+    .find((m) => m.role === 'user' && textOf(m.content).trim())
 
   const replies =
     replyCount === 0
@@ -36,7 +36,7 @@ export function buildHandoffSummary(args: {
 
   if (!lastCustomer) return base
 
-  const quote = truncate(lastCustomer.content.trim(), MAX_QUOTE_LEN)
+  const quote = truncate(textOf(lastCustomer.content).trim(), MAX_QUOTE_LEN)
   return `${base} Last customer message: “${quote}”`
 }
 

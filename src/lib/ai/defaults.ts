@@ -1,4 +1,4 @@
-import type { AiProvider } from './types'
+import type { AiDocument, AiProvider } from './types'
 
 // ============================================================
 // Tunables + prompt scaffold for the AI reply assistant.
@@ -21,6 +21,15 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
  * stripped by `generateReply`.
  */
 export const HANDOFF_SENTINEL = '[[HANDOFF]]'
+
+/**
+ * Sentinel the model is instructed to emit (in auto-reply mode, only
+ * when the account has a document catalog configured) when the
+ * customer explicitly asks for one of `AiConfig.documents`. Carries
+ * the document's `key` as a parameter — unlike `HANDOFF_SENTINEL`,
+ * which is a bare marker. Parsed and stripped by `parseGeneration`.
+ */
+export const SEND_DOCUMENT_SENTINEL_RE = /\[\[SEND_DOCUMENT:([a-zA-Z0-9_]+)\]\]/
 
 /** Cap on generated reply length — keeps WhatsApp replies short and
  *  bounds token spend on the caller's own key. */
@@ -74,8 +83,14 @@ export function buildSystemPrompt(args: {
   mode: 'draft' | 'auto_reply'
   /** Knowledge-base excerpts retrieved for the current question. */
   knowledge?: string[]
+  /** Account's document catalog (`AiConfig.documents`). Only taught to
+   *  the model in `auto_reply` mode — a draft is reviewed by a human
+   *  before sending, so auto-sending a file from that path would skip
+   *  the review this endpoint exists for. Ignored in `draft` mode
+   *  even if passed. */
+  documents?: AiDocument[]
 }): string {
-  const { userPrompt, mode, knowledge } = args
+  const { userPrompt, mode, knowledge, documents } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
       'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
@@ -90,6 +105,15 @@ export function buildSystemPrompt(args: {
     parts.push(
       `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
     )
+
+    if (documents && documents.length > 0) {
+      parts.push(
+        `You can send these documents to the customer on request:\n${documents
+          .map((d) => `- ${d.key}: ${d.label}`)
+          .join('\n')}\n` +
+          'When the customer explicitly asks for one of these, include the exact marker [[SEND_DOCUMENT:<key>]] anywhere in your reply (e.g. "¡Acá tienes! [[SEND_DOCUMENT:catalogo]]") — it will be stripped and the file sent automatically; never paste a link, mention a URL, or say you are attaching something yourself.',
+      )
+    }
   }
 
   if (userPrompt && userPrompt.trim()) {

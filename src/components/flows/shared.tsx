@@ -25,6 +25,7 @@ import {
   MessageCircle,
   Paperclip,
   PlayCircle,
+  Sparkles,
   Tag,
   UserPlus,
   Workflow,
@@ -47,6 +48,7 @@ export type NodeType =
   | 'send_list'
   | 'send_media'
   | 'collect_input'
+  | 'collect_ai'
   | 'condition'
   | 'set_tag'
   | 'handoff'
@@ -138,6 +140,18 @@ export const NODE_META: Record<
     blurb: 'Asks a question, saves the reply',
     category: 'logic',
   },
+  // No visual editor yet (see NodeConfigForm's "collect_ai" case) — this
+  // entry exists so existing collect_ai nodes (added directly via SQL,
+  // migration 045) render as a normal card instead of crashing the
+  // canvas/list view. Not in ADD_NODE_TYPES, so users can't add a new
+  // one from the UI until the real editor lands.
+  collect_ai: {
+    label: 'Collect (AI)',
+    icon: Sparkles,
+    color: 'text-violet-400',
+    blurb: 'Multi-turn AI data collection — no visual editor yet',
+    category: 'logic',
+  },
   condition: {
     label: 'If / else',
     icon: GitFork,
@@ -203,6 +217,7 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   send_list: { l: 0.62, c: 0.15, h: 277 }, // indigo
   send_media: { l: 0.65, c: 0.12, h: 210 }, // sky
   collect_input: { l: 0.65, c: 0.1, h: 185 }, // teal — capture
+  collect_ai: { l: 0.65, c: 0.15, h: 300 }, // violet — AI capture
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
@@ -423,6 +438,14 @@ export function summarizeNode(
     case 'handoff': {
       const note = typeof cfg.note === 'string' ? cfg.note : '';
       return note.length > 0 ? truncate(note) : null;
+    }
+    case 'collect_ai': {
+      // No visual editor yet — nothing meaningful to preview from
+      // config. NodeConfigForm's own "collect_ai" case shows the
+      // read-only placeholder; this just keeps the card summary blank
+      // instead of guessing at a shape that isn't rendered anywhere.
+      const fields = Array.isArray(cfg.fields) ? cfg.fields.length : 0;
+      return fields > 0 ? `${fields} field${fields === 1 ? '' : 's'}` : null;
     }
   }
 }

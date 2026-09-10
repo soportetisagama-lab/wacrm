@@ -21,4 +21,26 @@ describe('latestUserMessage', () => {
   it('returns empty string for no messages', () => {
     expect(latestUserMessage([])).toBe('')
   })
+
+  it('extracts the text block from an image+caption user turn', () => {
+    expect(
+      latestUserMessage([
+        {
+          role: 'user',
+          content: [
+            { type: 'image', mimeType: 'image/jpeg', base64: 'ZmFrZQ==' },
+            { type: 'text', text: 'is this covered under warranty?' },
+          ],
+        },
+      ]),
+    ).toBe('is this covered under warranty?')
+  })
+
+  it('returns empty string for an image-only user turn (no caption)', () => {
+    expect(
+      latestUserMessage([
+        { role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', base64: 'ZmFrZQ==' }] },
+      ]),
+    ).toBe('')
+  })
 })

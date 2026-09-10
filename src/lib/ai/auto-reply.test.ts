@@ -161,7 +161,12 @@ beforeEach(() => {
   h.state.conv = {
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
-    ai_reply_count: 0,
+    // Not the conversation's first reply by default — keeps every
+    // existing "exact sent text" assertion below unaffected by the
+    // FIRST_REPLY_MENU_HINT footer, which only appends when this is 0.
+    // The dedicated "first-reply menu footer" describe block below sets
+    // this to 0 explicitly to test that behavior.
+    ai_reply_count: 1,
   }
   h.state.autoResponders = []
   h.state.claim = true
@@ -850,5 +855,67 @@ describe('runAutoReplyNow — called directly (mirrors the cron sweep call site)
       },
     ])
     expect(h.state.debounceUpdates).toHaveLength(0)
+  })
+})
+
+describe('runAutoReplyNow — first-reply menu footer', () => {
+  const FOOTER = '\n\nSi quieres ver todas nuestras opciones, escribe menú.'
+
+  it('appends the footer when this is the conversation\'s first reply (ai_reply_count === 0)', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: `Hello!${FOOTER}` }),
+    )
+  })
+
+  it('does NOT append the footer on a later reply (ai_reply_count > 0)', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 1 }
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+
+  it('is deterministic, not model-generated — the model\'s own text never contains it', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    h.generateReply.mockResolvedValue({ text: 'Claro, te ayudo con eso.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: `Claro, te ayudo con eso.${FOOTER}` }),
+    )
+  })
+
+  it('is NOT appended to the handoff closing line, even on the first reply', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
+  })
+
+  it('is NOT appended to the non-text "text only" fallback, even on the first reply', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    await runAutoReplyNow({ ...ARGS, isTextMessage: false })
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+      }),
+    )
+  })
+
+  it('is NOT appended when the cap-reached closing line fires, even with ai_reply_count still 0 (lost the atomic claim race)', async () => {
+    // ai_reply_count === 0 clears the cheap pre-check, but the atomic
+    // claim_ai_reply_slot race is lost (a concurrent inbound took the
+    // last slot) — handleAutoReplyCapReached sends the fixed closing
+    // line, never reaching the footer-append site at the bottom of the
+    // happy path.
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    h.state.claim = false
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+    )
   })
 })

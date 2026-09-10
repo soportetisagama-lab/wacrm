@@ -1,4 +1,4 @@
-import { AiError, type ProviderResult } from '../types'
+import { AiError, type ContentBlock, type ProviderResult } from '../types'
 import { MAX_OUTPUT_TOKENS } from '../defaults'
 import {
   mergeConsecutive,
@@ -11,6 +11,23 @@ import {
 } from './shared'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
+
+type OpenAiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+/** Map our provider-neutral content to Chat Completions' shape: a
+ *  plain string passes through unchanged; blocks map 1:1 for text, and
+ *  to `image_url` with a `data:` URI (OpenAI accepts base64 inline,
+ *  same as an https URL) for images. */
+function toOpenAiContent(content: string | ContentBlock[]): string | OpenAiContentPart[] {
+  if (typeof content === 'string') return content
+  return content.map((b): OpenAiContentPart =>
+    b.type === 'text'
+      ? { type: 'text', text: b.text }
+      : { type: 'image_url', image_url: { url: `data:${b.mimeType};base64,${b.base64}` } },
+  )
+}
 
 interface OpenAiResponse {
   choices?: { message?: { content?: string } }[]
@@ -41,7 +58,10 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...mergeConsecutive(messages),
+          ...mergeConsecutive(messages).map((m) => ({
+            role: m.role,
+            content: toOpenAiContent(m.content),
+          })),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
       }),
@@ -107,7 +127,10 @@ export async function generateOpenAiStructured(
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...mergeConsecutive(messages),
+          ...mergeConsecutive(messages).map((m) => ({
+            role: m.role,
+            content: toOpenAiContent(m.content),
+          })),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
         tools: [

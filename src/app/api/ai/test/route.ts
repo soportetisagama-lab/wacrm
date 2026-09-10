@@ -74,6 +74,8 @@ export async function POST(request: Request) {
         handoffAgentId: null,
         embeddingsApiKey: null,
         transcribeAudioEnabled: false,
+        visionEnabled: false,
+        documents: [],
       })
     } catch (err) {
       if (err instanceof AiError) {

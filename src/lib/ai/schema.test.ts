@@ -3,6 +3,7 @@ import {
   buildExtractionSchema,
   buildExtractionPrompt,
   EXTRACTION_TOOL_NAME,
+  type DocumentOption,
   type ExtractionField,
 } from './schema'
 
@@ -10,6 +11,11 @@ const FIELDS: ExtractionField[] = [
   { key: 'equipos', label: 'Equipos', description: 'Qué equipos inox quiere cotizar', required: true },
   { key: 'ciudad', label: 'Ciudad', required: true },
   { key: 'rubro', label: 'Rubro del negocio', required: false },
+]
+
+const DOCUMENTS: DocumentOption[] = [
+  { key: 'catalogo', label: 'Catálogo de productos' },
+  { key: 'lista_precios', label: 'Lista de precios' },
 ]
 
 describe('EXTRACTION_TOOL_NAME', () => {
@@ -63,6 +69,25 @@ describe('buildExtractionSchema', () => {
       'Qué equipos inox quiere cotizar',
     )
     expect(schema.properties.extracted.properties.ciudad.description).toBe('Ciudad')
+  })
+
+  it('omits send_document entirely when no documents are configured', () => {
+    const schema = buildExtractionSchema(FIELDS) as {
+      properties: Record<string, unknown>
+      required: string[]
+    }
+    expect(schema.properties.send_document).toBeUndefined()
+    expect(schema.required).not.toContain('send_document')
+  })
+
+  it('adds send_document, nullable, constrained to the configured keys, when documents are present', () => {
+    const schema = buildExtractionSchema(FIELDS, DOCUMENTS) as {
+      properties: { send_document: { type: string[]; enum: (string | null)[] } }
+      required: string[]
+    }
+    expect(schema.properties.send_document.type).toEqual(['string', 'null'])
+    expect(schema.properties.send_document.enum).toEqual(['catalogo', 'lista_precios', null])
+    expect(schema.required).toContain('send_document')
   })
 })
 
@@ -118,5 +143,19 @@ describe('buildExtractionPrompt', () => {
 
     const withoutCtx = buildExtractionPrompt({ fields: FIELDS, knownValues: {} })
     expect(withoutCtx).not.toContain('Business context and instructions')
+  })
+
+  it('lists available documents by key + label, only when configured', () => {
+    const withDocs = buildExtractionPrompt({
+      fields: FIELDS,
+      knownValues: {},
+      documents: DOCUMENTS,
+    })
+    expect(withDocs).toContain('catalogo: Catálogo de productos')
+    expect(withDocs).toContain('lista_precios: Lista de precios')
+    expect(withDocs).toContain('send_document')
+
+    const withoutDocs = buildExtractionPrompt({ fields: FIELDS, knownValues: {} })
+    expect(withoutDocs).not.toContain('Documents you can send')
   })
 })

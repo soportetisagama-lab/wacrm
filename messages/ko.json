@@ -1136,6 +1136,7 @@
         "advanceAfterCapture": "수집 후 다음 진행",
         "internalNote": "내부 메모 (인계받는 상담원용)",
         "endNodeHelp": "종료 노드입니다. 러너가 이 노드에 도달하면 실행이 완료로 표시됩니다. 추가 설정이 필요 없습니다.",
+        "noVisualEditor": "이 노드 유형은 아직 시각적 편집기가 없습니다 — API/SQL로 직접 수정하세요.",
         "bodyText": "본문 텍스트",
         "footerText": "푸터 (선택, 60자)",
         "buttonsHelp": "버튼 (1–3개) — 각 버튼은 서로 다른 다음 노드로 연결됩니다",
@@ -1223,6 +1224,10 @@
         "collect_input": {
           "label": "입력 수집",
           "blurb": "질문을 하고 응답을 저장합니다"
+        },
+        "collect_ai": {
+          "label": "수집 (AI)",
+          "blurb": "여러 턴에 걸친 AI 데이터 수집 — 아직 시각적 편집기가 없습니다"
         },
         "condition": {
           "label": "만약 / 아니면",
@@ -1823,6 +1828,8 @@
       "promptPlaceholder": "예: 저희는 커피 장비 매장 Acme입니다. 따뜻하고 간결하게 응대해주세요. 가격이나 배송일은 절대 언급하지 말고 사람에게 인계하세요.",
       "enableAssistant": "AI 어시스턴트 활성화",
       "enableAssistantDesc": "마스터 스위치입니다. 인박스의 \"AI로 초안 작성\" 버튼을 켭니다.",
+      "visionEnabled": "이미지 이해",
+      "visionEnabledDesc": "어시스턴트가 고객이 보낸 사진을 보고 질문에 답합니다(예: 제품 사진이나 영수증). 이미지는 텍스트보다 토큰을 더 많이 사용하므로, 비즈니스에 유용한 경우에만 켜세요.",
       "autoReply": "수신 메시지 자동 응답",
       "autoReplyDesc": "봇이 새 수신 메시지에 자동으로 응답합니다(플로우가 처리하지 않고 담당 상담원이 없는 경우에만). 도움을 줄 수 없으면 사람에게 인계합니다.",
       "maxAutoReplies": "대화당 최대 자동 응답 횟수",

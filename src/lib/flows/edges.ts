@@ -142,6 +142,13 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
       case "end":
         // Terminal nodes — no outgoing edges.
         break;
+
+      case "collect_ai":
+        // No visual editor yet (see NodeConfigForm's "collect_ai"
+        // case) — its config shape isn't rendered on the canvas, so
+        // no edge to derive from it. Its real `handoff_node_key` /
+        // completion routing is engine-only for now (lib/flows/engine.ts).
+        break;
     }
   }
 
@@ -229,6 +236,10 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "handoff":
     case "end":
       return [];
+
+    case "collect_ai":
+      // No visual editor yet — no known slots to expose as handles.
+      return [];
   }
 }
 
@@ -312,6 +323,10 @@ export function applyEdgeConnection(
 
     case "handoff":
     case "end":
+      return null;
+
+    case "collect_ai":
+      // No visual editor yet — no handles to have been connected from.
       return null;
   }
 }
@@ -406,6 +421,11 @@ function patchedConfigWithoutKey(
 
     case "handoff":
     case "end":
+      return null;
+
+    case "collect_ai":
+      // No visual editor yet — nothing in its config resembles
+      // next_node_key/true_next/etc. today, so there's nothing to clear.
       return null;
   }
 }

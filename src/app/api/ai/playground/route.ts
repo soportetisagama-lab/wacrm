@@ -41,8 +41,8 @@ export async function POST(request: Request) {
           typeof m === 'object' &&
           ((m as ChatMessage).role === 'user' ||
             (m as ChatMessage).role === 'assistant') &&
-          typeof (m as ChatMessage).content === 'string' &&
-          (m as ChatMessage).content.trim().length > 0,
+          typeof (m as { content?: unknown }).content === 'string' &&
+          ((m as { content: string }).content.trim().length > 0),
       )
       .slice(-MAX_TURNS)
 

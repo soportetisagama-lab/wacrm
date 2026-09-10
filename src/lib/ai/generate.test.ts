@@ -15,6 +15,8 @@ function config(overrides: Partial<AiConfig> = {}): AiConfig {
     handoffAgentId: null,
     embeddingsApiKey: null,
     transcribeAudioEnabled: false,
+    visionEnabled: false,
+    documents: [],
     ...overrides,
   }
 }
@@ -45,6 +47,7 @@ describe('parseGeneration', () => {
     expect(parseGeneration('Hello there')).toEqual({
       text: 'Hello there',
       handoff: false,
+      sendDocument: null,
       usage: null,
     })
   })
@@ -53,20 +56,42 @@ describe('parseGeneration', () => {
     expect(parseGeneration('[[HANDOFF]]')).toEqual({
       text: '',
       handoff: true,
+      sendDocument: null,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
       text: 'Let me get a human',
       handoff: true,
+      sendDocument: null,
       usage: null,
     })
   })
 
+  it('detects + strips the send-document sentinel, validated against the known keys', () => {
+    expect(parseGeneration('¡Acá tienes! [[SEND_DOCUMENT:catalogo]]', ['catalogo'])).toEqual({
+      text: '¡Acá tienes!',
+      handoff: false,
+      sendDocument: 'catalogo',
+      usage: null,
+    })
+  })
+
+  it('drops a send-document key that is not in the configured list (hallucinated/stale)', () => {
+    const res = parseGeneration('[[SEND_DOCUMENT:manual_tecnico]]', ['catalogo'])
+    expect(res.sendDocument).toBeNull()
+  })
+
+  it('send-document sentinel is ignored (always null) when no document keys are passed at all', () => {
+    const res = parseGeneration('[[SEND_DOCUMENT:catalogo]]')
+    expect(res.sendDocument).toBeNull()
+  })
+
   it('passes usage straight through', () => {
     const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 }
-    expect(parseGeneration('Hi', usage)).toEqual({
+    expect(parseGeneration('Hi', [], usage)).toEqual({
       text: 'Hi',
       handoff: false,
+      sendDocument: null,
       usage,
     })
   })
@@ -91,6 +116,7 @@ describe('generateReply — OpenAI', () => {
     expect(res).toEqual({
       text: 'Sure — happy to help!',
       handoff: false,
+      sendDocument: null,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -150,6 +176,7 @@ describe('generateReply — Anthropic', () => {
     expect(res).toEqual({
       text: 'Hi there!',
       handoff: false,
+      sendDocument: null,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -212,6 +239,7 @@ describe('parseExtraction', () => {
       replyText: '¿En qué ciudad?',
       done: false,
       handoff: false,
+      sendDocument: null,
       usage: null,
     })
   })
@@ -230,6 +258,7 @@ describe('parseExtraction', () => {
       replyText: '',
       done: false,
       handoff: false,
+      sendDocument: null,
       usage: null,
     })
     expect(parseExtraction('not an object', FIELDS)).toEqual({
@@ -237,9 +266,36 @@ describe('parseExtraction', () => {
       replyText: '',
       done: false,
       handoff: false,
+      sendDocument: null,
       usage: null,
     })
     expect(parseExtraction({ extracted: 'nope' }, FIELDS).fields).toEqual({})
+  })
+
+  it('passes through send_document when it matches a configured key', () => {
+    const res = parseExtraction(
+      { extracted: {}, reply_text: '¡Acá tienes!', done: false, handoff: false, send_document: 'catalogo' },
+      FIELDS,
+      [{ key: 'catalogo', label: 'Catálogo' }],
+    )
+    expect(res.sendDocument).toBe('catalogo')
+  })
+
+  it('drops send_document when it does not match any configured key (hallucinated/stale)', () => {
+    const res = parseExtraction(
+      { extracted: {}, reply_text: '', done: false, handoff: false, send_document: 'manual_tecnico' },
+      FIELDS,
+      [{ key: 'catalogo', label: 'Catálogo' }],
+    )
+    expect(res.sendDocument).toBeNull()
+  })
+
+  it('send_document is always null when no documents were configured for this call', () => {
+    const res = parseExtraction(
+      { extracted: {}, reply_text: '', done: false, handoff: false, send_document: 'catalogo' },
+      FIELDS,
+    )
+    expect(res.sendDocument).toBeNull()
   })
 
   it('only treats literal booleans as done/handoff (no truthy coercion)', () => {
@@ -256,6 +312,7 @@ describe('parseExtraction', () => {
     const res = parseExtraction(
       { extracted: {}, reply_text: 'hi', done: false, handoff: false },
       FIELDS,
+      [],
       usage,
     )
     expect(res.usage).toEqual(usage)
@@ -302,6 +359,7 @@ describe('extractWithReply — OpenAI', () => {
       replyText: '¿A qué rubro pertenece tu negocio?',
       done: false,
       handoff: false,
+      sendDocument: null,
       usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
     })
 
@@ -381,6 +439,7 @@ describe('extractWithReply — Anthropic', () => {
       replyText: '¿Qué equipos te interesa cotizar y en qué ciudad?',
       done: false,
       handoff: false,
+      sendDocument: null,
       usage: { promptTokens: 80, completionTokens: 15, totalTokens: 95 },
     })
 

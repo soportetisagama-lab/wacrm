@@ -63,4 +63,32 @@ describe('buildHandoffSummary', () => {
     })
     expect(summary).toBe('🤖 AI agent handed off without replying.')
   })
+
+  it('quotes only the caption text from an image+caption customer turn', () => {
+    const summary = buildHandoffSummary({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', mimeType: 'image/jpeg', base64: 'ZmFrZQ==' },
+            { type: 'text', text: 'is this covered under warranty?' },
+          ],
+        },
+      ],
+      replyCount: 0,
+    })
+    expect(summary).toContain('“is this covered under warranty?”')
+  })
+
+  it('falls back to an earlier text turn when the last customer turn is an image with no caption', () => {
+    const summary = buildHandoffSummary({
+      messages: [
+        { role: 'user', content: 'I want a refund' },
+        { role: 'assistant', content: 'Can you send a photo of the item?' },
+        { role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', base64: 'ZmFrZQ==' }] },
+      ],
+      replyCount: 1,
+    })
+    expect(summary).toContain('“I want a refund”')
+  })
 })

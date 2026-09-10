@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/whatsapp/encryption'
-import type { AiConfig } from './types'
+import type { AiConfig, AiDocument } from './types'
 
 interface AiConfigRow {
   provider: 'openai' | 'anthropic'
@@ -13,10 +13,12 @@ interface AiConfigRow {
   handoff_agent_id: string | null
   embeddings_api_key: string | null
   transcribe_audio_enabled: boolean
+  vision_enabled: boolean
+  documents: AiDocument[] | null
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, transcribe_audio_enabled'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, transcribe_audio_enabled, vision_enabled, documents'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -81,6 +83,12 @@ export async function loadAiConfig(
     handoffAgentId: row.handoff_agent_id,
     embeddingsApiKey,
     transcribeAudioEnabled: row.transcribe_audio_enabled,
+    visionEnabled: row.vision_enabled,
+    // NOT NULL DEFAULT '[]' at the DB level, but defensive here too —
+    // same reasoning as `if (!row.api_key)` above: a manual edit could
+    // leave it null, and this should degrade to "no catalog" rather
+    // than crash on a missing .find/.map downstream.
+    documents: row.documents ?? [],
   }
 }
 

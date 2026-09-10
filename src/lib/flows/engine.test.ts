@@ -8,6 +8,9 @@ vi.mock("@/lib/ai/generate", () => ({ extractWithReply: vi.fn() }));
 vi.mock("@/lib/ai/config", () => ({ loadAiConfig: vi.fn() }));
 vi.mock("@/lib/ai/context", () => ({ buildConversationContext: vi.fn() }));
 vi.mock("@/lib/ai/inbound-audio", () => ({ transcribeInboundAudio: vi.fn() }));
+vi.mock("@/lib/ai/classify-first-inbound", () => ({
+  classifyFirstInboundContext: vi.fn(),
+}));
 vi.mock("./meta-send", () => ({
   engineSendText: vi.fn(),
   engineSendInteractiveButtons: vi.fn(),
@@ -38,6 +41,7 @@ import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
 import { buildConversationContext } from "@/lib/ai/context";
 import { transcribeInboundAudio } from "@/lib/ai/inbound-audio";
+import { classifyFirstInboundContext } from "@/lib/ai/classify-first-inbound";
 import {
   engineSendText,
   engineSendMedia,
@@ -453,17 +457,28 @@ const FAQ_BOT_FLOW: Partial<FlowRow> = {
 };
 
 describe("findEntryFlow — reentry_keywords", () => {
+  beforeEach(() => {
+    // Safe default for every test in this block: "no context detected"
+    // — matches today's behavior (show the menu) and mirrors the real
+    // classifier's own fail-open default. Tests that specifically
+    // exercise the "has context" branch override this per-call.
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: false,
+      reason: "default test stub",
+    });
+  });
+
   it("matches a flow whose primary trigger_type did NOT fire, via reentry_keywords", async () => {
     const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
     // isFirstInbound: false — first_inbound_message would never match on
     // its own; only reentry_keywords should.
-    const flow = await findEntryFlow(db, "acct-1", textMessage("menú"), false);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("menú"), false);
     expect(flow?.id).toBe("flow-faq");
   });
 
   it("is case-insensitive", async () => {
     const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
-    const flow = await findEntryFlow(db, "acct-1", textMessage("MENU"), false);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("MENU"), false);
     expect(flow?.id).toBe("flow-faq");
   });
 
@@ -472,6 +487,7 @@ describe("findEntryFlow — reentry_keywords", () => {
     const flow = await findEntryFlow(
       db,
       "acct-1",
+      "conv-1",
       textMessage("¿tienen menú del día?"),
       false,
     );
@@ -480,7 +496,7 @@ describe("findEntryFlow — reentry_keywords", () => {
 
   it("does nothing when the flow has no reentry_keywords configured (no regression)", async () => {
     const db = makeFlowsFakeDb([{ ...FAQ_BOT_FLOW, trigger_config: {} }]);
-    const flow = await findEntryFlow(db, "acct-1", textMessage("menú"), false);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("menú"), false);
     expect(flow).toBeNull();
   });
 
@@ -488,7 +504,113 @@ describe("findEntryFlow — reentry_keywords", () => {
     const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
     // isFirstInbound: true — should match via the primary trigger_type
     // instead, for an unrelated message.
-    const flow = await findEntryFlow(db, "acct-1", textMessage("hola"), true);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("hola"), true);
+    expect(flow?.id).toBe("flow-faq");
+  });
+});
+
+// ============================================================
+// findEntryFlow — first-inbound context classification
+// ============================================================
+
+const KEYWORD_FLOW: Partial<FlowRow> = {
+  id: "flow-keyword",
+  account_id: "acct-1",
+  status: "active",
+  trigger_type: "keyword",
+  trigger_config: { keywords: ["cotizar"] },
+  entry_node_id: "start",
+};
+
+describe("findEntryFlow — first-inbound context classification", () => {
+  it("skips first_inbound_message (continue, not return) when the classifier finds context, so a later keyword flow can still match", async () => {
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: true,
+      reason: "mentions a specific product and city",
+    });
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW, KEYWORD_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("Necesito cotizar una cocina para mi restaurante en Trujillo"),
+      true,
+    );
+    // FAQ_BOT_FLOW (first_inbound_message) is skipped; KEYWORD_FLOW
+    // still matches independently on "cotizar".
+    expect(flow?.id).toBe("flow-keyword");
+  });
+
+  it("skips first_inbound_message entirely (no other flow to fall back to) when the classifier finds context", async () => {
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: true,
+      reason: "mentions a specific product",
+    });
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("Necesito cotizar una cocina industrial"),
+      true,
+    );
+    // No flow matches — dispatchInboundToFlows reports no_match and the
+    // webhook falls through to the general assistant.
+    expect(flow).toBeNull();
+  });
+
+  it("matches first_inbound_message normally when the classifier finds no context", async () => {
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: false,
+      reason: "generic greeting",
+    });
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("Hola, buenas"), true);
+    expect(flow?.id).toBe("flow-faq");
+  });
+
+  it("never calls the classifier when isFirstInbound is false", async () => {
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    await findEntryFlow(db, "acct-1", "conv-1", textMessage("Necesito cotizar una cocina"), false);
+    expect(classifyFirstInboundContext).not.toHaveBeenCalled();
+  });
+
+  it("never calls the classifier for a keyword-only flow set (no first_inbound_message flow in play)", async () => {
+    const db = makeFlowsFakeDb([KEYWORD_FLOW]);
+    await findEntryFlow(db, "acct-1", "conv-1", textMessage("quiero cotizar"), true);
+    expect(classifyFirstInboundContext).not.toHaveBeenCalled();
+  });
+
+  it("classifies at most once even if more than one active flow uses first_inbound_message", async () => {
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: false,
+      reason: "generic",
+    });
+    const db = makeFlowsFakeDb([
+      FAQ_BOT_FLOW,
+      { ...FAQ_BOT_FLOW, id: "flow-faq-2" },
+    ]);
+    await findEntryFlow(db, "acct-1", "conv-1", textMessage("Hola"), true);
+    expect(classifyFirstInboundContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a provider/timeout failure as hasContext:false (fail-open), matching the real classifier's own contract", async () => {
+    // The real classifyFirstInboundContext never throws — this mock
+    // exercises the same fail-open VALUE its own try/catch would return
+    // on a provider error or timeout, since findEntryFlow's job is just
+    // to trust whatever the classifier returns.
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: false,
+      reason: "provider call failed or timed out",
+    });
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("Necesito cotizar una cocina"),
+      true,
+    );
     expect(flow?.id).toBe("flow-faq");
   });
 });

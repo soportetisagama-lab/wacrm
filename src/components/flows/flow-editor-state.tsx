@@ -191,6 +191,12 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { note: "" };
     case "end":
       return {};
+    case "collect_ai":
+      // Not in ADD_NODE_TYPES — unreachable via the UI today (no
+      // visual editor yet, see NodeConfigForm's "collect_ai" case).
+      // Minimal valid shape per CollectAiNodeConfig (lib/flows/types.ts)
+      // in case that ever changes.
+      return { fields: [], max_turns: 6 };
   }
 }
 

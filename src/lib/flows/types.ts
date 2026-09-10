@@ -20,6 +20,7 @@
 
 import type { ExtractionField } from "@/lib/ai/schema";
 import type { InboundAudioRef } from "@/lib/ai/inbound-audio";
+import type { AiDocument } from "@/lib/ai/types";
 
 // ============================================================
 // Node configs (discriminated union by node_type)
@@ -53,11 +54,25 @@ export interface SendMessageNodeConfig {
  * resends this node's prompt (e.g. "¿Podés elegir una opción de la
  * lista de arriba?"). Optional; unset means the resend stays silent,
  * matching prior behavior.
+ *
+ * `release_unmatched_text_to_assistant`, checked AFTER
+ * `unmatched_text_keywords` (which always wins first — e.g. "asesor"
+ * still escalates to `handoff_node_key` regardless of this flag): when
+ * true, free text that matches neither a button/row nor an escalation
+ * keyword ends the run and lets the webhook fall through to the
+ * general auto-reply assistant with the SAME inbound message, instead
+ * of applying the flow's `fallback_policy` (reprompt/handoff/ignore).
+ * The run is ENDED (not left active) specifically so a later message
+ * can match an entry trigger again (e.g. a future "menú" keyword flow)
+ * — `dispatchInboundToFlows` never even looks at entry triggers while
+ * an active run exists. Optional; unset means free text falls through
+ * to fallback_policy exactly as before this existed.
  */
 interface UnmatchedTextHandling {
   unmatched_text_keywords?: string[];
   handoff_node_key?: string;
   reprompt_hint_text?: string;
+  release_unmatched_text_to_assistant?: boolean;
 }
 
 export interface SendButtonsNodeConfig extends UnmatchedTextHandling {
@@ -228,6 +243,17 @@ export interface CollectAiNodeConfig {
    */
   handoff_fallback_text?: string;
   /**
+   * Closing text sent instead of `handoff_fallback_text` (and instead
+   * of the model's own courtesy message, if any) when the handoff
+   * happens outside business hours (`lib/flows/business-hours.ts`).
+   * The model has no clock and must never be the one deciding
+   * time-sensitive wording — this is a plain code-level override.
+   * Optional; when unset, handoff text selection is unchanged (the
+   * model's message, then `handoff_fallback_text`, exactly as before
+   * this field existed).
+   */
+  handoff_fallback_text_after_hours?: string;
+  /**
    * Minutes of inactivity (measured from `flow_runs.last_advanced_at`)
    * before the /api/flows/cron sweep sends `nudge_text` to nudge the
    * customer along. Unset (the default) means no nudge behavior at
@@ -241,6 +267,23 @@ export interface CollectAiNodeConfig {
    * `nudge_after_minutes` is set but this isn't.
    */
   nudge_text?: string;
+  /**
+   * Fixed catalog of documents this node can send mid-conversation
+   * (e.g. a price list or a PDF catalog) when the customer asks for
+   * one — "Opción B" of the image-vision session's document work.
+   * `key` is the stable identifier the model picks via the
+   * extraction schema's `send_document` field (see `schema.ts`); it
+   * is NOT a `flow_runs.vars` key and is never merged into `vars`.
+   * Sending one is a side effect alongside whatever
+   * continue/complete/handoff the turn also produces — asking for a
+   * catalog doesn't interrupt the field collection. Optional; unset
+   * or empty means this node never offers documents (`send_document`
+   * is omitted from the schema entirely, so the model is never even
+   * given the option). Same shape as `AiConfig.documents`
+   * (lib/ai/types.ts) — see that type's doc comment for why the two
+   * aren't merged into one shared catalog.
+   */
+  documents?: AiDocument[];
   /** Node to advance to once every required field is captured. */
   next_node_key: string;
 }
@@ -477,6 +520,21 @@ export type ParsedInbound =
        * for the same inbound.
        */
       audio?: InboundAudioRef;
+      /**
+       * True only when this inbound was itself an image (not a sticker
+       * — the webhook sets this from `message.type === 'image'`, which
+       * a sticker never matches) — `text` is `""` in that case. Its
+       * mere presence (`true`) is the only signal
+       * `handleReplyForActiveRun` uses to let a collect_ai node retry
+       * via `handleCollectAiReply` instead of going straight to the
+       * fixed non-text reply — no transcription-equivalent step here:
+       * piece (b) already persisted the Storage copy synchronously in
+       * the webhook before this ever runs. Mirrors
+       * `DispatchArgs.isImageMessage` in lib/ai/auto-reply.ts — same
+       * data, independent field, same reason as `audio` above (the two
+       * dispatch paths never both fire for the same inbound).
+       */
+      isImageMessage?: boolean;
     }
   | {
       kind: "interactive_reply";
@@ -516,6 +574,7 @@ export interface DispatchInboundResult {
     | "handed_off"
     | "fallback_fired"
     | "duplicate_inbound_ignored"
+    | "released_to_assistant"
     | "no_match";
 }
 

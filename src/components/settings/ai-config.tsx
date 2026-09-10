@@ -70,6 +70,7 @@ export function AiConfig() {
   const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isActive, setIsActive] = useState(false);
+  const [visionEnabled, setVisionEnabled] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [maxPerConversation, setMaxPerConversation] = useState(3);
   // Empty string = leave unassigned (shared queue).
@@ -97,6 +98,7 @@ export function AiConfig() {
         setModel(data.model);
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
+        setVisionEnabled(data.vision_enabled);
         setAutoReplyEnabled(data.auto_reply_enabled);
         setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
         setHandoffAgentId(data.handoff_agent_id ?? '');
@@ -148,6 +150,7 @@ export function AiConfig() {
     embeddings_api_key: embeddingsKeyPayload(),
     system_prompt: systemPrompt.trim() || null,
     is_active: isActive,
+    vision_enabled: visionEnabled,
     auto_reply_enabled: autoReplyEnabled,
     auto_reply_max_per_conversation: maxPerConversation,
     handoff_agent_id: handoffAgentId || null,
@@ -413,6 +416,22 @@ export function AiConfig() {
                 checked={isActive}
                 onCheckedChange={setIsActive}
                 disabled={disabled}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {t('visionEnabled')}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('visionEnabledDesc')}
+                </p>
+              </div>
+              <Switch
+                checked={visionEnabled}
+                onCheckedChange={setVisionEnabled}
+                disabled={disabled || !isActive}
               />
             </div>
 

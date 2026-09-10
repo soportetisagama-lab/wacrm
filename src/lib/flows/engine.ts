@@ -44,6 +44,7 @@ import { isWithinBusinessHours } from "./business-hours";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
+import { classifyFirstInboundContext } from "@/lib/ai/classify-first-inbound";
 import { buildConversationContext } from "@/lib/ai/context";
 import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-audio";
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
@@ -470,6 +471,7 @@ async function loadConversationGateInfo(
 export async function findEntryFlow(
   db: AdminClient,
   accountId: string,
+  conversationId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
@@ -517,6 +519,13 @@ export async function findEntryFlow(
     }
   }
 
+  // Memoized so a message never gets classified twice, even in the
+  // unusual case where more than one active flow uses trigger_type
+  // "first_inbound_message" — the loop below reuses this one result.
+  let firstInboundContext: Awaited<
+    ReturnType<typeof classifyFirstInboundContext>
+  > | null = null;
+
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       if (matchesKeywordTrigger(
@@ -526,6 +535,31 @@ export async function findEntryFlow(
         return flow;
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
+      // Menú condicional según contexto: a first-ever message that
+      // already states a real request ("Necesito cotizar una cocina
+      // para mi restaurante en Trujillo") should reach the general
+      // assistant directly instead of being swallowed by the welcome
+      // menu. classifyFirstInboundContext NEVER throws and fails open
+      // to `hasContext: false` (today's behavior — show the menu) on
+      // any error, timeout, or missing AI config.
+      if (!firstInboundContext) {
+        firstInboundContext = await classifyFirstInboundContext(
+          db,
+          accountId,
+          conversationId,
+          message.text,
+        );
+      }
+      if (firstInboundContext.hasContext) {
+        // Skip this flow — do NOT return it — so a `keyword`-trigger
+        // flow later in this same loop can still match independently.
+        // The customer's first message reaches dispatchInboundToAiReply
+        // via the "no_match" path back in dispatchInboundToFlows; its
+        // deterministic footer (auto-reply.ts) still offers "menú" as
+        // an escape hatch, which reentry_keywords (above) picks back up
+        // on any later message.
+        continue;
+      }
       return flow;
     } else if (flow.trigger_type === "returning_message") {
       // Superset of first_inbound_message: matches on ANY text
@@ -1647,6 +1681,7 @@ export async function dispatchInboundToFlows(
     const flow = await findEntryFlow(
       db,
       input.accountId,
+      input.conversationId,
       input.message,
       input.isFirstInboundMessage,
     );

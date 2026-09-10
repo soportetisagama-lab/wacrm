@@ -1136,6 +1136,7 @@
         "advanceAfterCapture": "After capturing, advance to",
         "internalNote": "Internal note (for the agent picking up)",
         "endNodeHelp": "Terminal node. When the runner reaches this node the run is marked complete. No config needed.",
+        "noVisualEditor": "This node type doesn't have a visual editor yet — edit it via the API/SQL directly.",
         "bodyText": "Body text",
         "footerText": "Footer (optional, 60 chars)",
         "buttonsHelp": "Buttons (1–3) — each one routes to a different next node",
@@ -1223,6 +1224,10 @@
         "collect_input": {
           "label": "Collect input",
           "blurb": "Asks a question, saves the reply"
+        },
+        "collect_ai": {
+          "label": "Collect (AI)",
+          "blurb": "Multi-turn AI data collection — no visual editor yet"
         },
         "condition": {
           "label": "If / else",
@@ -1823,6 +1828,8 @@
       "promptPlaceholder": "e.g. We are Acme, a coffee-equipment store. Be warm and concise. Never quote prices or delivery dates — hand off to a human for those.",
       "enableAssistant": "Enable AI assistant",
       "enableAssistantDesc": "Master switch. Turns on the “Draft with AI” button in the inbox.",
+      "visionEnabled": "Understand images",
+      "visionEnabledDesc": "The assistant looks at photos customers send to answer questions (e.g. a product photo or a receipt). Images cost more tokens than text — turn this on only if it's useful for your business.",
       "autoReply": "Auto-reply to inbound messages",
       "autoReplyDesc": "The bot answers new inbound messages automatically (only when no flow handles them and no agent is assigned). Hands off to a human when it can’t help.",
       "maxAutoReplies": "Max auto-replies per conversation",

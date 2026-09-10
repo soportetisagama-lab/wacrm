@@ -211,6 +211,18 @@ export function NodeConfigForm({
           {t("endNodeHelp")}
         </p>
       );
+
+    // No visual editor yet — these nodes only exist today via direct
+    // SQL/API writes (collect_ai: migration 045). Read-only placeholder
+    // so opening one shows something instead of a blank panel or (pre-
+    // fix) crashing the whole canvas/list view. Remove this case once
+    // the real field editor for collect_ai lands.
+    case "collect_ai":
+      return (
+        <p className="text-xs text-muted-foreground">
+          {t("noVisualEditor")}
+        </p>
+      );
   }
 }
 

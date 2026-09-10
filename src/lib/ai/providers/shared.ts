@@ -1,4 +1,4 @@
-import { AiError, type AiUsage, type ChatMessage } from '../types'
+import { AiError, type AiUsage, type ChatMessage, type ContentBlock } from '../types'
 
 // ============================================================
 // Bits shared by the OpenAI + Anthropic adapters.
@@ -107,17 +107,39 @@ export async function providerHttpError(
   })
 }
 
+function toBlocks(content: string | ContentBlock[]): ContentBlock[] {
+  return typeof content === 'string' ? [{ type: 'text', text: content }] : content
+}
+
 /**
- * Collapse consecutive same-role turns into one (joined with blank
- * lines). Anthropic requires strictly alternating roles; merging is
- * also harmless for OpenAI and keeps the transcript compact.
+ * Merge two same-role turns' content. Both plain strings (the common
+ * case) join with blank lines, same as always. If either side already
+ * carries an image, string concatenation doesn't make sense — both
+ * sides are normalized to blocks and concatenated instead (a plain-text
+ * side becomes one text block); adjacent text blocks are left separate
+ * rather than glued into one, which both providers render fine.
+ */
+function mergeContent(
+  a: string | ContentBlock[],
+  b: string | ContentBlock[],
+): string | ContentBlock[] {
+  if (typeof a === 'string' && typeof b === 'string') {
+    return `${a}\n\n${b}`
+  }
+  return [...toBlocks(a), ...toBlocks(b)]
+}
+
+/**
+ * Collapse consecutive same-role turns into one. Anthropic requires
+ * strictly alternating roles; merging is also harmless for OpenAI and
+ * keeps the transcript compact.
  */
 export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = []
   for (const m of messages) {
     const last = out[out.length - 1]
     if (last && last.role === m.role) {
-      last.content = `${last.content}\n\n${m.content}`
+      last.content = mergeContent(last.content, m.content)
     } else {
       out.push({ role: m.role, content: m.content })
     }

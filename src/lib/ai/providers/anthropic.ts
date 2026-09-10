@@ -1,4 +1,4 @@
-import { AiError, type ChatMessage, type ProviderResult } from '../types'
+import { AiError, type ChatMessage, type ContentBlock, type ProviderResult } from '../types'
 import { MAX_OUTPUT_TOKENS } from '../defaults'
 import {
   mergeConsecutive,
@@ -36,6 +36,25 @@ function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
   return merged
 }
 
+type AnthropicContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** Map our provider-neutral content to the Messages API's shape: a
+ *  plain string passes through unchanged; blocks map 1:1 for text, and
+ *  to a base64 `image` source (the one encoding Anthropic always
+ *  accepts, unlike a URL source which only some models support). */
+function toAnthropicContent(
+  content: string | ContentBlock[],
+): string | AnthropicContentBlock[] {
+  if (typeof content === 'string') return content
+  return content.map((b): AnthropicContentBlock =>
+    b.type === 'text'
+      ? { type: 'text', text: b.text }
+      : { type: 'image', source: { type: 'base64', media_type: b.mimeType, data: b.base64 } },
+  )
+}
+
 /**
  * Call Anthropic's Messages endpoint with the caller's own key.
  * Returns the raw assistant text + token usage (handoff parsing happens
@@ -57,7 +76,10 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
         model,
         system: systemPrompt,
         max_tokens: MAX_OUTPUT_TOKENS,
-        messages: normalizeForAnthropic(messages),
+        messages: normalizeForAnthropic(messages).map((m) => ({
+          role: m.role,
+          content: toAnthropicContent(m.content),
+        })),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -118,7 +140,10 @@ export async function generateAnthropicStructured(
         model,
         system: systemPrompt,
         max_tokens: MAX_OUTPUT_TOKENS,
-        messages: normalizeForAnthropic(messages),
+        messages: normalizeForAnthropic(messages).map((m) => ({
+          role: m.role,
+          content: toAnthropicContent(m.content),
+        })),
         tools: [{ name: toolName, input_schema: schema }],
         tool_choice: { type: 'tool', name: toolName },
       }),

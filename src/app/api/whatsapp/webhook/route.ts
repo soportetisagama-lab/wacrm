@@ -20,6 +20,7 @@ import {
 } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { persistInboundImage } from '@/lib/ai/inbound-image'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -1196,6 +1197,12 @@ async function processMessage(
       // the column; null for every other content_type so existing inserts
       // behave identically.
       interactive_reply_id: interactiveReplyId,
+      // Migration 054 — stickers and real photos both land as
+      // content_type='image' (see contentType above); this is the only
+      // signal that tells them apart. Drives the vision pipeline's
+      // sticker exclusion (persistInboundImage below, and
+      // buildConversationContext) — never anything else today.
+      is_sticker: message.type === 'sticker',
     })
     // Needed to later write messages.transcript back onto this exact row
     // (the audio-transcription path, both dispatchInboundToAiReply and
@@ -1221,6 +1228,26 @@ async function processMessage(
           messageDbId: insertedMessage.id,
         }
       : undefined
+
+  // Persist our own Storage copy of a real inbound photo — never for a
+  // sticker (message.type === 'sticker' is deliberately excluded here;
+  // see is_sticker above) — so later turns' vision context never needs
+  // to touch Meta again (lib/ai/inbound-image.ts). No config gate: this
+  // only costs storage/bandwidth, not tokens — reading it into a model
+  // request is what piece c/d gates. Awaited, not fire-and-forget — a
+  // detached promise inside this route's `after()` can get frozen
+  // mid-execution (see the automations dispatch note further below,
+  // issues #301/#409), same reason nothing else here is truly detached.
+  if (message.type === 'image' && message.image?.id) {
+    await persistInboundImage(supabaseAdmin(), {
+      accountId,
+      image: {
+        mediaId: message.image.id,
+        mimeType: message.image.mime_type,
+        messageDbId: insertedMessage.id,
+      },
+    })
+  }
 
   // Update conversation
   const { error: convError } = await supabaseAdmin()
@@ -1314,6 +1341,10 @@ async function processMessage(
                 text: contentText ?? message.text?.body ?? '',
                 meta_message_id: message.id,
                 audio: inboundAudioRef,
+                // Mirrors the isImageMessage passed to dispatchInboundToAiReply
+                // below — 'sticker' is a distinct message.type from 'image',
+                // so this is naturally false for one.
+                isImageMessage: message.type === 'image',
               },
         isFirstInboundMessage,
       })
@@ -1401,6 +1432,12 @@ async function processMessage(
       // uses to attempt transcription instead of the fixed "text only"
       // nudge. Every other non-text media type leaves it undefined.
       audio: inboundAudioRef,
+      // 'sticker' is a distinct message.type from 'image' in Meta's
+      // payload, so this is naturally false for a sticker — no extra
+      // check needed here (is_sticker, piece b, is a separate DB-row-
+      // level distinction for when both already share content_type=
+      // 'image' in storage).
+      isImageMessage: message.type === 'image',
     })
   }
 

@@ -1136,6 +1136,7 @@
         "advanceAfterCapture": "Después de capturar, avanzar a",
         "internalNote": "Nota interna (para el agente que la recibe)",
         "endNodeHelp": "Nodo terminal. Cuando el motor llega a este nodo, la ejecución se marca como completa. No requiere configuración.",
+        "noVisualEditor": "Este nodo no tiene editor visual todavía; para editarlo, usá la API/SQL directamente.",
         "bodyText": "Texto del cuerpo",
         "footerText": "Pie (opcional, 60 caracteres)",
         "buttonsHelp": "Botones (1–3) — cada uno dirige a un nodo siguiente distinto",
@@ -1223,6 +1224,10 @@
         "collect_input": {
           "label": "Recolectar respuesta",
           "blurb": "Hace una pregunta y guarda la respuesta"
+        },
+        "collect_ai": {
+          "label": "Recolectar (IA)",
+          "blurb": "Recolección de datos con IA de varios turnos — sin editor visual todavía"
         },
         "condition": {
           "label": "Si / si no",
@@ -1823,6 +1828,8 @@
       "promptPlaceholder": "p. ej. Somos Acme, una tienda de equipos de café. Sé cálido y conciso. Nunca cites precios ni fechas de entrega — derivá esos casos a una persona.",
       "enableAssistant": "Habilitar asistente de IA",
       "enableAssistantDesc": "Interruptor principal. Activa el botón “Redactar con IA” en la bandeja de entrada.",
+      "visionEnabled": "Entender imágenes",
+      "visionEnabledDesc": "El asistente mira las fotos que te envían los clientes para responder consultas (por ejemplo, una foto de un producto o un comprobante). Las imágenes consumen más tokens que el texto — activalo solo si te sirve para tu negocio.",
       "autoReply": "Respuesta automática a mensajes entrantes",
       "autoReplyDesc": "El bot responde automáticamente a mensajes entrantes nuevos (solo cuando ningún flujo los maneja y no hay ningún agente asignado). Deriva a una persona cuando no puede ayudar.",
       "maxAutoReplies": "Máximo de respuestas automáticas por conversación",
