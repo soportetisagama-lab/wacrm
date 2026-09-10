@@ -1986,6 +1986,36 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
         (u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true,
       ),
     ).toBe(true);
+    // Regression guard: executeHandoff used to send NOTHING to the
+    // customer — silent handoff. Falls back to the fixed default text
+    // since this node didn't configure customer_message.
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Gracias, un asesor va a continuar tu consulta en breve.",
+      }),
+    );
+  });
+
+  it("a handoff node's configured customer_message is sent instead of the default", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: { note: "escalated", customer_message: "Ya te derivo con un asesor, ¡gracias!" },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.custom-msg" },
+      new Map([["topics", node], ["human_handoff", handoffNode]]),
+    );
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Ya te derivo con un asesor, ¡gracias!" }),
+    );
   });
 
   it("flag off: genuinely unmatched text falls through to the normal fallback_policy, unchanged", async () => {
@@ -2007,6 +2037,33 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
         (u) => u.table === "flow_runs" && u.payload.end_reason === "released_to_assistant",
       ),
     ).toBe(false);
+  });
+
+  it("fallback_policy exhaustion (on_exhaust: 'handoff') sends a closing message before handing off — regression guard, this used to be silent", async () => {
+    const { db, updates } = makeFakeDb();
+    // DEFAULT_FALLBACK_POLICY (loadFlow resolves to null in this fake,
+    // so resolveFallbackPolicy fills in the default: max_reprompts 2,
+    // on_exhaust 'handoff') — reprompt_count already at 2 means this
+    // unmatched reply is the 3rd, exhausting it.
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 2 });
+    const node = topicsNode();
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result.outcome).toBe("handed_off");
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Gracias, un asesor va a continuar tu consulta en breve.",
+      }),
+    );
+    expect(
+      updates.some((u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true),
+    ).toBe(true);
   });
 
   it("flag on: genuinely unmatched text ends the run and releases to the general assistant", async () => {

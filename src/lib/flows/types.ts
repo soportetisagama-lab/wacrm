@@ -146,6 +146,13 @@ export interface HandoffNodeConfig {
    * node fires. Leave unset to flip the status without assignment.
    */
   assign_to?: string;
+  /**
+   * Sent to the customer before the handoff — this node type used to
+   * be entirely silent (only wrote DB state), leaving the customer
+   * with no signal a human is taking over. Falls back to a fixed
+   * default when unset (never silent); see `executeHandoff` (engine.ts).
+   */
+  customer_message?: string;
 }
 
 /**

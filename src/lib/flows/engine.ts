@@ -726,7 +726,15 @@ const DEFAULT_NON_TEXT_REPLY_TEXT =
  *  nudge_after_minutes but not this. Sent by the /api/flows/cron
  *  sweep, not by the engine itself. */
 export const DEFAULT_NUDGE_TEXT =
-  "¿Seguís ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.";
+  "¿Sigues ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.";
+
+/** Default for HandoffNodeConfig.customer_message when a `handoff` node
+ *  doesn't configure one, and for the generic fallback_policy "handoff"
+ *  exit (no node config to read there at all) — see `executeHandoff`
+ *  and the `action.type === "handoff"` branch in `handleReplyForActiveRun`.
+ *  Both used to be completely silent to the customer. */
+const DEFAULT_HANDOFF_CUSTOMER_MESSAGE =
+  "Gracias, un asesor va a continuar tu consulta en breve.";
 
 /**
  * Pure decision for whether /api/flows/cron should send a collect_ai
@@ -1285,7 +1293,30 @@ async function executeHandoff(
   run: FlowRunRow,
   node: FlowNodeRow,
 ): Promise<void> {
-  const cfg = node.config as { assign_to?: string; note?: string };
+  const cfg = node.config as {
+    assign_to?: string;
+    note?: string;
+    customer_message?: string;
+  };
+  // Sent BEFORE the DB-side handoff writes — best-effort, mirrors every
+  // other closing-message send in this file (a failure here is logged
+  // but must never block the handoff itself from completing).
+  if (run.conversation_id && run.contact_id) {
+    try {
+      await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id,
+        contactId: run.contact_id,
+        text: cfg.customer_message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE,
+      });
+    } catch (err) {
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "handoff_customer_message_send_failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   if (run.conversation_id) {
     await markConversationPendingHandoff(
       db,
@@ -2069,6 +2100,25 @@ export async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
+    // Same reasoning as executeHandoff's own send: this exit used to be
+    // completely silent to the customer — best-effort, must not block
+    // the handoff itself.
+    if (run.conversation_id && run.contact_id) {
+      try {
+        await engineSendText({
+          accountId: run.account_id,
+          userId: run.user_id,
+          conversationId: run.conversation_id,
+          contactId: run.contact_id,
+          text: DEFAULT_HANDOFF_CUSTOMER_MESSAGE,
+        });
+      } catch (err) {
+        await logEvent(db, run.id, "error", run.current_node_key, {
+          reason: "fallback_handoff_customer_message_send_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (run.conversation_id) {
       await markConversationPendingHandoff(
         db,

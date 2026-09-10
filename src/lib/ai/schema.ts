@@ -1,4 +1,4 @@
-import { UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
+import { UNTRUSTED_CUSTOMER_CONTENT_GUARD, NEUTRAL_SPANISH_GUIDANCE } from './defaults'
 
 // ============================================================
 // Structured extraction — one field a `collect_ai` flow node (or any
@@ -172,6 +172,7 @@ export function buildExtractionPrompt(args: {
     )
   }
 
+  parts.push(NEUTRAL_SPANISH_GUIDANCE)
   parts.push(UNTRUSTED_CUSTOMER_CONTENT_GUARD)
 
   if (systemContext && systemContext.trim()) {

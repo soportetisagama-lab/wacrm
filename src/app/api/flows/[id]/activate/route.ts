@@ -16,6 +16,25 @@ import { validateFlowForActivation } from '@/lib/flows/validate'
  *
  * Returns the updated flow on success; on validation failure returns
  * the full issue list so the builder can highlight each problem.
+ *
+ * Paired-flow sync (opt-in, see below): activating a flow whose
+ * `trigger_config.pair_flow_id` points at another flow ALSO — in the
+ * same request, only after the activation above has actually
+ * succeeded — puts that other flow into 'draft' and syncs
+ * `ai_configs.is_active` to whether the flow just activated contains
+ * at least one `collect_ai` node. Built for one specific case: a "with
+ * AI" flow and a manual "sin IA" clone of it (collect_ai nodes swapped
+ * for collect_input) that must never both be active at once, and where
+ * switching between them should also flip the account's AI master
+ * switch — so a business can go "fully manual" or "with AI" by
+ * activating one flow, without a second, easy-to-forget step in AI
+ * settings.
+ *
+ * Deliberately opt-in via `pair_flow_id` (plain JSONB on
+ * `trigger_config`, no schema change) rather than a blanket rule for
+ * every activation: a flow that never sets it activates exactly as it
+ * did before this existed — zero behavior change for every other flow
+ * on this account or any other.
  */
 
 export async function POST(
@@ -65,12 +84,21 @@ export async function POST(
 
   const admin = supabaseAdmin()
 
+  // Loaded here (before the status write) only when activating — the
+  // validator needs it regardless, and the paired-flow sync below
+  // reuses the exact same rows rather than re-querying.
+  let nodesForSync: Array<{ node_type: string }> = []
+  let flowForSync: {
+    account_id: string
+    trigger_config: Record<string, unknown>
+  } | null = null
+
   if (status === 'active') {
     // Re-load with the full payload the validator needs.
     const [{ data: flow }, { data: nodes }] = await Promise.all([
       admin
         .from('flows')
-        .select('name, trigger_type, trigger_config, entry_node_id')
+        .select('account_id, name, trigger_type, trigger_config, entry_node_id')
         .eq('id', id)
         .maybeSingle(),
       admin
@@ -108,6 +136,8 @@ export async function POST(
         { status: 422 },
       )
     }
+    flowForSync = flow as { account_id: string; trigger_config: Record<string, unknown> }
+    nodesForSync = (nodes ?? []) as Array<{ node_type: string }>
   }
 
   const { data: updated, error } = await admin
@@ -119,5 +149,36 @@ export async function POST(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  // Paired-flow sync — see this route's doc comment. Only ever runs
+  // when the flow just activated actually opted in via
+  // trigger_config.pair_flow_id; every other activation is unaffected.
+  // Best-effort in the sense that a failure here doesn't roll back the
+  // activation that already succeeded above — logged loudly instead,
+  // since a silent failure here would leave two flows both active or
+  // the AI switch out of sync with no visible error.
+  if (status === 'active' && flowForSync) {
+    const pairFlowId = flowForSync.trigger_config?.pair_flow_id
+    if (typeof pairFlowId === 'string' && pairFlowId) {
+      const { error: pairError } = await admin
+        .from('flows')
+        .update({ status: 'draft', updated_at: new Date().toISOString() })
+        .eq('id', pairFlowId)
+        .eq('account_id', flowForSync.account_id) // never cross-tenant, even on a malformed config
+      if (pairError) {
+        console.error('[flows] paired-flow deactivation failed:', pairError.message)
+      }
+
+      const requiresAi = nodesForSync.some((n) => n.node_type === 'collect_ai')
+      const { error: aiError } = await admin
+        .from('ai_configs')
+        .update({ is_active: requiresAi })
+        .eq('account_id', flowForSync.account_id)
+      if (aiError) {
+        console.error('[flows] ai_configs sync on flow activation failed:', aiError.message)
+      }
+    }
+  }
+
   return NextResponse.json({ flow: updated })
 }

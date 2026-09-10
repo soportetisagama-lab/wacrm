@@ -930,7 +930,7 @@ async function sendBsuidContactInfoRequest(
       // TODO: not currently configurable per-account/locale. Revisit
       // if accounts need this in their own language.
       bodyText:
-        "To make sure we can always reach you, could you share your phone number with us?",
+        "Para poder contactarte siempre que lo necesites, ¿nos compartes tu número de teléfono?",
     })
 
     const { error: msgErr } = await supabaseAdmin().from('messages').insert({
