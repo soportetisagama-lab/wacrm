@@ -217,7 +217,7 @@ function EmbeddedShell({
               ratio, so it can't stretch/distort no matter what width is
               picked here. */}
           <Image
-            src="/branding/SAGAMAMENU.png"
+            src="/branding/SAGAMAMENU-Retail.png"
             alt="Sagama CRM"
             width={882}
             height={283}
