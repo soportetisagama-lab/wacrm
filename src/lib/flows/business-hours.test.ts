@@ -5,12 +5,12 @@ import { isWithinBusinessHours } from "./business-hours";
 // Peru is UTC-5 year-round (no DST), so Peru local time = UTC - 5h,
 // i.e. UTC = Peru + 5h — every fixture below is built that way.
 describe("isWithinBusinessHours", () => {
-  it("Monday 8:30am Peru — start of the weekday window, inclusive", () => {
-    expect(isWithinBusinessHours(new Date("2024-01-01T13:30:00Z"))).toBe(true);
+  it("Monday 8:00am Peru — start of the weekday window, inclusive", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-01T13:00:00Z"))).toBe(true);
   });
 
-  it("Monday 8:29am Peru — one minute before opening", () => {
-    expect(isWithinBusinessHours(new Date("2024-01-01T13:29:00Z"))).toBe(false);
+  it("Monday 7:59am Peru — one minute before opening", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-01T12:59:00Z"))).toBe(false);
   });
 
   it("Monday noon Peru — comfortably within the weekday window", () => {

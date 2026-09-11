@@ -67,6 +67,7 @@ import {
   type SetTagNodeConfig,
   type StartNodeConfig,
   type KeywordTriggerConfig,
+  type TextRoute,
 } from "./types";
 
 // ============================================================
@@ -105,6 +106,15 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Strips combining diacritics after NFD decomposition — "cotización"
+ *  and "cotizacion" (customers routinely drop accents on a phone
+ *  keyboard) compare equal. Applied on both sides of every keyword
+ *  match below regardless of match_type, never for `case_sensitive`
+ *  configs (an exact/case-sensitive match should stay exact). */
+function foldDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 /**
  * Case-insensitive contains/exact/word match against a list of
  * keywords. Used by the trigger evaluator. Stable enough that the v3
@@ -126,10 +136,14 @@ export function matchesKeywordTrigger(
 ): boolean {
   if (!text || !cfg.keywords?.length) return false;
   const matchType = cfg.match_type ?? "contains";
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase();
+  const haystack = cfg.case_sensitive
+    ? text
+    : foldDiacritics(text.toLowerCase());
   for (const raw of cfg.keywords) {
     if (!raw) continue;
-    const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
+    const needle = cfg.case_sensitive
+      ? raw
+      : foldDiacritics(raw.toLowerCase());
     if (matchType === "exact") {
       if (haystack === needle) return true;
     } else if (matchType === "word") {
@@ -143,6 +157,31 @@ export function matchesKeywordTrigger(
     }
   }
   return false;
+}
+
+/**
+ * First `text_routes` entry (see TextRoute, types.ts) whose keywords
+ * match, or null when there are no routes or none match. Checked in
+ * array order so an account can list a more specific route (e.g. an
+ * exact "precio catálogo" phrase) before a broader fallback one.
+ */
+function matchTextRoute(
+  routes: TextRoute[] | undefined,
+  text: string,
+): TextRoute | null {
+  if (!routes?.length) return null;
+  for (const route of routes) {
+    if (!route.node_key || !route.keywords?.length) continue;
+    if (
+      matchesKeywordTrigger(text, {
+        keywords: route.keywords,
+        match_type: route.match_type ?? "contains",
+      })
+    ) {
+      return route;
+    }
+  }
+  return null;
 }
 
 /** Nodes that advance to a next_node_key without waiting for input. */
@@ -164,6 +203,80 @@ export function isSuspending(node_type: string): boolean {
     node_type === "collect_input" ||
     node_type === "collect_ai"
   );
+}
+
+/**
+ * Enforces `CollectInputNodeConfig.validation` — see that field's own
+ * doc comment (types.ts) for the full contract. Pure so it's trivially
+ * unit-testable without a DB.
+ *
+ * `"phone"`: a WhatsApp contact whose display shows only a username
+ * (WhatsApp's own username feature, not this codebase's) never exposes
+ * a real phone number in the webhook payload — this is what lets a
+ * node ask for a callback number and actually validate the answer,
+ * instead of accepting whatever text comes back. Peru mobile numbers:
+ * exactly 9 digits once spaces are stripped ("987654321" or
+ * "987 654 321") — no country code, no dashes.
+ *
+ * `"regex"` with a malformed pattern fails OPEN (accepts the value)
+ * rather than blocking every reply on this node over one bad
+ * author-configured regex — same "don't let a config mistake take
+ * down the flow" convention as e.g. `evaluateConditionPredicate`.
+ */
+export function isValidCollectInputValue(
+  validation: CollectInputNodeConfig["validation"],
+  value: string,
+  regex?: string,
+): boolean {
+  switch (validation) {
+    case "phone":
+      return /^\d{9}$/.test(value.replace(/\s+/g, ""));
+    case "email":
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+    case "regex":
+      if (!regex) return true;
+      try {
+        return new RegExp(regex).test(value);
+      } catch {
+        return true;
+      }
+    case "any":
+    default:
+      return true;
+  }
+}
+
+/** Defaults for CollectInputNodeConfig.validation_error_text, keyed by
+ *  `validation` type, when a node doesn't configure its own wording.
+ *  See isValidCollectInputValue's doc comment for the exact rules
+ *  each one is re-asking for. */
+const DEFAULT_PHONE_VALIDATION_ERROR_TEXT =
+  "Ese número no parece válido. ¿Podrías escribirlo nuevamente? Debe tener 9 dígitos, por ejemplo: 987654321.";
+const DEFAULT_EMAIL_VALIDATION_ERROR_TEXT =
+  "Ese correo no parece válido. ¿Podrías escribirlo nuevamente?";
+const DEFAULT_REGEX_VALIDATION_ERROR_TEXT =
+  "Ese dato no tiene el formato que necesitamos. ¿Podrías escribirlo nuevamente?";
+
+/** Resolve the reprompt text for a collect_input node whose last reply
+ *  failed `validation` — the node's own `validation_error_text` when
+ *  configured, else the built-in default for its `validation` type. */
+function collectInputValidationErrorText(
+  cfg: CollectInputNodeConfig,
+): string {
+  if (cfg.validation_error_text?.trim()) return cfg.validation_error_text.trim();
+  switch (cfg.validation) {
+    case "phone":
+      return DEFAULT_PHONE_VALIDATION_ERROR_TEXT;
+    case "email":
+      return DEFAULT_EMAIL_VALIDATION_ERROR_TEXT;
+    case "regex":
+      return DEFAULT_REGEX_VALIDATION_ERROR_TEXT;
+    default:
+      // "any"/unset never fails validation — this is never reached in
+      // practice, but falls back to the normal prompt rather than an
+      // empty string if it somehow is.
+      return cfg.prompt_text;
+  }
 }
 
 /**
@@ -195,11 +308,18 @@ export function isTerminal(node_type: string): boolean {
 /**
  * Gate on every entry-trigger match (keyword, first_inbound_message,
  * returning_message alike): a flow must never start over a
- * conversation a human is already handling. "Handling" means either
- * `status === 'pending'` (mid-handoff, no agent has necessarily
- * claimed it yet — see executeHandoff in this file) or
- * `assigned_agent_id` is set (an agent has claimed it, independent of
- * status — see migration 038).
+ * conversation a human has actually CLAIMED (`assigned_agent_id` set).
+ *
+ * `status === 'pending'` alone does NOT block eligibility — a prior
+ * handoff (flow-side or the AI assistant's own) that nobody has picked
+ * up yet must not leave the customer stranded with neither a bot nor a
+ * human answering. Only a real assignment silences the bot; mirrors
+ * the same relaxation on the AI auto-reply side (see the
+ * `ai_autoreply_disabled` handling in dispatchInboundToAiReply,
+ * lib/ai/auto-reply.ts) so both systems agree on when a conversation
+ * is genuinely "owned" by a human. `status` is still meaningful to
+ * agents in the inbox UI (a manual triage label) — this just stops
+ * treating it as an automation gate.
  *
  * `null` input (conversation lookup failed/missing) defaults to
  * eligible. This mirrors the rest of this file's convention for DB
@@ -211,10 +331,10 @@ export function isTerminal(node_type: string): boolean {
  * infra hiccup, not a real "no conversation" state.
  */
 export function isConversationBotEligible(
-  conversation: { status: string; assigned_agent_id: string | null } | null,
+  conversation: { assigned_agent_id: string | null } | null,
 ): boolean {
   if (!conversation) return true;
-  return conversation.status !== "pending" && conversation.assigned_agent_id === null;
+  return conversation.assigned_agent_id === null;
 }
 
 /**
@@ -437,10 +557,16 @@ async function logEvent(
 }
 
 /**
- * Idempotency check — has a `reply_received` event with this Meta
+ * Cheap PRE-check — has a `reply_received` event with this Meta
  * message_id already been recorded for any of the contact's flow
- * runs? If yes, the inbound is a duplicate (Meta retry) and we
- * exit without re-advancing.
+ * runs? Cheap in the sense that it avoids loading nodes / touching the
+ * run at all for the common case (a Meta retry arriving well after the
+ * original was already fully processed). NOT the authoritative guard
+ * against a genuine race — two deliveries close enough in time can
+ * both read "not found" here before either has written; see
+ * `claimReplyReceived` (called unconditionally right after this, from
+ * `handleReplyForActiveRun`) for the actual atomic claim that closes
+ * that window.
  *
  * Implementation note: scoped to runs belonging to this user/contact
  * so the lookup is cheap (the index on flow_run_events(flow_run_id,
@@ -473,6 +599,50 @@ async function isDuplicateInbound(
 }
 
 /**
+ * The AUTHORITATIVE duplicate-inbound guard — an atomic claim, not a
+ * read. Attempts to INSERT this run's `reply_received` event for this
+ * Meta message id; the partial unique index
+ * `idx_flow_run_events_reply_dedup` (migration 060) rejects a second
+ * concurrent attempt with 23505 (unique_violation). Called
+ * unconditionally as the very first thing `handleReplyForActiveRun`
+ * does — before any matching, var-capture, advancing, or sending — so
+ * a losing concurrent delivery never reaches a customer-facing send at
+ * all, unlike the old check-then-act `isDuplicateInbound` alone (kept
+ * above as a cheap pre-check, not a replacement for this).
+ *
+ * Returns `true` when this call genuinely claimed the slot (proceed
+ * normally); `false` when a concurrent delivery already claimed it
+ * (the caller should stop, treating this as `duplicate_inbound_ignored`).
+ * A non-uniqueness error is logged and treated as claimed (fail open —
+ * an infra hiccup here must not silently eat a genuine reply).
+ */
+async function claimReplyReceived(
+  db: AdminClient,
+  runId: string,
+  currentNodeKey: string | null,
+  message: ParsedInbound,
+): Promise<boolean> {
+  const { error } = await db.from("flow_run_events").insert({
+    flow_run_id: runId,
+    event_type: "reply_received",
+    node_key: currentNodeKey,
+    payload: {
+      meta_message_id: message.meta_message_id,
+      reply_kind: message.kind,
+      reply_id: message.kind === "interactive_reply" ? message.reply_id : null,
+      text_length: message.kind === "text" ? message.text.length : null,
+    },
+  });
+  if (!error) return true;
+  const msg = error.message ?? "";
+  if (msg.includes("23505") || msg.includes("duplicate key")) {
+    return false;
+  }
+  console.error("[flows] claimReplyReceived insert error:", error.message);
+  return true;
+}
+
+/**
  * Conversation fields the entry-trigger gate needs. One indexed
  * by-PK lookup — only hit on the "no active run" path, which is
  * already the less-common branch of dispatch.
@@ -480,17 +650,82 @@ async function isDuplicateInbound(
 async function loadConversationGateInfo(
   db: AdminClient,
   conversationId: string,
-): Promise<{ status: string; assigned_agent_id: string | null } | null> {
+): Promise<{ assigned_agent_id: string | null } | null> {
   const { data, error } = await db
     .from("conversations")
-    .select("status, assigned_agent_id")
+    .select("assigned_agent_id")
     .eq("id", conversationId)
     .maybeSingle();
   if (error) {
     console.error("[flows] loadConversationGateInfo error:", error.message);
     return null;
   }
-  return (data as { status: string; assigned_agent_id: string | null } | null) ?? null;
+  return (data as { assigned_agent_id: string | null } | null) ?? null;
+}
+
+/**
+ * Per-contact memory across separate flow_runs — see migration 061's
+ * own doc comment for the full rationale. Defaults to empty on any
+ * miss (no row yet for this contact) or DB error — fail toward "we
+ * don't know anything yet", never toward crashing the dispatch.
+ */
+async function loadFlowContactState(
+  db: AdminClient,
+  accountId: string,
+  contactId: string,
+): Promise<{ known_vars: Record<string, unknown>; selected_options: Record<string, string[]> }> {
+  const empty = { known_vars: {}, selected_options: {} };
+  const { data, error } = await db
+    .from("flow_contact_state")
+    .select("known_vars, selected_options")
+    .eq("account_id", accountId)
+    .eq("contact_id", contactId)
+    .maybeSingle();
+  if (error || !data) return empty;
+  const row = data as { known_vars: unknown; selected_options: unknown };
+  return {
+    known_vars: (row.known_vars as Record<string, unknown> | null) ?? {},
+    selected_options: (row.selected_options as Record<string, string[]> | null) ?? {},
+  };
+}
+
+/** Best-effort — a failure to persist this contact's captured field
+ *  must never block the customer-facing turn that just captured it. */
+async function mergeFlowKnownVars(
+  db: AdminClient,
+  accountId: string,
+  contactId: string | null,
+  vars: Record<string, unknown>,
+): Promise<void> {
+  if (!contactId || Object.keys(vars).length === 0) return;
+  const { error } = await db.rpc("merge_flow_known_vars", {
+    p_account_id: accountId,
+    p_contact_id: contactId,
+    p_vars: vars,
+  });
+  if (error) {
+    console.error("[flows] merge_flow_known_vars rpc error:", error.message);
+  }
+}
+
+/** Best-effort — same reasoning as mergeFlowKnownVars above. */
+async function recordFlowOptionSelected(
+  db: AdminClient,
+  accountId: string,
+  contactId: string | null,
+  nodeKey: string,
+  replyId: string,
+): Promise<void> {
+  if (!contactId) return;
+  const { error } = await db.rpc("record_flow_option_selected", {
+    p_account_id: accountId,
+    p_contact_id: contactId,
+    p_node_key: nodeKey,
+    p_reply_id: replyId,
+  });
+  if (error) {
+    console.error("[flows] record_flow_option_selected rpc error:", error.message);
+  }
 }
 
 /**
@@ -632,21 +867,48 @@ export async function findEntryFlow(
 // thread can quote the prompt the customer is replying to.
 // ============================================================
 
+/** True whenever this send is NOT the very first message of a brand
+ *  new conversation with this flow — either a cross-run reentry, or a
+ *  reprompt-resend within the current run. Drives reentry_text
+ *  selection (see SendButtonsNodeConfig/SendListNodeConfig's own doc
+ *  comments) so a "Bienvenido..." framing never repeats. */
+function isNotTheFirstShow(run: FlowRunRow): boolean {
+  return run.vars.is_reentry === true || run.reprompt_count > 0;
+}
+
 async function sendButtonsAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-): Promise<{ outcome: "advanced"; node_key: string }> {
+): Promise<{ outcome: "advanced" | "redirect"; node_key: string }> {
   const cfg = node.config as unknown as SendButtonsNodeConfig;
+  const bodyText =
+    isNotTheFirstShow(run) && cfg.reentry_text?.trim() ? cfg.reentry_text : cfg.text;
+
+  // Filter out any button this contact already picked on THIS node in
+  // a prior turn (flow_contact_state, migration 061) — the customer
+  // never sees an option twice. Falls back to showing everything
+  // unfiltered if that would leave zero buttons and no redirect target
+  // is configured — never silently sends nothing.
+  const contactState = await loadFlowContactState(db, run.account_id, run.contact_id!);
+  const alreadySelected = new Set(contactState.selected_options[node.node_key] ?? []);
+  const visibleButtons = cfg.buttons.filter((b) => !alreadySelected.has(b.reply_id));
+  if (visibleButtons.length === 0) {
+    if (cfg.all_selected_node_key) {
+      return { outcome: "redirect", node_key: cfg.all_selected_node_key };
+    }
+    visibleButtons.push(...cfg.buttons);
+  }
+
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
     accountId: run.account_id,
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: cfg.text,
+    bodyText,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
-    buttons: cfg.buttons.map((b) => ({ id: b.reply_id, title: b.title })),
+    buttons: visibleButtons.map((b) => ({ id: b.reply_id, title: b.title })),
   });
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_buttons",
@@ -672,18 +934,37 @@ async function sendListAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-): Promise<{ outcome: "advanced"; node_key: string }> {
+): Promise<{ outcome: "advanced" | "redirect"; node_key: string }> {
   const cfg = node.config as unknown as SendListNodeConfig;
+  const bodyText =
+    isNotTheFirstShow(run) && cfg.reentry_text?.trim() ? cfg.reentry_text : cfg.text;
+
+  // Same filtering as sendButtonsAndSuspend — see its own comment.
+  // Sections that end up with zero rows are dropped entirely (Meta
+  // rejects an empty section); "all selected" means every row across
+  // every section is gone, not just one section.
+  const contactState = await loadFlowContactState(db, run.account_id, run.contact_id!);
+  const alreadySelected = new Set(contactState.selected_options[node.node_key] ?? []);
+  let visibleSections = cfg.sections
+    .map((s) => ({ ...s, rows: s.rows.filter((r) => !alreadySelected.has(r.reply_id)) }))
+    .filter((s) => s.rows.length > 0);
+  if (visibleSections.length === 0) {
+    if (cfg.all_selected_node_key) {
+      return { outcome: "redirect", node_key: cfg.all_selected_node_key };
+    }
+    visibleSections = cfg.sections;
+  }
+
   const { whatsapp_message_id } = await engineSendInteractiveList({
     accountId: run.account_id,
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: cfg.text,
+    bodyText,
     buttonLabel: cfg.button_label,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
-    sections: cfg.sections.map((s) => ({
+    sections: visibleSections.map((s) => ({
       title: s.title,
       rows: s.rows.map((r) => ({
         id: r.reply_id,
@@ -722,11 +1003,22 @@ async function sendListAndSuspend(
 const DEFAULT_NON_TEXT_REPLY_TEXT =
   "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?";
 
-/** Default for CollectAiNodeConfig.nudge_text when a node sets
- *  nudge_after_minutes but not this. Sent by the /api/flows/cron
- *  sweep, not by the engine itself. */
+/** Default for CollectAiNodeConfig.nudge_text / UnmatchedTextHandling.nudge_text
+ *  when a node is nudge-eligible but doesn't configure its own wording.
+ *  Sent by the /api/flows/cron sweep, not by the engine itself. */
 export const DEFAULT_NUDGE_TEXT =
   "¿Sigues ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.";
+
+/**
+ * Default silence window (minutes) applied to a `send_buttons` /
+ * `send_list` node that doesn't set `nudge_after_minutes` explicitly —
+ * see the cron route's `maybeSendInactivityNudge`. Unlike `collect_ai`
+ * (still strictly opt-in: unset means no nudge at all), a customer
+ * parked on a menu gets this nudge automatically so nobody has to
+ * remember to configure it per node. A node can still override the
+ * timing, or set `nudge_after_minutes: 0` to opt out entirely.
+ */
+export const DEFAULT_NUDGE_AFTER_MINUTES = 60;
 
 /** Default for HandoffNodeConfig.customer_message when a `handoff` node
  *  doesn't configure one, and for the generic fallback_policy "handoff"
@@ -736,10 +1028,47 @@ export const DEFAULT_NUDGE_TEXT =
 const DEFAULT_HANDOFF_CUSTOMER_MESSAGE =
   "Gracias, un asesor va a continuar tu consulta en breve.";
 
+/** Default for HandoffNodeConfig.customer_message_after_hours, and for
+ *  the generic fallback_policy "handoff" exit outside business hours —
+ *  same idea as DEFAULT_HANDOFF_CUSTOMER_MESSAGE, but for when nobody
+ *  is actually working right now. */
+const DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS =
+  "Gracias por escribirnos. En este momento estamos fuera de nuestro horario de atención — un asesor se pondrá en contacto contigo apenas estemos disponibles nuevamente.";
+
+/** Sent when a customer taps a button/list row from a STALE message —
+ *  no active run exists for them anymore (it already completed or
+ *  handed off), but flow_contact_state shows this exact reply_id was
+ *  already resolved in some earlier run. Typically happens when the
+ *  customer scrolls up in WhatsApp and re-taps an old option. Ends the
+ *  dead end honestly instead of either silently doing nothing or
+ *  letting the general assistant re-process it as a brand new request
+ *  it has no context for. */
+const ALREADY_HANDLED_OPTION_TEXT =
+  "Ya te habíamos compartido esa información anteriormente. Un asesor se pondrá en contacto contigo en breve para continuar. 🙂";
+
+/** Sent for the same STALE-tap situation as ALREADY_HANDLED_OPTION_TEXT
+ *  (an interactive tap with no active run to route it to — see that
+ *  constant's doc comment) but when flow_contact_state does NOT
+ *  confirm this exact option was ever recorded as selected — e.g. an
+ *  option from before flow_contact_state existed, or one the record
+ *  write itself failed for. Deliberately still not silent: from the
+ *  customer's side a WhatsApp button never shows as "expired", so an
+ *  old message always looks tappable — an honest "we have what you
+ *  told us, someone will reach out" beats guessing wrong and staying
+ *  quiet, or pretending nothing happened. */
+const STALE_INTERACTIVE_TEXT =
+  "Recibimos tu mensaje. Ya tenemos tus datos — en un momento un asesor se va a comunicar contigo. 🙂";
+
 /**
- * Pure decision for whether /api/flows/cron should send a collect_ai
- * inactivity nudge right now. No I/O — the cron route does the DB
- * reads/writes and the actual send; this only computes the boolean.
+ * Pure decision for whether /api/flows/cron should send an inactivity
+ * nudge right now. No I/O — the cron route does the DB reads/writes
+ * and the actual send; this only computes the boolean.
+ *
+ * Node-type agnostic: used both for a `collect_ai` node awaiting free
+ * text and for a `send_buttons` / `send_list` node awaiting a tap —
+ * both configure the same `nudge_after_minutes` / `nudge_text` pair
+ * (`CollectAiNodeConfig` and `UnmatchedTextHandling` respectively), and
+ * the silence math is identical either way.
  *
  * `optedOut` (contacts.ai_nudge_opt_out) short-circuits everything
  * else — checked first, deliberately, so it can never be bypassed by
@@ -755,7 +1084,7 @@ const DEFAULT_HANDOFF_CUSTOMER_MESSAGE =
  * nudge-eligible again, with no explicit reset write needed anywhere
  * else in the codebase.
  */
-export function shouldSendCollectAiNudge(args: {
+export function shouldSendInactivityNudge(args: {
   ageMinutes: number;
   nudgeAfterMinutes: number;
   lastAdvancedAt: string;
@@ -806,6 +1135,18 @@ async function mergeCollectAiFields(
   const newVars = { ...run.vars, ...extracted };
   const { error } = await db.from("flow_runs").update({ vars: newVars }).eq("id", run.id);
   if (!error) run.vars = newVars;
+  // Persist per-contact, independent of whether the run-row write above
+  // succeeded — a future run for this same contact should never have
+  // to ask this again. AWAITED, not fire-and-forget: a serverless
+  // instance can freeze right after the response is sent, before a
+  // dangling (un-awaited) promise gets to run — losing this write
+  // silently. That previously meant a customer re-tapping an old
+  // menu option sometimes got treated as brand new (the "already
+  // selected" check reads this same per-contact state) instead of the
+  // honest "ya tenemos tus datos" notice. mergeFlowKnownVars swallows
+  // its own errors (never throws), so this can't turn a DB hiccup into
+  // a broken turn — it only adds the RPC's own latency, a few ms.
+  await mergeFlowKnownVars(db, run.account_id, run.contact_id, extracted);
 }
 
 function collectAiCollectedKeys(
@@ -943,7 +1284,19 @@ async function handOffFromCollectAi(
   // `handoff_fallback_text` / after-hours fallback is author-written,
   // not AI-generated, same distinction the inbox badge relies on.
   const usedModelMessage = !useAfterHoursText && Boolean(message?.trim());
-  if (outgoingText) {
+
+  // Duplicate guard — only for the TERMINAL handoff below (no
+  // handoff_node_key): that's the branch that can repeat verbatim for
+  // a customer already queued for a human, see wasHandedOffRecently's
+  // doc comment. When handoff_node_key IS set this call advances to a
+  // different node instead, which is never a "same outcome again" —
+  // that branch always sends its message.
+  const isDuplicate =
+    !cfg.handoff_node_key && run.conversation_id
+      ? await wasHandedOffRecently(db, run.conversation_id)
+      : false;
+
+  if (outgoingText && !isDuplicate) {
     try {
       await engineSendText({
         accountId: run.account_id,
@@ -965,6 +1318,7 @@ async function handOffFromCollectAi(
     node_type: "collect_ai",
     reason,
     collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+    ...(isDuplicate ? { duplicate: true } : {}),
   });
 
   if (cfg.handoff_node_key) {
@@ -972,13 +1326,22 @@ async function handOffFromCollectAi(
   }
 
   if (run.conversation_id) {
+    // Always runs, duplicate or not — it's what keeps the conversation
+    // correctly `pending`/`ai_autoreply_disabled: true`; see
+    // executeHandoff's identical note on why this write can't be
+    // skipped just because the customer-facing message was.
     await markConversationPendingHandoff(
       db,
       run.conversation_id,
       `🤖 El asistente derivó la conversación a un asesor (collect_ai: ${reason}).`,
     );
   }
-  await endRun(db, run.id, "handed_off", `collect_ai_${reason}`);
+  await endRun(
+    db,
+    run.id,
+    "handed_off",
+    isDuplicate ? `collect_ai_${reason}_duplicate` : `collect_ai_${reason}`,
+  );
   return { outcome: "handed_off" };
 }
 
@@ -1288,6 +1651,65 @@ export async function handleCollectAiBlankReply(
   return handleCollectAiNonTextReply(db, run, node);
 }
 
+/**
+ * Cooldown (minutes) before a new handoff outcome for the same
+ * conversation is treated as genuine again, instead of a duplicate of
+ * one the customer already saw. Shared by all three handoff exits —
+ * `executeHandoff`, `handOffFromCollectAi`, and the generic
+ * `fallback_policy` "handoff" action — via `wasHandedOffRecently`.
+ *
+ * Why this exists: `isConversationBotEligible` deliberately lets a
+ * flow keep reacting to a PENDING, unclaimed conversation (see its own
+ * doc comment) so a customer nobody has picked up yet isn't left
+ * stranded. But a `returning_message` trigger starts a brand-new flow
+ * run on every single inbound message, and once a topics/menu node's
+ * options are all exhausted (`all_selected_node_key`) that new run
+ * often lands right back on a handoff node — so a customer who is
+ * ALREADY queued and just sends "hola" again a few seconds later used
+ * to get the exact same "un asesor va a continuar tu consulta" message
+ * again, and the agent-facing pending note got rewritten again, every
+ * single time. 30 minutes is long enough to absorb a burst of
+ * check-ins while queued, short enough that a customer coming back
+ * after a real gap still gets a fresh, visible acknowledgment.
+ */
+const HANDOFF_DUPLICATE_COOLDOWN_MINUTES = 30;
+
+/**
+ * True when this conversation already logged a `handoff` flow_run_event
+ * within `HANDOFF_DUPLICATE_COOLDOWN_MINUTES`, across ANY flow_run —
+ * a returning customer gets a brand-new run each time (see
+ * `HANDOFF_DUPLICATE_COOLDOWN_MINUTES`'s doc comment), so this can't
+ * just check the CURRENT run's own events. Reuses `flow_run_events`
+ * (already written by every handoff exit) instead of adding a new
+ * column — the existing audit trail already answers "when did this
+ * conversation last actually hand off", and unlike `conversations.updated_at`
+ * it can't be bumped by unrelated activity (a plain inbound message
+ * touches that column too, which would make it useless as a cooldown
+ * anchor here).
+ *
+ * `false` on a DB read failure — fails toward the customer still
+ * getting a real, visible response rather than silently swallowing a
+ * genuine handoff, same convention as this file's other guard checks
+ * (e.g. `isConversationBotEligible`, `loadActiveRunForContact`).
+ */
+async function wasHandedOffRecently(
+  db: AdminClient,
+  conversationId: string,
+): Promise<boolean> {
+  const cutoff = new Date(
+    Date.now() - HANDOFF_DUPLICATE_COOLDOWN_MINUTES * 60 * 1000,
+  ).toISOString();
+  const { data, error } = await db
+    .from("flow_run_events")
+    .select("id, flow_runs!inner(conversation_id)")
+    .eq("event_type", "handoff")
+    .eq("flow_runs.conversation_id", conversationId)
+    .gte("created_at", cutoff)
+    .limit(1);
+  if (error) return false;
+  return Boolean(data && data.length > 0);
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
@@ -1297,18 +1719,42 @@ async function executeHandoff(
     assign_to?: string;
     note?: string;
     customer_message?: string;
+    customer_message_after_hours?: string;
   };
+  // Duplicate guard: a customer already queued for a human who sends
+  // another message within the cooldown must NOT get the same "un
+  // asesor va a continuar tu consulta" message again — see
+  // wasHandedOffRecently's doc comment. Only the CUSTOMER-VISIBLE send
+  // is skipped; markConversationPendingHandoff below still always
+  // runs — it's what keeps the conversation correctly `pending` with
+  // `ai_autoreply_disabled: true` (insertAndAdvanceRun unconditionally
+  // resets both to "open"/false at the top of every new run, duplicate
+  // or not, so skipping this write would wrongly leave a duplicate
+  // run's conversation looking "open" and re-eligible for AI auto-reply
+  // even though a human still hasn't claimed it).
+  const isDuplicate = run.conversation_id
+    ? await wasHandedOffRecently(db, run.conversation_id)
+    : false;
+  // After-hours wins over everything else, same precedence rule as
+  // collect_ai's own handoff_fallback_text_after_hours (see
+  // handOffFromCollectAi) — only a human/config, never a static
+  // author-written string meant for business hours, should decide
+  // time-sensitive wording.
+  const outOfHours = !isWithinBusinessHours();
+  const outgoingMessage = outOfHours
+    ? cfg.customer_message_after_hours?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS
+    : cfg.customer_message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE;
   // Sent BEFORE the DB-side handoff writes — best-effort, mirrors every
   // other closing-message send in this file (a failure here is logged
   // but must never block the handoff itself from completing).
-  if (run.conversation_id && run.contact_id) {
+  if (!isDuplicate && run.conversation_id && run.contact_id) {
     try {
       await engineSendText({
         accountId: run.account_id,
         userId: run.user_id,
         conversationId: run.conversation_id,
         contactId: run.contact_id,
-        text: cfg.customer_message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE,
+        text: outgoingMessage,
       });
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
@@ -1318,11 +1764,17 @@ async function executeHandoff(
     }
   }
   if (run.conversation_id) {
+    // Interpolated so a note like "Quiere agendar visita para
+    // {{vars.visita_dia}} a las {{vars.visita_hora}}" actually shows the
+    // customer's answers in the agent-facing summary, instead of the
+    // literal template — the only place besides customer-facing prompts
+    // this file uses interpolateVars.
+    const note = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
     await markConversationPendingHandoff(
       db,
       run.conversation_id,
-      cfg.note
-        ? `🤖 El bot derivó la conversación a un asesor: ${cfg.note}`
+      note
+        ? `🤖 El bot derivó la conversación a un asesor: ${note}`
         : "🤖 El bot derivó la conversación a un asesor.",
       cfg.assign_to,
     );
@@ -1330,8 +1782,9 @@ async function executeHandoff(
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
     assigned_to: cfg.assign_to ?? null,
+    ...(isDuplicate ? { duplicate: true } : {}),
   });
-  await endRun(db, run.id, "handed_off", "handoff_node");
+  await endRun(db, run.id, "handed_off", isDuplicate ? "handoff_node_duplicate" : "handoff_node");
 }
 
 /**
@@ -1546,9 +1999,24 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "collect_input") {
+      const cfg = node.config as unknown as CollectInputNodeConfig;
+      // Already known from a PRIOR run for this same contact (seeded
+      // into run.vars at run creation — see insertAndAdvanceRun /
+      // flow_contact_state, migration 061)? Skip straight past this
+      // question instead of asking it again — this is the manual/
+      // collect_input equivalent of collect_ai's own "already
+      // collected, don't ask again" behavior.
+      const known = run.vars[cfg.var_key];
+      if (typeof known === "string" && known.trim()) {
+        await logEvent(db, run.id, "node_entered", node.node_key, {
+          skipped_already_known: true,
+          captured_key: cfg.var_key,
+        });
+        currentKey = cfg.next_node_key;
+        continue;
+      }
       // Send the prompt and suspend. Customer's next TEXT reply will
       // wake us up via handleReplyForActiveRun's collect_input branch.
-      const cfg = node.config as unknown as CollectInputNodeConfig;
       try {
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
@@ -1652,7 +2120,14 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, node);
+      const result = await sendButtonsAndSuspend(db, run, node);
+      if (result.outcome === "redirect") {
+        // Every button here has already been picked by this contact —
+        // nothing was sent. Continue the SAME advance loop from the
+        // configured all_selected_node_key instead.
+        currentKey = result.node_key;
+        continue;
+      }
       // Persist the new current_node_key via optimistic UPDATE.
       const advanced = await advanceCurrentNodeKey(
         db,
@@ -1668,7 +2143,11 @@ async function advanceFromNodeKey(
       return { outcome: "advanced" };
     }
     if (node.node_type === "send_list") {
-      await sendListAndSuspend(db, run, node);
+      const result = await sendListAndSuspend(db, run, node);
+      if (result.outcome === "redirect") {
+        currentKey = result.node_key;
+        continue;
+      }
       const advanced = await advanceCurrentNodeKey(
         db,
         run.id,
@@ -1780,44 +2259,71 @@ export async function dispatchInboundToFlows(
     }
 
     // No active run → before even looking for a matching entry
-    // trigger, check whether a human already owns this conversation.
-    // A flow (any trigger_type — keyword, first_inbound_message,
-    // returning_message) must never start over a conversation that's
-    // 'pending' or assigned to an agent; see isConversationBotEligible.
+    // trigger, check whether a human has actually CLAIMED this
+    // conversation. A flow (any trigger_type — keyword,
+    // first_inbound_message, returning_message) must never start over
+    // a conversation an agent owns; see isConversationBotEligible for
+    // why 'pending' alone no longer blocks this.
     const conversationGate = await loadConversationGateInfo(
       db,
       input.conversationId,
     );
     if (!isConversationBotEligible(conversationGate)) {
-      // A human who has actually CLAIMED the thread (assigned_agent_id
-      // set) is never overridden — full stop, no exceptions.
-      if (conversationGate?.assigned_agent_id) {
-        return { consumed: false, outcome: "no_match" };
+      return { consumed: false, outcome: "no_match" };
+    }
+
+    // An interactive tap with no active run left to match it against —
+    // the run it belonged to already completed or handed off. findEntryFlow
+    // below never matches interactive replies (only text can start a flow),
+    // so left unchecked this would silently fall through to the general
+    // assistant, which has no memory of ever having sent this option and
+    // would re-process it as a brand new request. Most common real-world
+    // cause: the customer scrolls up in WhatsApp and re-taps an old button
+    // whose option (per flow_contact_state, migration 061) was already
+    // fully resolved in some earlier run — give them an honest answer and
+    // route to a human instead of restarting or repeating the flow.
+    if (input.message.kind === "interactive_reply") {
+      const contactState = await loadFlowContactState(
+        db,
+        input.accountId,
+        input.contactId,
+      );
+      const replyId = input.message.reply_id;
+      const alreadyHandled = Object.values(contactState.selected_options).some(
+        (ids) => ids.includes(replyId),
+      );
+      // Either way there is no live run this tap can advance — never
+      // fall through to `no_match` here (that used to mean total
+      // silence: findEntryFlow never matches interactive replies, and
+      // the general assistant has no context for a bare button-tap
+      // payload). alreadyHandled just picks the more specific, honest
+      // wording when flow_contact_state can actually confirm it.
+      try {
+        await engineSendText({
+          accountId: input.accountId,
+          userId: input.userId,
+          conversationId: input.conversationId,
+          contactId: input.contactId,
+          text: alreadyHandled ? ALREADY_HANDLED_OPTION_TEXT : STALE_INTERACTIVE_TEXT,
+          aiGenerated: false,
+        });
+      } catch (err) {
+        console.error(
+          "[flows] stale-interactive notice send failed:",
+          err instanceof Error ? err.message : err,
+        );
       }
-      // The remaining ineligible case is `status === 'pending'` with
-      // nobody actually assigned yet — a handoff happened but no agent
-      // has picked it up. "menú" is an explicit, deliberate request
-      // from the customer to go back to the bot, not an automatic
-      // trigger firing on its own — honor it so a customer stuck after
-      // an unanswered handoff isn't stranded with no way back to the
-      // bot. Every OTHER trigger type still requires full eligibility.
-      const reentryFlow = await findReentryFlow(db, input.accountId, input.message);
-      if (!reentryFlow || !reentryFlow.entry_node_id) {
-        return { consumed: false, outcome: "no_match" };
-      }
-      // The customer explicitly asked to restart — the old handoff
-      // state no longer applies. Mirrors, in reverse, what
-      // markConversationPendingHandoff sets on the way in.
-      await db
-        .from("conversations")
-        .update({
-          status: "open",
-          ai_autoreply_disabled: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", input.conversationId);
-      const reentryNodes = await loadAllNodes(db, reentryFlow.id);
-      return startNewRun(db, reentryFlow, input, reentryNodes);
+      await markConversationPendingHandoff(
+        db,
+        input.conversationId,
+        alreadyHandled
+          ? "El cliente reabrió una opción del menú que ya había completado antes."
+          : "El cliente tocó un botón/lista de un mensaje anterior sin una conversación activa.",
+      );
+      return {
+        consumed: true,
+        outcome: alreadyHandled ? "already_selected_notice" : "stale_interactive_notice",
+      };
     }
 
     // No active run, conversation not human-owned → look for a flow
@@ -1860,12 +2366,20 @@ export async function handleReplyForActiveRun(
   // table. Length is enough for "did they actually reply?" debugging;
   // for the captured value itself, the `node_entered` event already
   // records `captured_key` + `captured_length` after the var is stored.
-  await logEvent(db, run.id, "reply_received", run.current_node_key, {
-    meta_message_id: message.meta_message_id,
-    reply_kind: message.kind,
-    reply_id: message.kind === "interactive_reply" ? message.reply_id : null,
-    text_length: message.kind === "text" ? message.text.length : null,
-  });
+  //
+  // This is also the atomic duplicate-inbound claim — see
+  // claimReplyReceived's own doc comment. Must run BEFORE anything else
+  // in this function (matching, capturing, advancing, sending): a
+  // losing concurrent delivery needs to stop here, before it can ever
+  // reach a customer-facing send.
+  const claimed = await claimReplyReceived(db, run.id, run.current_node_key, message);
+  if (!claimed) {
+    return {
+      consumed: true,
+      flow_run_id: run.id,
+      outcome: "duplicate_inbound_ignored",
+    };
+  }
 
   if (!run.current_node_key) {
     // Defensive — a run with status='active' but no current node is
@@ -1930,12 +2444,35 @@ export async function handleReplyForActiveRun(
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
+  // Set only for a collect_input reply that failed `validation` — see
+  // isValidCollectInputValue's doc comment. Picks a more specific
+  // reprompt message (collectInputValidationErrorText) than the
+  // generic "resend prompt_text" used for a genuinely empty reply.
+  let collectInputValidationFailed = false;
   if (
     message.kind === "interactive_reply" &&
     (currentNode.node_type === "send_buttons" ||
       currentNode.node_type === "send_list")
   ) {
     matched = matchReplyId(currentNode, message.reply_id);
+    if (matched) {
+      // Remembered per contact (flow_contact_state) so this exact
+      // option is filtered out next time this node is shown — see
+      // sendButtonsAndSuspend/sendListAndSuspend. AWAITED — see
+      // mergeCollectAiFields' identical note on why fire-and-forget
+      // here risked the write never landing (a serverless instance can
+      // freeze right after the response, before a dangling promise
+      // runs) and the customer's own dispatchInboundToFlows "already
+      // selected" check (reads this same state) silently missing it on
+      // a re-tap. recordFlowOptionSelected swallows its own errors.
+      await recordFlowOptionSelected(
+        db,
+        run.account_id,
+        run.contact_id,
+        currentNode.node_key,
+        message.reply_id,
+      );
+    }
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"
@@ -1943,26 +2480,41 @@ export async function handleReplyForActiveRun(
     const cfg = currentNode.config as unknown as CollectInputNodeConfig;
     const captured = message.text.trim();
     if (captured.length > 0 && cfg.var_key) {
-      // Persist captured value + reset reprompt count atomically.
-      const newVars = { ...run.vars, [cfg.var_key]: captured };
-      const { error: capErr } = await db
-        .from("flow_runs")
-        .update({
-          vars: newVars,
-          reprompt_count: 0,
-        })
-        .eq("id", run.id);
-      if (!capErr) {
-        // Mirror the UPDATE in-memory so downstream interpolation in
-        // the advance loop sees the captured var without us having to
-        // re-SELECT the whole row.
-        run.vars = newVars;
-        run.reprompt_count = 0;
-        await logEvent(db, run.id, "node_entered", currentNode.node_key, {
-          captured_key: cfg.var_key,
-          captured_length: captured.length,
-        });
-        matched = cfg.next_node_key;
+      if (!isValidCollectInputValue(cfg.validation, captured, cfg.regex)) {
+        // Leave `matched` unset — falls through to the same
+        // fallback_policy reprompt/handoff machinery as an empty
+        // reply below, just with collectInputValidationFailed flagging
+        // which message to use for the reprompt.
+        collectInputValidationFailed = true;
+      } else {
+        // Persist captured value + reset reprompt count atomically.
+        const newVars = { ...run.vars, [cfg.var_key]: captured };
+        const { error: capErr } = await db
+          .from("flow_runs")
+          .update({
+            vars: newVars,
+            reprompt_count: 0,
+          })
+          .eq("id", run.id);
+        if (!capErr) {
+          // Mirror the UPDATE in-memory so downstream interpolation in
+          // the advance loop sees the captured var without us having to
+          // re-SELECT the whole row.
+          run.vars = newVars;
+          run.reprompt_count = 0;
+          await logEvent(db, run.id, "node_entered", currentNode.node_key, {
+            captured_key: cfg.var_key,
+            captured_length: captured.length,
+          });
+          // Same reasoning as mergeCollectAiFields' own persistence — a
+          // future run for this contact shouldn't have to ask again.
+          // Awaited for the same reliability reason (see that function's
+          // doc comment).
+          await mergeFlowKnownVars(db, run.account_id, run.contact_id, {
+            [cfg.var_key]: captured,
+          });
+          matched = cfg.next_node_key;
+        }
       }
     }
   } else if (
@@ -1973,6 +2525,7 @@ export async function handleReplyForActiveRun(
     const cfg = currentNode.config as unknown as
       | SendButtonsNodeConfig
       | SendListNodeConfig;
+    const textRoute = matchTextRoute(cfg.text_routes, message.text);
     if (
       cfg.handoff_node_key &&
       cfg.unmatched_text_keywords &&
@@ -1983,6 +2536,25 @@ export async function handleReplyForActiveRun(
       })
     ) {
       matched = cfg.handoff_node_key;
+    } else if (textRoute) {
+      // e.g. "precio"/"cotizar" jumping straight to collect_inox_quote
+      // instead of a generic reprompt or human handoff. See TextRoute's
+      // doc comment (types.ts) for precedence vs. the escalation branch
+      // above and release_unmatched_text_to_assistant below.
+      matched = textRoute.node_key;
+      if (textRoute.also_marks_selected) {
+        // e.g. typing "catálogo" instead of tapping the row — treated
+        // exactly like a real tap for exclusion purposes, see
+        // TextRoute.also_marks_selected's doc comment. Awaited — same
+        // reliability reason as the interactive-tap branch above.
+        await recordFlowOptionSelected(
+          db,
+          run.account_id,
+          run.contact_id,
+          currentNode.node_key,
+          textRoute.also_marks_selected,
+        );
+      }
     } else if (cfg.release_unmatched_text_to_assistant) {
       // Free text that isn't a button tap and isn't an escalation
       // keyword (checked above — always wins first) — end the run and
@@ -2057,14 +2629,17 @@ export async function handleReplyForActiveRun(
       const cfg = currentNode.config as unknown as
         | SendButtonsNodeConfig
         | SendListNodeConfig;
-      if (cfg.reprompt_hint_text) {
+      const hintText = !isWithinBusinessHours()
+        ? cfg.reprompt_hint_text_after_hours?.trim() || cfg.reprompt_hint_text
+        : cfg.reprompt_hint_text;
+      if (hintText) {
         try {
           await engineSendText({
             accountId: run.account_id,
             userId: run.user_id,
             conversationId: run.conversation_id!,
             contactId: run.contact_id!,
-            text: cfg.reprompt_hint_text,
+            text: hintText,
           });
         } catch (err) {
           await logEvent(db, run.id, "error", currentNode.node_key, {
@@ -2075,20 +2650,39 @@ export async function handleReplyForActiveRun(
       }
     }
     if (currentNode.node_type === "send_buttons") {
-      await sendButtonsAndSuspend(db, run, currentNode);
+      const result = await sendButtonsAndSuspend(db, run, currentNode);
+      if (result.outcome === "redirect") {
+        // This contact has since picked every button here (e.g. via a
+        // different, now-ended run) — hand off to the normal advance
+        // loop instead of resending an all-hidden prompt.
+        const outcome = await advanceFromNodeKey(db, run, result.node_key, nodes);
+        return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+      }
     } else if (currentNode.node_type === "send_list") {
-      await sendListAndSuspend(db, run, currentNode);
+      const result = await sendListAndSuspend(db, run, currentNode);
+      if (result.outcome === "redirect") {
+        const outcome = await advanceFromNodeKey(db, run, result.node_key, nodes);
+        return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+      }
     } else if (currentNode.node_type === "collect_input") {
-      // Customer typed something we couldn't accept (empty after trim,
-      // or var_key missing — rare). Re-send the prompt so they try again.
+      // Customer typed something we couldn't accept: either empty
+      // after trim / var_key missing (rare), or it failed `validation`
+      // (collectInputValidationFailed) — e.g. "987" isn't a valid
+      // 9-digit phone number. The latter gets a specific, more formal
+      // re-ask instead of just repeating the original question
+      // verbatim; either way the SAME reprompt/max_reprompts/handoff
+      // cycle as every other node type applies (see fallback_policy).
       const cfg = currentNode.config as unknown as CollectInputNodeConfig;
+      const reText = collectInputValidationFailed
+        ? collectInputValidationErrorText(cfg)
+        : cfg.prompt_text;
       try {
         await engineSendText({
           accountId: run.account_id,
-    userId: run.user_id,
+          userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
-          text: interpolateVars(cfg.prompt_text, run.vars),
+          text: interpolateVars(reText, run.vars),
         });
       } catch (err) {
         await logEvent(db, run.id, "error", currentNode.node_key, {
@@ -2100,17 +2694,29 @@ export async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
+    // Duplicate guard — same reasoning as executeHandoff's own, see
+    // wasHandedOffRecently's doc comment: a customer already queued
+    // for a human who keeps typing off-script must not get the same
+    // closing message every single time their fallback_policy exhausts
+    // again. markConversationPendingHandoff below still always runs
+    // regardless — see executeHandoff's note on why that write can't
+    // be skipped just because the customer-facing message was.
+    const isDuplicate = run.conversation_id
+      ? await wasHandedOffRecently(db, run.conversation_id)
+      : false;
     // Same reasoning as executeHandoff's own send: this exit used to be
     // completely silent to the customer — best-effort, must not block
     // the handoff itself.
-    if (run.conversation_id && run.contact_id) {
+    if (!isDuplicate && run.conversation_id && run.contact_id) {
       try {
         await engineSendText({
           accountId: run.account_id,
           userId: run.user_id,
           conversationId: run.conversation_id,
           contactId: run.contact_id,
-          text: DEFAULT_HANDOFF_CUSTOMER_MESSAGE,
+          text: isWithinBusinessHours()
+            ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+            : DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
         });
       } catch (err) {
         await logEvent(db, run.id, "error", run.current_node_key, {
@@ -2128,8 +2734,14 @@ export async function handleReplyForActiveRun(
     }
     await logEvent(db, run.id, "handoff", run.current_node_key, {
       reason: "fallback_exhausted",
+      ...(isDuplicate ? { duplicate: true } : {}),
     });
-    await endRun(db, run.id, "handed_off", "fallback_exhausted");
+    await endRun(
+      db,
+      run.id,
+      "handed_off",
+      isDuplicate ? "fallback_exhausted_duplicate" : "fallback_exhausted",
+    );
     return { consumed: true, flow_run_id: run.id, outcome: "handed_off" };
   }
   // action.type === 'end'
@@ -2154,6 +2766,28 @@ async function insertAndAdvanceRun(
   nodes: Map<string, FlowNodeRow>,
   startedVia: Record<string, unknown>,
 ): Promise<DispatchInboundResult> {
+  // Has THIS flow ever run for this contact before? Checked BEFORE the
+  // insert below (a fresh row for this exact run would otherwise always
+  // count as "one prior run"). Drives `vars.is_reentry`, which
+  // send_list/send_buttons nodes can use (via `reentry_text`) to skip
+  // re-showing a "Bienvenido..." framing that only makes sense the
+  // first time — see sendListAndSuspend/sendButtonsAndSuspend. Scoped
+  // to (contact_id, flow_id): switching between two DIFFERENT flows
+  // (e.g. the AI and manual variants) is its own "first time" each.
+  const { count: priorRunCount } = await db
+    .from("flow_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("contact_id", contactId)
+    .eq("flow_id", flow.id);
+  const isReentry = (priorRunCount ?? 0) > 0;
+
+  // Seed this run's vars with whatever this contact has already told
+  // ANY prior run (see flow_contact_state, migration 061) — so
+  // collect_ai's own "already known, don't ask again" logic and
+  // collect_input's skip-if-known check (advanceFromNodeKey) both see
+  // it from the very first turn, instead of asking again from scratch.
+  const contactState = await loadFlowContactState(db, flow.account_id, contactId);
+
   // INSERT — partial unique index `idx_one_active_run_per_contact`
   // catches concurrent inserts with 23505. We catch and return as
   // consumed:true (the parallel webhook — or in startFlowRunAtNode's
@@ -2174,6 +2808,7 @@ async function insertAndAdvanceRun(
       conversation_id: conversationId,
       status: "active",
       current_node_key: nodeKey,
+      vars: { ...contactState.known_vars, is_reentry: isReentry },
     })
     .select("*")
     .maybeSingle();
@@ -2192,6 +2827,17 @@ async function insertAndAdvanceRun(
     trigger_type: flow.trigger_type,
     ...startedVia,
   });
+
+  // A new run starting means the bot is actively engaging this contact
+  // again — reset the conversation off of any stale 'pending'/disabled
+  // state left over from a PRIOR run's handoff that nobody ended up
+  // claiming. Unconditional (not just when it was actually pending) —
+  // a harmless no-op write when it was already open. Mirrors, in
+  // reverse, markConversationPendingHandoff's own write.
+  await db
+    .from("conversations")
+    .update({ status: "open", ai_autoreply_disabled: false, updated_at: new Date().toISOString() })
+    .eq("id", conversationId);
   // Bump the flow's execution counter — used by the builder UI to
   // surface "X runs since activation" on the flow card.
   //

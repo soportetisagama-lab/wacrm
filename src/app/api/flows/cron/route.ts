@@ -2,9 +2,9 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
-import { DEFAULT_NUDGE_TEXT, shouldSendCollectAiNudge } from '@/lib/flows/engine'
+import { DEFAULT_NUDGE_AFTER_MINUTES, DEFAULT_NUDGE_TEXT, shouldSendInactivityNudge } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
-import type { CollectAiNodeConfig } from '@/lib/flows/types'
+import type { CollectAiNodeConfig, SendButtonsNodeConfig, SendListNodeConfig } from '@/lib/flows/types'
 import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
 
 /**
@@ -26,13 +26,16 @@ import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-rep
  *      blocking any new triggers for them. Not optional.
  *
  *   2. Nudge: for a run still short of the timeout, whose CURRENT node
- *      is `collect_ai` with `nudge_after_minutes` configured, sends
- *      `nudge_text` (or the built-in default) once per silence period —
- *      see `shouldSendCollectAiNudge` (engine.ts) for the exact
- *      decision, including why a nudge doesn't permanently block a
- *      later one. Skipped entirely when the contact has opted out
- *      (`contacts.ai_nudge_opt_out` — set by the webhook's
- *      `flagNudgeOptOutIfRequested`, checked here, never here itself).
+ *      is `collect_ai`, `send_buttons`, or `send_list` with
+ *      `nudge_after_minutes` configured, sends `nudge_text` (or the
+ *      built-in default) once per silence period — covers a customer
+ *      gone quiet mid-AI-conversation just as much as one who never
+ *      tapped a button/list option. See `shouldSendInactivityNudge`
+ *      (engine.ts) for the exact decision, including why a nudge
+ *      doesn't permanently block a later one. Skipped entirely when
+ *      the contact has opted out (`contacts.ai_nudge_opt_out` — set by
+ *      the webhook's `flagNudgeOptOutIfRequested`, checked here, never
+ *      here itself).
  *
  *   3. Debounce recovery: `dispatchInboundToAiReply` (lib/ai/auto-reply.ts)
  *      debounces a burst of text messages by having the first one's
@@ -157,7 +160,7 @@ export async function GET(request: Request) {
       continue // timed out (or lost the race) — not nudge-eligible either way
     }
 
-    if (await maybeSendCollectAiNudge(admin, r, ageHours * 60, now)) {
+    if (await maybeSendInactivityNudge(admin, r, ageHours * 60, now)) {
       nudged += 1
     }
   }
@@ -226,9 +229,30 @@ async function sweepOrphanedDebounceWindows(
   return processed
 }
 
+/** Node types eligible for an inactivity nudge — anything that can
+ *  leave a run parked waiting for the customer's next move. */
+const NUDGE_ELIGIBLE_NODE_TYPES = ['collect_ai', 'send_buttons', 'send_list'] as const;
+
 /**
- * Check + fire one collect_ai inactivity nudge for a single active
- * run, when eligible. Returns whether it actually sent one.
+ * Check + fire one inactivity nudge for a single active run, when
+ * eligible. Returns whether it actually sent one.
+ *
+ * Covers three node types that all leave a run parked waiting on the
+ * customer: `collect_ai` (waiting on free text for the AI sub-loop),
+ * and `send_buttons` / `send_list` (waiting on a tap) — see
+ * `NUDGE_ELIGIBLE_NODE_TYPES`. All three read the same
+ * `nudge_after_minutes` / `nudge_text` pair off their config
+ * (`CollectAiNodeConfig` and the shared `UnmatchedTextHandling` base
+ * of the button/list configs respectively — see types.ts), so one
+ * function handles all of them instead of duplicating this per type.
+ *
+ * `collect_ai` stays strictly opt-in (unset `nudge_after_minutes` means
+ * no nudge). `send_buttons` / `send_list` are nudge-eligible BY
+ * DEFAULT instead: an unset `nudge_after_minutes` falls back to
+ * `DEFAULT_NUDGE_AFTER_MINUTES` (engine.ts) so a customer left
+ * mid-menu always gets a "¿Sigues ahí?"-style reminder without a
+ * builder needing to configure it per node — a node can still set its
+ * own minutes, or `0` to opt out entirely.
  *
  * Looks up the run's CURRENT node by (flow_id, current_node_key) —
  * not a real FK (`node_key` is a stable string, not flow_nodes.id — see
@@ -236,7 +260,7 @@ async function sweepOrphanedDebounceWindows(
  * the outer `.select()` can embed. Fine at the scale this endpoint
  * already assumes ("small set of active runs per tenant").
  */
-async function maybeSendCollectAiNudge(
+async function maybeSendInactivityNudge(
   admin: ReturnType<typeof supabaseAdmin>,
   run: {
     id: string
@@ -261,17 +285,34 @@ async function maybeSendCollectAiNudge(
     .eq('flow_id', run.flow_id)
     .eq('node_key', run.current_node_key)
     .maybeSingle()
-  if (nodeErr || !node || node.node_type !== 'collect_ai') return false
+  if (
+    nodeErr ||
+    !node ||
+    !(NUDGE_ELIGIBLE_NODE_TYPES as readonly string[]).includes(node.node_type)
+  ) {
+    return false
+  }
 
-  const cfg = node.config as CollectAiNodeConfig
-  if (!cfg.nudge_after_minutes) return false
+  const cfg = node.config as CollectAiNodeConfig | SendButtonsNodeConfig | SendListNodeConfig
+  // collect_ai stays strictly opt-in: unset (undefined) means no nudge
+  // at all for that node, unchanged from before this default existed.
+  // send_buttons/send_list are nudge-eligible BY DEFAULT: unset falls
+  // back to DEFAULT_NUDGE_AFTER_MINUTES so a customer parked on a menu
+  // always gets a reminder without per-node setup. `0` (any node type)
+  // is an explicit opt-out and must NOT fall back to the default — `??`
+  // only substitutes on null/undefined, so it doesn't.
+  const nudgeAfterMinutes =
+    node.node_type === 'collect_ai'
+      ? cfg.nudge_after_minutes
+      : (cfg.nudge_after_minutes ?? DEFAULT_NUDGE_AFTER_MINUTES)
+  if (!nudgeAfterMinutes) return false
 
   const contactsField = Array.isArray(run.contacts) ? run.contacts[0] : run.contacts
   const optedOut = contactsField?.ai_nudge_opt_out ?? false
 
-  const decision = shouldSendCollectAiNudge({
+  const decision = shouldSendInactivityNudge({
     ageMinutes,
-    nudgeAfterMinutes: cfg.nudge_after_minutes,
+    nudgeAfterMinutes,
     lastAdvancedAt: run.last_advanced_at,
     lastNudgeSentAt: run.last_nudge_sent_at,
     optedOut,
@@ -299,7 +340,7 @@ async function maybeSendCollectAiNudge(
     flow_run_id: run.id,
     event_type: 'message_sent',
     node_key: run.current_node_key,
-    payload: { node_type: 'collect_ai', nudge: true, age_minutes: Math.round(ageMinutes) },
+    payload: { node_type: node.node_type, nudge: true, age_minutes: Math.round(ageMinutes) },
   })
   return true
 }

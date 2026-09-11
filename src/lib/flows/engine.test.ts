@@ -32,6 +32,7 @@ import {
   matchesKeywordTrigger,
   isAutoAdvancing,
   isSuspending,
+  isValidCollectInputValue,
   isTerminal,
   evaluateConditionPredicate,
   isConversationBotEligible,
@@ -42,7 +43,7 @@ import {
   handleCollectAiNonTextReply,
   handleCollectAiBlankReply,
   handleReplyForActiveRun,
-  shouldSendCollectAiNudge,
+  shouldSendInactivityNudge,
   resolveTemplateButtonAction,
   findEntryFlow,
   dispatchInboundToFlows,
@@ -225,6 +226,44 @@ describe("matchesKeywordTrigger", () => {
       expect(matchesKeywordTrigger("¡menú", cfg)).toBe(true);
     });
   });
+
+  describe("accent-insensitive matching", () => {
+    it("contains: an accented keyword matches the unaccented customer text and vice versa", () => {
+      expect(
+        matchesKeywordTrigger("cuanto cuesta la cotizacion", {
+          keywords: ["cotización"],
+        }),
+      ).toBe(true);
+      expect(
+        matchesKeywordTrigger("necesito una cotización", {
+          keywords: ["cotizacion"],
+        }),
+      ).toBe(true);
+    });
+
+    it("word match_type also folds accents on both sides", () => {
+      const cfg = { keywords: ["menu"], match_type: "word" as const };
+      expect(matchesKeywordTrigger("quiero el menú", cfg)).toBe(true);
+    });
+
+    it("exact match_type also folds accents", () => {
+      expect(
+        matchesKeywordTrigger("cotizacion", {
+          keywords: ["cotización"],
+          match_type: "exact",
+        }),
+      ).toBe(true);
+    });
+
+    it("case_sensitive configs do NOT fold accents — an exact byte match is still required", () => {
+      expect(
+        matchesKeywordTrigger("cotizacion", {
+          keywords: ["cotización"],
+          case_sensitive: true,
+        }),
+      ).toBe(false);
+    });
+  });
 });
 
 describe("resolveTemplateButtonAction", () => {
@@ -312,6 +351,42 @@ describe("node classification helpers", () => {
       // Exactly one of the three should be true for every known node.
       expect(flags.filter(Boolean).length).toBe(1);
     }
+  });
+});
+
+describe("isValidCollectInputValue", () => {
+  it("'any' (or unset) accepts anything non-empty — the original v1.5 behavior", () => {
+    expect(isValidCollectInputValue("any", "cualquier cosa")).toBe(true);
+    expect(isValidCollectInputValue(undefined, "cualquier cosa")).toBe(true);
+  });
+
+  it("'phone' accepts exactly 9 digits, with or without spaces as separators", () => {
+    expect(isValidCollectInputValue("phone", "987654321")).toBe(true);
+    expect(isValidCollectInputValue("phone", "987 654 321")).toBe(true);
+  });
+
+  it("'phone' rejects too few/too many digits, letters, or a country code prefix", () => {
+    expect(isValidCollectInputValue("phone", "98765")).toBe(false);
+    expect(isValidCollectInputValue("phone", "9876543210")).toBe(false);
+    expect(isValidCollectInputValue("phone", "987abc321")).toBe(false);
+    expect(isValidCollectInputValue("phone", "+51987654321")).toBe(false);
+    expect(isValidCollectInputValue("phone", "")).toBe(false);
+  });
+
+  it("'email' accepts a plausible x@y.z shape and rejects the obvious non-matches", () => {
+    expect(isValidCollectInputValue("email", "cliente@sagama.pe")).toBe(true);
+    expect(isValidCollectInputValue("email", "no es un correo")).toBe(false);
+    expect(isValidCollectInputValue("email", "falta-arroba.com")).toBe(false);
+  });
+
+  it("'regex' tests the value against the configured pattern", () => {
+    expect(isValidCollectInputValue("regex", "ABC-123", "^[A-Z]{3}-\\d{3}$")).toBe(true);
+    expect(isValidCollectInputValue("regex", "abc123", "^[A-Z]{3}-\\d{3}$")).toBe(false);
+  });
+
+  it("'regex' with no pattern configured, or a malformed one, fails OPEN — accepts the value", () => {
+    expect(isValidCollectInputValue("regex", "cualquier cosa", undefined)).toBe(true);
+    expect(isValidCollectInputValue("regex", "cualquier cosa", "(unterminated[")).toBe(true);
   });
 });
 
@@ -416,37 +491,16 @@ describe("evaluateConditionPredicate", () => {
 });
 
 describe("isConversationBotEligible", () => {
-  it("eligible when open and unassigned", () => {
-    expect(
-      isConversationBotEligible({ status: "open", assigned_agent_id: null }),
-    ).toBe(true);
+  it("eligible when unassigned", () => {
+    expect(isConversationBotEligible({ assigned_agent_id: null })).toBe(true);
   });
 
-  it("eligible when closed and unassigned", () => {
-    expect(
-      isConversationBotEligible({ status: "closed", assigned_agent_id: null }),
-    ).toBe(true);
+  it("eligible when 'pending' but unassigned — a handoff nobody picked up must not strand the customer", () => {
+    expect(isConversationBotEligible({ assigned_agent_id: null })).toBe(true);
   });
 
-  it("not eligible when pending, even if unassigned", () => {
-    expect(
-      isConversationBotEligible({ status: "pending", assigned_agent_id: null }),
-    ).toBe(false);
-  });
-
-  it("not eligible when assigned to an agent, even if status is open", () => {
-    expect(
-      isConversationBotEligible({ status: "open", assigned_agent_id: "agent-1" }),
-    ).toBe(false);
-  });
-
-  it("not eligible when both pending and assigned", () => {
-    expect(
-      isConversationBotEligible({
-        status: "pending",
-        assigned_agent_id: "agent-1",
-      }),
-    ).toBe(false);
+  it("not eligible once an agent has actually claimed it", () => {
+    expect(isConversationBotEligible({ assigned_agent_id: "agent-1" })).toBe(false);
   });
 
   it("fails open (eligible) when the conversation lookup came back null", () => {
@@ -663,9 +717,11 @@ describe("findEntryFlow — first-inbound context classification", () => {
 });
 
 // ============================================================
-// dispatchInboundToFlows — reentry override on a stranded 'pending'
-// conversation (Bug B: "menú" must break through a handoff nobody
-// answered, but never when an agent has actually claimed the thread).
+// dispatchInboundToFlows — 'pending' no longer blocks eligibility
+// (Bug B follow-up): only an actually-claimed conversation
+// (assigned_agent_id set) blocks a flow from restarting. A conversation
+// merely 'pending' — a handoff nobody has picked up yet — must let the
+// bot re-engage normally through the ordinary findEntryFlow path.
 // ============================================================
 
 /**
@@ -675,39 +731,52 @@ describe("findEntryFlow — first-inbound context classification", () => {
  * (.then()) — whichever pattern the real code under test happens to
  * use for that table.
  */
-function reentryChain(terminal: () => Promise<{ data: unknown; error: unknown }>) {
+function reentryChain(terminal: () => Promise<{ data: unknown; error: unknown; count?: number }>) {
   const obj: Record<string, unknown> = {
     select: () => obj,
     eq: () => obj,
+    is: () => obj,
+    gte: () => obj,
     order: () => obj,
     limit: () => obj,
     maybeSingle: () => terminal(),
-    then: (resolve: (v: { data: unknown; error: unknown }) => void) =>
+    then: (resolve: (v: { data: unknown; error: unknown; count?: number }) => void) =>
       terminal().then(resolve),
   };
   return obj;
 }
 
 function makeReentryOverrideFakeDb(opts: {
-  conversationGate: { status: string; assigned_agent_id: string | null } | null;
+  conversationGate: { assigned_agent_id: string | null } | null;
   flows: Partial<FlowRow>[];
   flowNodes: Partial<FlowNodeRow>[];
+  priorRunCount?: number;
+  contactState?: { known_vars?: Record<string, unknown>; selected_options?: Record<string, string[]> };
+  /** Makes `wasHandedOffRecently` resolve true for every conversation —
+   *  simulates a `flow_run_events` "handoff" row already logged within
+   *  the cooldown window. */
+  recentHandoffExists?: boolean;
 }) {
   const conversationUpdates: Record<string, unknown>[] = [];
   const flowRunInserts: Record<string, unknown>[] = [];
+  const flowRunEventInserts: Record<string, unknown>[] = [];
+  const rpcCalls: { name: string; args: unknown }[] = [];
 
   const db = {
     from: (table: string) => {
       if (table === "flow_runs") {
         return {
-          ...reentryChain(() => Promise.resolve({ data: [], error: null })), // no active run
+          ...reentryChain(() =>
+            Promise.resolve({ data: [], error: null, count: opts.priorRunCount ?? 0 }),
+          ), // no ACTIVE run; count doubles as the is_reentry prior-run tally
           insert: (payload: Record<string, unknown>) => {
             flowRunInserts.push(payload);
             return reentryChain(() =>
               Promise.resolve({ data: { id: "run-new", ...payload }, error: null }),
             );
           },
-          update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+          update: () =>
+            reentryChain(() => Promise.resolve({ data: [{ id: "run-1" }], error: null })),
         };
       }
       if (table === "conversations") {
@@ -731,20 +800,54 @@ function makeReentryOverrideFakeDb(opts: {
         return reentryChain(() => Promise.resolve({ data: opts.flowNodes, error: null }));
       }
       if (table === "flow_run_events") {
-        return { insert: () => Promise.resolve({ error: null }) };
+        return {
+          insert: (payload: Record<string, unknown>) => {
+            flowRunEventInserts.push(payload);
+            return Promise.resolve({ error: null });
+          },
+          // wasHandedOffRecently's read — see its own doc comment.
+          ...reentryChain(() =>
+            Promise.resolve({
+              data: opts.recentHandoffExists ? [{ id: "evt-recent-handoff" }] : [],
+              error: null,
+            }),
+          ),
+        };
+      }
+      if (table === "flow_contact_state") {
+        const stateData = opts.contactState
+          ? {
+              known_vars: opts.contactState.known_vars ?? {},
+              selected_options: opts.contactState.selected_options ?? {},
+            }
+          : null;
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: () => Promise.resolve({ data: stateData, error: null }) }),
+              maybeSingle: () => Promise.resolve({ data: stateData, error: null }),
+            }),
+          }),
+        };
       }
       if (table === "messages") {
         return {
           select: () => ({
-            eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
+            eq: () => ({
+              eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
           }),
         };
       }
       throw new Error(`unexpected table in reentry-override test: ${table}`);
     },
-    rpc: () => Promise.resolve({ data: null, error: null }),
+    rpc: (name: string, args: unknown) => {
+      rpcCalls.push({ name, args });
+      return Promise.resolve({ data: null, error: null });
+    },
   };
-  return { db, conversationUpdates, flowRunInserts };
+  return { db, conversationUpdates, flowRunInserts, flowRunEventInserts, rpcCalls };
 }
 
 const FAQ_FLOW_ENDING_IMMEDIATELY: Partial<FlowRow> = {
@@ -768,12 +871,13 @@ function reentryInput(text: string) {
   };
 }
 
-describe("dispatchInboundToFlows — reentry override on a stranded pending conversation", () => {
-  it("'menú' restarts the flow when pending with nobody assigned — clearing status and ai_autoreply_disabled", async () => {
+describe("dispatchInboundToFlows — pending-but-unclaimed no longer blocks entry triggers", () => {
+  it("'menú' restarts the flow when pending with nobody assigned — and resets the conversation off 'pending'", async () => {
     const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
-      conversationGate: { status: "pending", assigned_agent_id: null },
+      conversationGate: { assigned_agent_id: null },
       flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
       flowNodes: [END_NODE],
+      priorRunCount: 1, // this contact has run this flow before — a reentry
     });
     adminDbHolder.current = db;
 
@@ -781,14 +885,18 @@ describe("dispatchInboundToFlows — reentry override on a stranded pending conv
 
     expect(result.consumed).toBe(true);
     expect(flowRunInserts).toHaveLength(1);
+    // insertAndAdvanceRun resets the conversation off any stale
+    // pending/disabled state left over from the prior handoff.
     expect(
       conversationUpdates.some((u) => u.status === "open" && u.ai_autoreply_disabled === false),
     ).toBe(true);
+    // vars.is_reentry drives reentry_text — see SendListNodeConfig.
+    expect(flowRunInserts[0].vars).toEqual({ is_reentry: true });
   });
 
   it("does NOT restart when an agent has actually claimed the thread, even for 'menú'", async () => {
     const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
-      conversationGate: { status: "pending", assigned_agent_id: "agent-1" },
+      conversationGate: { assigned_agent_id: "agent-1" },
       flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
       flowNodes: [END_NODE],
     });
@@ -803,7 +911,7 @@ describe("dispatchInboundToFlows — reentry override on a stranded pending conv
 
   it("a genuinely unrelated message does not restart the flow, and leaves the conversation untouched", async () => {
     const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
-      conversationGate: { status: "pending", assigned_agent_id: null },
+      conversationGate: { assigned_agent_id: null },
       flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
       flowNodes: [END_NODE],
     });
@@ -814,6 +922,388 @@ describe("dispatchInboundToFlows — reentry override on a stranded pending conv
     expect(result).toEqual({ consumed: false, outcome: "no_match" });
     expect(flowRunInserts).toHaveLength(0);
     expect(conversationUpdates).toHaveLength(0);
+  });
+});
+
+describe("dispatchInboundToFlows — orphaned interactive tap with no active run (stale/scrolled-up button)", () => {
+  function tapInput(replyId: string) {
+    return {
+      accountId: "acct-1",
+      userId: "user-1",
+      contactId: "contact-1",
+      conversationId: "conv-1",
+      message: {
+        kind: "interactive_reply" as const,
+        reply_id: replyId,
+        reply_title: "X",
+        meta_message_id: "wamid.tap",
+      },
+      isFirstInboundMessage: false,
+    };
+  }
+
+  it("sends the already-handled notice and hands off, instead of falling through to the general assistant", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+      contactState: { selected_options: { topics: ["catalog", "quote_inox"] } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(tapInput("catalog"));
+
+    expect(result).toEqual({ consumed: true, outcome: "already_selected_notice" });
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Ya te habíamos compartido"),
+      }),
+    );
+    expect(
+      conversationUpdates.some(
+        (u) => u.status === "pending" && u.ai_autoreply_disabled === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("a tap that doesn't match any recorded selected_options still gets a visible, honest reply instead of total silence — never falls through to no_match", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+      contactState: { selected_options: { topics: ["catalog"] } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(tapInput("quote_inox"));
+
+    expect(result).toEqual({ consumed: true, outcome: "stale_interactive_notice" });
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Ya tenemos tus datos"),
+      }),
+    );
+    expect(
+      conversationUpdates.some(
+        (u) => u.status === "pending" && u.ai_autoreply_disabled === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("a contact with no flow_contact_state row at all still gets a reply (never throws, never silent)", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+      // no contactState passed — fakeDb returns a null row, same as a real miss
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(tapInput("catalog"));
+
+    expect(result).toEqual({ consumed: true, outcome: "stale_interactive_notice" });
+    expect(engineSendText).toHaveBeenCalled();
+  });
+
+  it("an agent-owned conversation is left alone even for a re-tap of an already-handled option", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: "agent-1" },
+      flows: [],
+      flowNodes: [],
+      contactState: { selected_options: { topics: ["catalog"] } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(tapInput("catalog"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(engineSendText).not.toHaveBeenCalled();
+  });
+});
+
+describe("send_list / send_buttons — reentry_text (skip the welcome banner on a re-trigger)", () => {
+  // reentry_keywords is what's actually deployed today (see the "menú"
+  // reentry work) — trigger_type stays first_inbound_message so the
+  // "first ever" test below matches the same way FAQ bot really does.
+  const FLOW_WITH_TOPICS: Partial<FlowRow> = {
+    id: "flow-faq",
+    account_id: "acct-1",
+    status: "active",
+    trigger_type: "first_inbound_message",
+    trigger_config: { reentry_keywords: ["menu", "menú"] },
+    entry_node_id: "topics",
+  };
+  const TOPICS_LIST_NODE: Partial<FlowNodeRow> = {
+    node_key: "topics",
+    node_type: "send_list",
+    config: {
+      text: "—x9 ¡Bienvenido a Sagama Inox!",
+      reentry_text: "Estas son las opciones disponibles —x!",
+      button_label: "Ver opciones",
+      sections: [{ rows: [{ reply_id: "a", title: "A" }] }],
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({
+      whatsapp_message_id: "wamid.list",
+    } as never);
+  });
+
+  it("first-ever run (no prior runs of this flow): uses the full welcome text, not reentry_text", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TOPICS_LIST_NODE],
+      priorRunCount: 0,
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows({ ...reentryInput("Hola"), isFirstInboundMessage: true });
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyText: "—x9 ¡Bienvenido a Sagama Inox!" }),
+    );
+  });
+
+  it("a reentry via 'menú' (this contact already ran this flow before): uses reentry_text instead", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TOPICS_LIST_NODE],
+      priorRunCount: 1,
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyText: "Estas son las opciones disponibles —x!" }),
+    );
+  });
+
+  it("a reentry with no reentry_text configured falls back to the normal text, unchanged", async () => {
+    const nodeWithoutReentryText: Partial<FlowNodeRow> = {
+      ...TOPICS_LIST_NODE,
+      config: { ...(TOPICS_LIST_NODE.config as object), reentry_text: undefined },
+    };
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [nodeWithoutReentryText],
+      priorRunCount: 1,
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyText: "—x9 ¡Bienvenido a Sagama Inox!" }),
+    );
+  });
+});
+
+describe("send_list — flow_contact_state option exclusion (never show the same option twice)", () => {
+  const FLOW_WITH_TOPICS: Partial<FlowRow> = {
+    id: "flow-faq",
+    account_id: "acct-1",
+    status: "active",
+    trigger_type: "first_inbound_message",
+    trigger_config: { reentry_keywords: ["menu", "menú"] },
+    entry_node_id: "topics",
+  };
+  const TWO_OPTION_LIST_NODE: Partial<FlowNodeRow> = {
+    node_key: "topics",
+    node_type: "send_list",
+    config: {
+      text: "—x9 ¡Bienvenido!",
+      reentry_text: "Seguí explorando —x!",
+      button_label: "Ver opciones",
+      all_selected_node_key: "human_handoff",
+      sections: [
+        {
+          rows: [
+            { reply_id: "catalog", title: "Catálogo", next_node_key: "answer_catalog" },
+            { reply_id: "location", title: "Ubicación", next_node_key: "answer_location" },
+          ],
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({
+      whatsapp_message_id: "wamid.list",
+    } as never);
+  });
+
+  it("excludes an option this contact already picked in a prior run", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TWO_OPTION_LIST_NODE],
+      priorRunCount: 1,
+      contactState: { selected_options: { topics: ["catalog"] } },
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sections: [{ title: undefined, rows: [{ id: "location", title: "Ubicación", description: undefined }] }],
+      }),
+    );
+  });
+
+  it("redirects to all_selected_node_key instead of sending anything once every option is gone — and the handoff node itself still sends a real, visible message the first time", async () => {
+    const humanHandoffNode: Partial<FlowNodeRow> = {
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: {},
+    };
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
+      priorRunCount: 1,
+      contactState: { selected_options: { topics: ["catalog", "location"] } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("handed_off");
+    // The customer never saw the exhausted menu, but must still get a
+    // real, visible acknowledgment from the handoff node itself — not
+    // total silence. No recent handoff logged yet, so this is not a
+    // duplicate.
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Gracias, un asesor va a continuar tu consulta en breve." }),
+    );
+  });
+
+  it("a SECOND menu-exhausted handoff within the cooldown window skips the repeated customer message, but still leaves the conversation correctly pending, and still logs it", async () => {
+    const humanHandoffNode: Partial<FlowNodeRow> = {
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: {},
+    };
+    const { db, conversationUpdates, flowRunEventInserts } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
+      priorRunCount: 1,
+      contactState: { selected_options: { topics: ["catalog", "location"] } },
+      // Simulates the exact real-world sequence: this contact already
+      // has a `handoff` flow_run_event logged moments ago from an
+      // earlier run — e.g. they already tapped "hablar con un asesor"
+      // and just sent another message (any reentry-triggering text)
+      // while still queued for a human.
+      recentHandoffExists: true,
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(result.outcome).toBe("handed_off");
+    // No duplicate "Gracias, un asesor..." spam on this repeat.
+    expect(mockSendText).not.toHaveBeenCalled();
+    // The conversation still ends up back in the correct pending state
+    // (a NEW run unconditionally resets it to "open" at the very start
+    // — see insertAndAdvanceRun's own comment — so this must still run
+    // even on a duplicate, or the conversation would wrongly get stuck
+    // "open" with AI auto-reply re-enabled).
+    expect(
+      conversationUpdates.some((u) => u.status === "pending" && u.ai_autoreply_disabled === true),
+    ).toBe(true);
+    // Still auditable — just flagged, not silently dropped.
+    expect(
+      flowRunEventInserts.some(
+        (e) => e.event_type === "handoff" && e.payload && (e.payload as { duplicate?: boolean }).duplicate === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("with no all_selected_node_key configured, falls back to showing everything rather than sending nothing", async () => {
+    const nodeNoRedirect: Partial<FlowNodeRow> = {
+      ...TWO_OPTION_LIST_NODE,
+      config: { ...(TWO_OPTION_LIST_NODE.config as object), all_selected_node_key: undefined },
+    };
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [nodeNoRedirect],
+      priorRunCount: 1,
+      contactState: { selected_options: { topics: ["catalog", "location"] } },
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sections: [
+          {
+            title: undefined,
+            rows: [
+              { id: "catalog", title: "Catálogo", description: undefined },
+              { id: "location", title: "Ubicación", description: undefined },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+});
+
+describe("collect_input — skips a question already answered in a prior run (flow_contact_state.known_vars)", () => {
+  const FLOW_WITH_COLLECT_INPUT: Partial<FlowRow> = {
+    id: "flow-manual",
+    account_id: "acct-1",
+    status: "active",
+    trigger_type: "first_inbound_message",
+    trigger_config: { reentry_keywords: ["menu", "menú"] },
+    entry_node_id: "ask_ciudad",
+  };
+  const ASK_CIUDAD: Partial<FlowNodeRow> = {
+    node_key: "ask_ciudad",
+    node_type: "collect_input",
+    config: { prompt_text: "¿Cuál es tu ciudad?", var_key: "ciudad", next_node_key: "end" },
+  };
+  const END_NODE_2: Partial<FlowNodeRow> = { node_key: "end", node_type: "end", config: {} };
+
+  it("already known: skips straight to next_node_key, never sends the prompt", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_COLLECT_INPUT],
+      flowNodes: [ASK_CIUDAD, END_NODE_2],
+      priorRunCount: 1,
+      contactState: { known_vars: { ciudad: "Lima" } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(mockSendText).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("completed");
+  });
+
+  it("not known yet: sends the prompt normally", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_COLLECT_INPUT],
+      flowNodes: [ASK_CIUDAD, END_NODE_2],
+      priorRunCount: 0,
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows({ ...reentryInput("Hola"), isFirstInboundMessage: true });
+
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¿Cuál es tu ciudad?" }),
+    );
   });
 });
 
@@ -992,7 +1482,7 @@ describe("decideCollectAiOutcome", () => {
   });
 });
 
-describe("shouldSendCollectAiNudge", () => {
+describe("shouldSendInactivityNudge", () => {
   const BASE = {
     ageMinutes: 65,
     nudgeAfterMinutes: 60,
@@ -1002,22 +1492,22 @@ describe("shouldSendCollectAiNudge", () => {
   };
 
   it("true once ageMinutes reaches nudgeAfterMinutes, with no prior nudge", () => {
-    expect(shouldSendCollectAiNudge(BASE)).toBe(true);
+    expect(shouldSendInactivityNudge(BASE)).toBe(true);
   });
 
   it("false before the threshold", () => {
-    expect(shouldSendCollectAiNudge({ ...BASE, ageMinutes: 59 })).toBe(false);
+    expect(shouldSendInactivityNudge({ ...BASE, ageMinutes: 59 })).toBe(false);
   });
 
   it("optedOut short-circuits to false regardless of everything else", () => {
     expect(
-      shouldSendCollectAiNudge({ ...BASE, ageMinutes: 999, optedOut: true }),
+      shouldSendInactivityNudge({ ...BASE, ageMinutes: 999, optedOut: true }),
     ).toBe(false);
   });
 
   it("false when a nudge was already sent for THIS silence period (nudge is after last_advanced_at)", () => {
     expect(
-      shouldSendCollectAiNudge({
+      shouldSendInactivityNudge({
         ...BASE,
         lastNudgeSentAt: "2026-01-01T10:30:00Z", // after lastAdvancedAt (10:00)
       }),
@@ -1026,7 +1516,7 @@ describe("shouldSendCollectAiNudge", () => {
 
   it("true again once last_advanced_at moves past the old nudge — a reply resets eligibility with no explicit reset write", () => {
     expect(
-      shouldSendCollectAiNudge({
+      shouldSendInactivityNudge({
         ...BASE,
         lastNudgeSentAt: "2026-01-01T09:00:00Z", // BEFORE lastAdvancedAt (10:00) — stale
         lastAdvancedAt: "2026-01-01T10:00:00Z",
@@ -1037,7 +1527,7 @@ describe("shouldSendCollectAiNudge", () => {
 
   it("a nudge sent exactly at last_advanced_at does not count as covering this period (strict >)", () => {
     expect(
-      shouldSendCollectAiNudge({
+      shouldSendInactivityNudge({
         ...BASE,
         lastNudgeSentAt: BASE.lastAdvancedAt,
       }),
@@ -1135,10 +1625,21 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
  * `advanceSucceeds: false` simulates losing the optimistic-concurrency
  * race.
  */
-function makeFakeDb(opts: { advanceSucceeds?: boolean } = {}) {
+function makeFakeDb(
+  opts: {
+    advanceSucceeds?: boolean;
+    replyReceivedDuplicate?: boolean;
+    replyReceivedError?: string;
+    /** Makes `wasHandedOffRecently` resolve true — simulates a
+     *  `flow_run_events` "handoff" row already logged for this
+     *  conversation within the cooldown window. */
+    recentHandoffExists?: boolean;
+  } = {},
+) {
   const advanceSucceeds = opts.advanceSucceeds ?? true;
   const updates: { table: string; payload: Record<string, unknown> }[] = [];
   const inserts: { table: string; payload: Record<string, unknown> }[] = [];
+  const rpcCalls: { name: string; args: unknown }[] = [];
 
   function from(table: string) {
     let mode: "update" | "select" | null = null;
@@ -1151,6 +1652,17 @@ function makeFakeDb(opts: { advanceSucceeds?: boolean } = {}) {
       },
       insert(payload: Record<string, unknown>) {
         inserts.push({ table, payload });
+        const isReplyReceived =
+          table === "flow_run_events" &&
+          (payload as { event_type?: string }).event_type === "reply_received";
+        if (isReplyReceived && opts.replyReceivedDuplicate) {
+          return Promise.resolve({
+            error: { message: "duplicate key value violates unique constraint (23505)" },
+          });
+        }
+        if (isReplyReceived && opts.replyReceivedError) {
+          return Promise.resolve({ error: { message: opts.replyReceivedError } });
+        }
         return Promise.resolve({ error: null });
       },
       select() {
@@ -1161,6 +1673,9 @@ function makeFakeDb(opts: { advanceSucceeds?: boolean } = {}) {
         return chain;
       },
       is() {
+        return chain;
+      },
+      gte() {
         return chain;
       },
       order() {
@@ -1175,6 +1690,13 @@ function makeFakeDb(opts: { advanceSucceeds?: boolean } = {}) {
       then(resolve: (v: { data: unknown; error: null }) => void) {
         if (mode === "update" && selected) {
           resolve({ data: advanceSucceeds ? [{ id: "run-1" }] : [], error: null });
+        } else if (
+          table === "flow_run_events" &&
+          mode === null &&
+          selected &&
+          opts.recentHandoffExists
+        ) {
+          resolve({ data: [{ id: "evt-recent-handoff" }], error: null });
         } else {
           resolve({ data: null, error: null });
         }
@@ -1183,7 +1705,18 @@ function makeFakeDb(opts: { advanceSucceeds?: boolean } = {}) {
     return chain;
   }
 
-  return { db: { from } as never, updates, inserts };
+  return {
+    db: {
+      from,
+      rpc: (name: string, args: unknown) => {
+        rpcCalls.push({ name, args });
+        return Promise.resolve({ data: null, error: null });
+      },
+    } as never,
+    updates,
+    inserts,
+    rpcCalls,
+  };
 }
 
 const mockExtract = vi.mocked(extractWithReply);
@@ -1419,6 +1952,45 @@ describe("handleCollectAiReply", () => {
         text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
         aiGenerated: false,
       }),
+    );
+  });
+
+  it("a provider failure within the handoff cooldown skips the repeated handoff_fallback_text, but the conversation still ends up pending", async () => {
+    const { db, updates } = makeFakeDb({ recentHandoffExists: true });
+    const run = makeRun();
+    const node = makeNode({
+      config: collectAiConfig({
+        handoff_fallback_text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
+      }),
+    });
+    mockExtract.mockRejectedValue(new Error("timeout"));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map());
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    expect(mockSendText).not.toHaveBeenCalled();
+    // Still ends up pending/disabled — see executeHandoff's note on why
+    // this write can't be skipped just because the message was.
+    expect(
+      updates.some((u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true),
+    ).toBe(true);
+  });
+
+  it("a provider failure with handoff_node_key configured always sends its message, even within the handoff cooldown — it's advancing to a different node, not repeating a terminal handoff", async () => {
+    const { db } = makeFakeDb({ recentHandoffExists: true });
+    const run = makeRun();
+    const node = makeNode({
+      config: collectAiConfig({
+        handoff_fallback_text: "Un asesor te va a contactar en breve.",
+        handoff_node_key: "other_node",
+      }),
+    });
+    mockExtract.mockRejectedValue(new Error("timeout"));
+
+    await handleCollectAiReply(db, run, node, new Map([["other_node", makeNode({ node_key: "other_node", node_type: "end", config: {} })]]));
+
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Un asesor te va a contactar en breve." }),
     );
   });
 
@@ -1909,6 +2481,169 @@ describe("runCollectAiTurn — includeImages wiring", () => {
   });
 });
 
+describe("handleReplyForActiveRun — claimReplyReceived atomic duplicate guard", () => {
+  it("a concurrent/duplicate delivery (unique_violation on the reply_received insert) stops immediately — no capture, no advance, no send", async () => {
+    const { db, updates } = makeFakeDb({ replyReceivedDuplicate: true });
+    const run = makeRun({ current_node_key: "topics" });
+    const node = makeNode({
+      node_key: "topics",
+      node_type: "collect_input",
+      config: { prompt_text: "¿Cuál es tu ciudad?", var_key: "ciudad", next_node_key: "end" },
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "Lima", meta_message_id: "wamid.dup" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result).toEqual({
+      consumed: true,
+      flow_run_id: run.id,
+      outcome: "duplicate_inbound_ignored",
+    });
+    expect(mockSendText).not.toHaveBeenCalled();
+    // Never even attempted to capture "Lima" into vars.ciudad.
+    expect(updates.some((u) => u.table === "flow_runs" && "vars" in u.payload)).toBe(false);
+  });
+
+  it("a non-uniqueness insert error fails OPEN (treated as claimed) rather than silently dropping the reply", async () => {
+    const { db } = makeFakeDb({ replyReceivedError: "connection reset" });
+    const run = makeRun({ current_node_key: "topics" });
+    const node = makeNode({
+      node_key: "topics",
+      node_type: "collect_input",
+      config: { prompt_text: "¿Cuál es tu ciudad?", var_key: "ciudad", next_node_key: "end" },
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "Lima", meta_message_id: "wamid.infra-error" },
+      new Map([["topics", node], ["end", makeNode({ node_key: "end", node_type: "end", config: {} })]]),
+    );
+
+    expect(result.outcome).not.toBe("duplicate_inbound_ignored");
+    errorSpy.mockRestore();
+  });
+});
+
+describe("handleReplyForActiveRun — collect_input validation", () => {
+  const PHONE_NODE_CONFIG = {
+    prompt_text: "No tenemos tu número — ¿nos lo compartes?",
+    var_key: "telefono_contacto",
+    validation: "phone" as const,
+    next_node_key: "end",
+  };
+
+  it("an invalid phone reply is NOT captured — reprompts with the default validation message instead of the original prompt_text", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "ask_phone", reprompt_count: 0 });
+    const node = makeNode({
+      node_key: "ask_phone",
+      node_type: "collect_input",
+      config: PHONE_NODE_CONFIG,
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "987", meta_message_id: "wamid.badphone" },
+      new Map([["ask_phone", node]]),
+    );
+
+    expect(result.outcome).toBe("fallback_fired");
+    expect(updates.some((u) => u.table === "flow_runs" && "vars" in u.payload)).toBe(false);
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Ese número no parece válido. ¿Podrías escribirlo nuevamente? Debe tener 9 dígitos, por ejemplo: 987654321.",
+      }),
+    );
+  });
+
+  it("a node-specific validation_error_text overrides the built-in default", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "ask_phone", reprompt_count: 0 });
+    const node = makeNode({
+      node_key: "ask_phone",
+      node_type: "collect_input",
+      config: {
+        ...PHONE_NODE_CONFIG,
+        validation_error_text: "Necesitamos un número de 9 dígitos para poder llamarte.",
+      },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "no tengo", meta_message_id: "wamid.badphone2" },
+      new Map([["ask_phone", node]]),
+    );
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Necesitamos un número de 9 dígitos para poder llamarte.",
+      }),
+    );
+  });
+
+  it("a valid phone (with spaces as separators) IS captured and advances", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "ask_phone", reprompt_count: 1 });
+    const node = makeNode({
+      node_key: "ask_phone",
+      node_type: "collect_input",
+      config: PHONE_NODE_CONFIG,
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "987 654 321", meta_message_id: "wamid.goodphone" },
+      new Map([
+        ["ask_phone", node],
+        ["end", makeNode({ node_key: "end", node_type: "end", config: {} })],
+      ]),
+    );
+
+    expect(result.outcome).not.toBe("fallback_fired");
+    expect(
+      updates.some(
+        (u) =>
+          u.table === "flow_runs" &&
+          (u.payload.vars as Record<string, unknown> | undefined)?.telefono_contacto ===
+            "987 654 321",
+      ),
+    ).toBe(true);
+  });
+
+  it("repeated invalid phone replies exhaust fallback_policy's max_reprompts and hand off, same as any other node", async () => {
+    const { db } = makeFakeDb();
+    // DEFAULT_FALLBACK_POLICY.max_reprompts is 2 — reprompt_count
+    // already at 2 means this invalid reply is the 3rd, exhausting it.
+    const run = makeRun({ current_node_key: "ask_phone", reprompt_count: 2 });
+    const node = makeNode({
+      node_key: "ask_phone",
+      node_type: "collect_input",
+      config: PHONE_NODE_CONFIG,
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "abc", meta_message_id: "wamid.badphone-exhaust" },
+      new Map([["ask_phone", node]]),
+    );
+
+    expect(result.outcome).toBe("handed_off");
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Gracias, un asesor va a continuar tu consulta en breve." }),
+    );
+  });
+});
+
 describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () => {
   beforeEach(() => {
     vi.mocked(engineSendInteractiveList).mockResolvedValue({
@@ -1957,6 +2692,8 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
   });
 
   it("an escalation keyword still wins over the release flag — 'asesor' still hands off, never released", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
     const { db, updates } = makeFakeDb();
     const run = makeRun({ current_node_key: "topics" });
     const node = topicsNode({ release_unmatched_text_to_assistant: true });
@@ -1972,6 +2709,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
       { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.2" },
       new Map([["topics", node], ["human_handoff", handoffNode]]),
     );
+    vi.useRealTimers();
 
     expect(result.consumed).toBe(true);
     expect(result.outcome).not.toBe("released_to_assistant");
@@ -1997,6 +2735,8 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
   });
 
   it("a handoff node's configured customer_message is sent instead of the default", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
     const { db } = makeFakeDb();
     const run = makeRun({ current_node_key: "topics" });
     const node = topicsNode({ release_unmatched_text_to_assistant: true });
@@ -2012,9 +2752,66 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
       { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.custom-msg" },
       new Map([["topics", node], ["human_handoff", handoffNode]]),
     );
+    vi.useRealTimers();
 
     expect(engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({ text: "Ya te derivo con un asesor, ¡gracias!" }),
+    );
+  });
+
+  it("outside business hours, a handoff node falls back to the after-hours default even with no config for it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: { customer_message: "Un asesor te va a contactar ahora mismo." },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.after-hours" },
+      new Map([["topics", node], ["human_handoff", handoffNode]]),
+    );
+    vi.useRealTimers();
+
+    // customer_message is for business hours — after hours wins over it.
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Gracias por escribirnos. En este momento estamos fuera de nuestro horario de atención — un asesor se pondrá en contacto contigo apenas estemos disponibles nuevamente.",
+      }),
+    );
+  });
+
+  it("a handoff node's configured customer_message_after_hours wins outside business hours", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: {
+        customer_message: "Un asesor te va a contactar ahora mismo.",
+        customer_message_after_hours: "Estamos fuera de horario — te escribimos mañana.",
+      },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.after-hours-2" },
+      new Map([["topics", node], ["human_handoff", handoffNode]]),
+    );
+    vi.useRealTimers();
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Estamos fuera de horario — te escribimos mañana." }),
     );
   });
 
@@ -2039,7 +2836,58 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     ).toBe(false);
   });
 
+  it("outside business hours, the reprompt hint uses reprompt_hint_text_after_hours instead of the normal one — customer keeps navigating, no dead end", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 0 });
+    const node = topicsNode({
+      reprompt_hint_text: "No entendí tu mensaje — elegí una opción del menú.",
+      reprompt_hint_text_after_hours:
+        "Estamos fuera de horario, pero mientras tanto podés seguir navegando las opciones —x!",
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "precio de la cocina", meta_message_id: "wamid.after-hours-reprompt" },
+      new Map([["topics", node]]),
+    );
+    vi.useRealTimers();
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Estamos fuera de horario, pero mientras tanto podés seguir navegando las opciones —x!",
+      }),
+    );
+  });
+
+  it("within business hours, the normal reprompt_hint_text is used even when an after-hours variant is configured", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 0 });
+    const node = topicsNode({
+      reprompt_hint_text: "No entendí tu mensaje — elegí una opción del menú.",
+      reprompt_hint_text_after_hours: "Estamos fuera de horario...",
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "precio de la cocina", meta_message_id: "wamid.in-hours-reprompt" },
+      new Map([["topics", node]]),
+    );
+    vi.useRealTimers();
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "No entendí tu mensaje — elegí una opción del menú." }),
+    );
+  });
+
   it("fallback_policy exhaustion (on_exhaust: 'handoff') sends a closing message before handing off — regression guard, this used to be silent", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
     const { db, updates } = makeFakeDb();
     // DEFAULT_FALLBACK_POLICY (loadFlow resolves to null in this fake,
     // so resolveFallbackPolicy fills in the default: max_reprompts 2,
@@ -2054,6 +2902,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
       { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust" },
       new Map([["topics", node]]),
     );
+    vi.useRealTimers();
 
     expect(result.outcome).toBe("handed_off");
     expect(engineSendText).toHaveBeenCalledWith(
@@ -2064,6 +2913,60 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     expect(
       updates.some((u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true),
     ).toBe(true);
+  });
+
+  it("fallback_policy exhaustion within the handoff cooldown skips the repeated closing message, but the conversation still ends up pending", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+    const { db, updates, inserts } = makeFakeDb({ recentHandoffExists: true });
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 2 });
+    const node = topicsNode();
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust-dup" },
+      new Map([["topics", node]]),
+    );
+    vi.useRealTimers();
+
+    expect(result.outcome).toBe("handed_off");
+    expect(engineSendText).not.toHaveBeenCalled();
+    // Still ends up pending/disabled — see executeHandoff's note on why
+    // this write can't be skipped just because the message was.
+    expect(
+      updates.some((u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true),
+    ).toBe(true);
+    expect(
+      inserts.some(
+        (i) =>
+          i.table === "flow_run_events" &&
+          i.payload.event_type === "handoff" &&
+          (i.payload.payload as { duplicate?: boolean } | undefined)?.duplicate === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("fallback_policy exhaustion outside business hours sends the after-hours default instead", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics", reprompt_count: 2 });
+    const node = topicsNode();
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust-after-hours" },
+      new Map([["topics", node]]),
+    );
+    vi.useRealTimers();
+
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Gracias por escribirnos. En este momento estamos fuera de nuestro horario de atención — un asesor se pondrá en contacto contigo apenas estemos disponibles nuevamente.",
+      }),
+    );
   });
 
   it("flag on: genuinely unmatched text ends the run and releases to the general assistant", async () => {
@@ -2092,3 +2995,224 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     });
   });
 });
+
+describe("handleReplyForActiveRun — text_routes", () => {
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({
+      whatsapp_message_id: "wamid.list",
+    } as never);
+  });
+
+  function topicsNode(configOverrides: Record<string, unknown> = {}): FlowNodeRow {
+    return makeNode({
+      node_key: "topics",
+      node_type: "send_list",
+      config: {
+        text: "¿En qué te ayudamos?",
+        button_label: "Ver opciones",
+        sections: [
+          {
+            title: "Menú",
+            rows: [{ reply_id: "precios", title: "Precios", next_node_key: "precios_node" }],
+          },
+        ],
+        unmatched_text_keywords: ["asesor", "humano"],
+        handoff_node_key: "human_handoff",
+        text_routes: [
+          { keywords: ["precio", "cotizar", "cotización", "cuanto cuesta"], node_key: "collect_inox_quote" },
+        ],
+        ...configOverrides,
+      },
+    });
+  }
+
+  it("routes free text naming a price/quote keyword straight to the configured node, bypassing fallback_policy entirely", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode();
+    const quoteNode = makeNode({ node_key: "collect_inox_quote", node_type: "end", config: {} });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "hola, cuánto cuesta una cocina industrial?", meta_message_id: "wamid.route-1" },
+      new Map([["topics", node], ["collect_inox_quote", quoteNode]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(result.outcome).not.toBe("released_to_assistant");
+    expect(result.outcome).not.toBe("fallback_fired");
+  });
+
+  it("matches even without accents ('cotizacion' vs configured 'cotización')", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode();
+    const quoteNode = makeNode({ node_key: "collect_inox_quote", node_type: "end", config: {} });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero una cotizacion", meta_message_id: "wamid.route-2" },
+      new Map([["topics", node], ["collect_inox_quote", quoteNode]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(result.outcome).not.toBe("released_to_assistant");
+    expect(result.outcome).not.toBe("fallback_fired");
+  });
+
+  it("the escalation keyword ('asesor') still wins over a text_routes match when both are present in the message", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode();
+    const handoffNode = makeNode({ node_key: "human_handoff", node_type: "handoff", config: {} });
+    const quoteNode = makeNode({ node_key: "collect_inox_quote", node_type: "end", config: {} });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      {
+        kind: "text",
+        text: "quiero hablar con un asesor sobre el precio",
+        meta_message_id: "wamid.route-3",
+      },
+      new Map([["topics", node], ["human_handoff", handoffNode], ["collect_inox_quote", quoteNode]]),
+    );
+    vi.useRealTimers();
+
+    expect(result.outcome).toBe("handed_off");
+  });
+
+  it("a route match wins over release_unmatched_text_to_assistant", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ release_unmatched_text_to_assistant: true });
+    const quoteNode = makeNode({ node_key: "collect_inox_quote", node_type: "end", config: {} });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "precio porfa", meta_message_id: "wamid.route-4" },
+      new Map([["topics", node], ["collect_inox_quote", quoteNode]]),
+    );
+
+    expect(result.outcome).not.toBe("released_to_assistant");
+  });
+
+  it("text that matches no route and no escalation keyword still falls through to fallback_policy", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode();
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "¿tienen delivery a Arequipa?", meta_message_id: "wamid.route-5" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result.outcome).toBe("fallback_fired");
+  });
+
+  it("an empty text_routes array behaves exactly like it's unset", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({ text_routes: [] });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "precio porfa", meta_message_id: "wamid.route-6" },
+      new Map([["topics", node]]),
+    );
+
+    expect(result.outcome).toBe("fallback_fired");
+  });
+
+  it("also_marks_selected records the equivalent reply_id — typing 'catálogo' excludes the row exactly like tapping it would", async () => {
+    const { db, rpcCalls } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode({
+      text_routes: [
+        {
+          keywords: ["catalogo", "catálogo"],
+          node_key: "answer_catalog",
+          also_marks_selected: "catalog",
+        },
+      ],
+    });
+    const catalogNode = makeNode({ node_key: "answer_catalog", node_type: "end", config: {} });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "me pasas el catálogo?", meta_message_id: "wamid.route-7" },
+      new Map([["topics", node], ["answer_catalog", catalogNode]]),
+    );
+
+    expect(
+      rpcCalls.some(
+        (c) =>
+          c.name === "record_flow_option_selected" &&
+          (c.args as { p_node_key: string; p_reply_id: string }).p_node_key === "topics" &&
+          (c.args as { p_node_key: string; p_reply_id: string }).p_reply_id === "catalog",
+      ),
+    ).toBe(true);
+  });
+
+  it("a route with no also_marks_selected records nothing", async () => {
+    const { db, rpcCalls } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+    const node = topicsNode();
+    const quoteNode = makeNode({ node_key: "collect_inox_quote", node_type: "end", config: {} });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "precio porfa", meta_message_id: "wamid.route-8" },
+      new Map([["topics", node], ["collect_inox_quote", quoteNode]]),
+    );
+
+    expect(rpcCalls.some((c) => c.name === "record_flow_option_selected")).toBe(false);
+  });
+
+  it("a text_route to a handoff node with a captured var interpolates it into the agent-facing summary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({
+      current_node_key: "topics",
+      vars: { visita_dia: "sábado", visita_hora: "10am" },
+    });
+    const node = topicsNode({
+      text_routes: [{ keywords: ["visita"], node_key: "human_handoff" }],
+    });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: { note: "Quiere agendar visita para {{vars.visita_dia}} a las {{vars.visita_hora}}" },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero agendar una visita", meta_message_id: "wamid.route-9" },
+      new Map([["topics", node], ["human_handoff", handoffNode]]),
+    );
+    vi.useRealTimers();
+
+    expect(
+      updates.some(
+        (u) =>
+          u.table === "conversations" &&
+          typeof u.payload.ai_handoff_summary === "string" &&
+          u.payload.ai_handoff_summary.includes("sábado") &&
+          u.payload.ai_handoff_summary.includes("10am"),
+      ),
+    ).toBe(true);
+  });
+});
+

@@ -51,32 +51,112 @@ export interface SendMessageNodeConfig {
  *
  * `reprompt_hint_text`, separately, is sent as its own plain-text
  * message immediately before fallback_policy's "reprompt" action
- * resends this node's prompt (e.g. "¿Podés elegir una opción de la
+ * resends this node's prompt (e.g. "¿Puedes elegir una opción de la
  * lista de arriba?"). Optional; unset means the resend stays silent,
  * matching prior behavior.
  *
+ * `text_routes` handles free text that names a DIFFERENT destination
+ * than the escalation one above — e.g. "precio"/"cotizar" should jump
+ * straight to the quote-collecting node, not to `human_handoff` and
+ * not through a generic reprompt. Checked in array order, each entry
+ * independent of the others (own keyword list + own match_type,
+ * defaulting to "contains" same as `unmatched_text_keywords`); the
+ * first entry whose keywords match wins. Checked AFTER
+ * `unmatched_text_keywords` (so "quiero hablar con un asesor sobre el
+ * precio" still escalates to a human rather than being auto-routed)
+ * and BEFORE `release_unmatched_text_to_assistant` (so a configured
+ * route always wins over releasing to the general assistant). Optional
+ * — unset/empty means no effect, exactly as before this existed.
+ */
+export interface TextRoute {
+  keywords: string[];
+  match_type?: "exact" | "contains" | "word";
+  node_key: string;
+  /**
+   * The reply_id of the button/row on THIS SAME node that this route is
+   * standing in for — e.g. a "catálogo" text route stands in for the
+   * "Catálogo digital" list row. When set, a text match records this
+   * reply_id via `record_flow_option_selected` (flow_contact_state,
+   * migration 061) exactly as if the customer had tapped that row —
+   * so it's correctly excluded from this node's options next time
+   * (`sendButtonsAndSuspend`/`sendListAndSuspend`) regardless of
+   * whether the customer typed or tapped their way to it. Optional —
+   * unset means no option gets recorded, e.g. for a route that doesn't
+   * correspond to an existing visible option at all.
+   */
+  also_marks_selected?: string;
+}
+
+/**
  * `release_unmatched_text_to_assistant`, checked AFTER
- * `unmatched_text_keywords` (which always wins first — e.g. "asesor"
- * still escalates to `handoff_node_key` regardless of this flag): when
- * true, free text that matches neither a button/row nor an escalation
- * keyword ends the run and lets the webhook fall through to the
- * general auto-reply assistant with the SAME inbound message, instead
- * of applying the flow's `fallback_policy` (reprompt/handoff/ignore).
- * The run is ENDED (not left active) specifically so a later message
- * can match an entry trigger again (e.g. a future "menú" keyword flow)
- * — `dispatchInboundToFlows` never even looks at entry triggers while
- * an active run exists. Optional; unset means free text falls through
- * to fallback_policy exactly as before this existed.
+ * `unmatched_text_keywords` and `text_routes` (both always win first —
+ * e.g. "asesor" still escalates to `handoff_node_key`, and a configured
+ * `text_routes` match still wins, regardless of this flag): when true,
+ * free text that matches none of those ends the run and lets the
+ * webhook fall through to the general auto-reply assistant with the
+ * SAME inbound message, instead of applying the flow's `fallback_policy`
+ * (reprompt/handoff/ignore). The run is ENDED (not left active)
+ * specifically so a later message can match an entry trigger again
+ * (e.g. a future "menú" keyword flow) — `dispatchInboundToFlows` never
+ * even looks at entry triggers while an active run exists. Optional;
+ * unset means free text falls through to fallback_policy exactly as
+ * before this existed.
  */
 interface UnmatchedTextHandling {
   unmatched_text_keywords?: string[];
   handoff_node_key?: string;
+  /**
+   * Additional keyword → destination routes, checked after the
+   * escalation pair above and before `release_unmatched_text_to_assistant`
+   * — see the doc comment above `TextRoute` for full precedence.
+   */
+  text_routes?: TextRoute[];
   reprompt_hint_text?: string;
+  /**
+   * Overrides `reprompt_hint_text` outside business hours (see
+   * `isWithinBusinessHours`) — same precedence idea as
+   * HandoffNodeConfig.customer_message_after_hours: a customer typing
+   * off-script outside hours still gets to keep navigating the menu
+   * (the reprompt itself is unaffected — only this courtesy line
+   * changes), rather than being told "fuera de horario" as a dead end.
+   * Falls back to `reprompt_hint_text` when unset.
+   */
+  reprompt_hint_text_after_hours?: string;
   release_unmatched_text_to_assistant?: boolean;
+  /**
+   * Minutes of inactivity (measured from `flow_runs.last_advanced_at`)
+   * before the /api/flows/cron sweep sends `nudge_text` to nudge a
+   * customer who went quiet mid-menu.
+   *
+   * Unlike `CollectAiNodeConfig.nudge_after_minutes` (strictly opt-in),
+   * a `send_buttons` / `send_list` node is nudge-eligible BY DEFAULT:
+   * leaving this unset applies `DEFAULT_NUDGE_AFTER_MINUTES` (60,
+   * engine.ts) automatically, so a customer left staring at a menu
+   * always gets a reminder without anyone having to configure it.
+   * Set an explicit number of minutes to override the timing, or
+   * `0` to opt this node out of nudging entirely. Skipped regardless
+   * when the contact has `contacts.ai_nudge_opt_out` set.
+   */
+  nudge_after_minutes?: number;
+  /**
+   * Sent when the inactivity nudge fires. Optional — falls back to a
+   * built-in default (engine.ts's DEFAULT_NUDGE_TEXT) when
+   * `nudge_after_minutes` is set but this isn't.
+   */
+  nudge_text?: string;
 }
 
 export interface SendButtonsNodeConfig extends UnmatchedTextHandling {
   text: string;
+  /**
+   * Sent instead of `text` when `flow_runs.vars.is_reentry` is true —
+   * i.e. this contact has run this flow before (see `insertAndAdvanceRun`,
+   * engine.ts). Lets a "Bienvenido a..." style greeting only show the
+   * very first time, without repeating the full welcome framing on
+   * every later re-trigger. Optional — unset means `text` is always
+   * used, exactly as before this existed.
+   */
+  reentry_text?: string;
   /** Optional header / footer lines around the buttons. */
   header_text?: string;
   footer_text?: string;
@@ -89,10 +169,21 @@ export interface SendButtonsNodeConfig extends UnmatchedTextHandling {
     /** node_key the runner advances to when this button is tapped. */
     next_node_key: string;
   }>;
+  /**
+   * Where to advance instead of sending this node, once THIS contact
+   * has already picked every single button here in some prior turn
+   * (tracked per contact in `flow_contact_state`, migration 061 — see
+   * `sendButtonsAndSuspend`). Never sends an empty/all-hidden message.
+   * Unset means no filtering happens at all — every button always
+   * shows, exactly as before this existed.
+   */
+  all_selected_node_key?: string;
 }
 
 export interface SendListNodeConfig extends UnmatchedTextHandling {
   text: string;
+  /** Same purpose as SendButtonsNodeConfig.reentry_text — see there. */
+  reentry_text?: string;
   /** Label of the tap-to-expand button on the message bubble. */
   button_label: string;
   header_text?: string;
@@ -107,6 +198,9 @@ export interface SendListNodeConfig extends UnmatchedTextHandling {
       next_node_key: string;
     }>;
   }>;
+  /** Same purpose as SendButtonsNodeConfig.all_selected_node_key — see
+   *  there. Checked across every row in every section combined. */
+  all_selected_node_key?: string;
 }
 
 /**
@@ -153,16 +247,30 @@ export interface HandoffNodeConfig {
    * default when unset (never silent); see `executeHandoff` (engine.ts).
    */
   customer_message?: string;
+  /**
+   * Overrides `customer_message` outside business hours (see
+   * `isWithinBusinessHours`, lib/flows/business-hours.ts) — same
+   * precedence rule as CollectAiNodeConfig.handoff_fallback_text_after_hours:
+   * wins over everything else, including `customer_message`, because
+   * only a human (or the business-hours config) should decide
+   * time-sensitive wording. Falls back to a fixed default when unset.
+   */
+  customer_message_after_hours?: string;
 }
 
 /**
  * Captures the customer's next free-text reply into
  * `flow_runs.vars[var_key]`, then advances.
  *
- * v1.5 ships without runtime validation (`validation` is accepted on
- * the config for forward compat but ignored by the runner); the
- * builder still surfaces the field so users can author flows that
- * v2 will start enforcing.
+ * `validation` is enforced by the runner (see
+ * `isValidCollectInputValue`, engine.ts): a reply that fails it is
+ * treated exactly like an empty reply — no advance, no vars write —
+ * and falls through to the flow's normal `fallback_policy` (reprompt
+ * up to `max_reprompts`, then `on_exhaust`), with
+ * `validation_error_text` used instead of `prompt_text` for the
+ * reprompt so the customer gets a specific, more formal "that doesn't
+ * look right" message instead of just seeing the original question
+ * again verbatim.
  */
 export interface CollectInputNodeConfig {
   /** Prompt text sent to the customer before they reply. */
@@ -174,12 +282,31 @@ export interface CollectInputNodeConfig {
    */
   var_key: string;
   /**
-   * Reserved for v2. Accepted on the config but ignored by the v1.5
-   * runner — captures any non-empty text.
+   * Format the reply must match to be accepted. `"any"` (or unset)
+   * accepts any non-empty text — the original v1.5 behavior.
+   * `"phone"` requires exactly 9 digits, spaces allowed as visual
+   * separators ("987654321" or "987 654 321") — no country code, no
+   * dashes; matches how a WhatsApp Business number is written in Peru.
+   * `"email"` requires a plausible `x@y.z` shape. `"regex"` tests
+   * against `regex` below. See `isValidCollectInputValue` (engine.ts)
+   * for the exact rules.
    */
   validation?: "any" | "email" | "phone" | "regex";
-  /** Used only when `validation === 'regex'`. */
+  /** Used only when `validation === 'regex'`. A malformed pattern
+   *  fails OPEN (accepts the value) rather than blocking every reply
+   *  on this node over one bad config. */
   regex?: string;
+  /**
+   * Sent instead of `prompt_text` when the customer's reply fails
+   * `validation` — the more formal "that doesn't look like a valid
+   * [phone/email/...]" re-ask. Optional; falls back to a built-in
+   * default per `validation` type (engine.ts's
+   * `DEFAULT_PHONE_VALIDATION_ERROR_TEXT` and friends) when unset, so
+   * a node with `validation` set gets sane behavior without also
+   * configuring this. Ignored when `validation` is `"any"`/unset —
+   * nothing can fail that check.
+   */
+  validation_error_text?: string;
   /** Node to advance to after capture. */
   next_node_key: string;
 }
@@ -465,10 +592,10 @@ export interface FlowRunRow {
    *  reprompt_count — see that migration's comment for why they're
    *  separate counters. */
   ai_turn_count: number;
-  /** Last time /api/flows/cron sent a collect_ai inactivity nudge for
-   *  this run's current node (migration 048). Null = never nudged
-   *  (or nudged before the current silence period started — see
-   *  shouldSendCollectAiNudge). */
+  /** Last time /api/flows/cron sent an inactivity nudge for this run's
+   *  current node (migration 048) — collect_ai, send_buttons, or
+   *  send_list. Null = never nudged (or nudged before the current
+   *  silence period started — see shouldSendInactivityNudge). */
   last_nudge_sent_at: string | null;
   started_at: string;
   last_advanced_at: string;
@@ -582,6 +709,8 @@ export interface DispatchInboundResult {
     | "fallback_fired"
     | "duplicate_inbound_ignored"
     | "released_to_assistant"
+    | "already_selected_notice"
+    | "stale_interactive_notice"
     | "no_match";
 }
 

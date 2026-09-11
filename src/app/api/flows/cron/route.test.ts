@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   runAutoReplyNow: vi.fn().mockResolvedValue(undefined),
+  engineSendText: vi.fn().mockResolvedValue(undefined),
   state: {
     flowRuns: [] as Record<string, unknown>[],
     conversations: [] as {
@@ -22,6 +23,9 @@ const h = vi.hoisted(() => ({
       ai_debounce_until: string | null
     }[],
     whatsappConfigs: {} as Record<string, { user_id: string } | undefined>,
+    // Keyed by `${flow_id}:${node_key}`.
+    flowNodes: {} as Record<string, { node_type: string; config: Record<string, unknown> }>,
+    flowRunEvents: [] as Record<string, unknown>[],
   },
 }))
 
@@ -29,6 +33,33 @@ vi.mock('@/lib/ai/auto-reply', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai/auto-reply')>()
   return { ...actual, runAutoReplyNow: h.runAutoReplyNow }
 })
+
+vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
+
+/** Minimal chainable update() builder shared by the `flow_runs` mock —
+ *  supports both `.update(p).eq(...).eq(...).select(...)` (timeout
+ *  marking) and `.update(p).eq(...)` awaited directly with no
+ *  `.select()` (the nudge timestamp write) — see route.ts. */
+function flowRunsUpdateChain(payload: Record<string, unknown>) {
+  const filters: [string, unknown][] = []
+  function apply() {
+    const matched = h.state.flowRuns.filter((r) =>
+      filters.every(([col, val]) => r[col] === val),
+    )
+    for (const m of matched) Object.assign(m, payload)
+    return { data: matched.map((r) => ({ id: r.id })), error: null }
+  }
+  const chain = {
+    eq(col: string, val: unknown) {
+      filters.push([col, val])
+      return chain
+    },
+    select: () => Promise.resolve(apply()),
+    then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+      Promise.resolve(apply()).then(res, rej),
+  }
+  return chain
+}
 
 vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => ({
@@ -38,6 +69,30 @@ vi.mock('@/lib/flows/admin-client', () => ({
           select: () => ({
             eq: () => Promise.resolve({ data: h.state.flowRuns, error: null }),
           }),
+          update: (payload: Record<string, unknown>) => flowRunsUpdateChain(payload),
+        }
+      }
+      if (table === 'flow_nodes') {
+        return {
+          select: () => ({
+            eq: (_col1: string, flowId: string) => ({
+              eq: (_col2: string, nodeKey: string) => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: h.state.flowNodes[`${flowId}:${nodeKey}`] ?? null,
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        }
+      }
+      if (table === 'flow_run_events') {
+        return {
+          insert: (row: Record<string, unknown>) => {
+            h.state.flowRunEvents.push(row)
+            return Promise.resolve({ data: null, error: null })
+          },
         }
       }
       if (table === 'conversations') {
@@ -100,10 +155,34 @@ function secondsAgo(seconds: number): string {
 beforeEach(() => {
   process.env.AUTOMATION_CRON_SECRET = SECRET
   h.runAutoReplyNow.mockClear()
+  h.engineSendText.mockClear()
   h.state.flowRuns = []
   h.state.conversations = []
   h.state.whatsappConfigs = {}
+  h.state.flowNodes = {}
+  h.state.flowRunEvents = []
 })
+
+/** A `flow_runs` row shaped the way the cron route's active-run scan
+ *  returns it (nested `flows`/`contacts`), `last_advanced_at`
+ *  `ageMinutesAgo` minutes in the past — comfortably under the 24h
+ *  default timeout unless a test says otherwise. */
+function activeRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'run-1',
+    flow_id: 'flow-1',
+    account_id: 'acct-1',
+    user_id: 'user-1',
+    contact_id: 'contact-1',
+    conversation_id: 'conv-1',
+    current_node_key: 'node-1',
+    last_advanced_at: secondsAgo(90 * 60), // 90 minutes ago
+    last_nudge_sent_at: null,
+    flows: { fallback_policy: null }, // resolves to DEFAULT_FALLBACK_POLICY (24h timeout)
+    contacts: { ai_nudge_opt_out: false },
+    ...overrides,
+  }
+}
 
 afterEach(() => {
   delete process.env.AUTOMATION_CRON_SECRET
@@ -231,5 +310,106 @@ describe('GET /api/flows/cron — debounce sweep', () => {
 
     expect(h.runAutoReplyNow).toHaveBeenCalledTimes(2)
     expect(body.debounceRecovered).toBe(2)
+  })
+})
+
+describe('GET /api/flows/cron — inactivity nudge defaults', () => {
+  it('send_list node with no nudge_after_minutes configured nudges automatically after DEFAULT_NUDGE_AFTER_MINUTES, with the built-in text', async () => {
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'send_list',
+      config: {}, // no nudge_after_minutes / nudge_text — must still default on
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        contactId: 'contact-1',
+        text: '¿Sigues ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.',
+      }),
+    )
+    expect(h.state.flowRuns[0].last_nudge_sent_at).not.toBeNull()
+  })
+
+  it('send_buttons node with nudge_after_minutes: 0 opts out of the default — never nudges', async () => {
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'send_buttons',
+      config: { nudge_after_minutes: 0 },
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('send_list node overrides the default with its own nudge_after_minutes and nudge_text', async () => {
+    h.state.flowRuns = [
+      activeRun({ last_advanced_at: secondsAgo(20 * 60) }), // 20 min ago
+    ]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'send_list',
+      config: { nudge_after_minutes: 15, nudge_text: 'Seguimos aquí para ayudarte con tu consulta.' },
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    // 20 min of silence already clears the node's own 15-min threshold,
+    // even though it's well under the 60-min default.
+    expect(body.nudged).toBe(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Seguimos aquí para ayudarte con tu consulta.' }),
+    )
+  })
+
+  it('collect_ai node with no nudge_after_minutes configured stays silent — collect_ai remains strictly opt-in, unlike send_buttons/send_list', async () => {
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'collect_ai',
+      config: {}, // no nudge_after_minutes — no default applies here
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('a send_list node still short of the default window does not nudge yet', async () => {
+    h.state.flowRuns = [
+      activeRun({ last_advanced_at: secondsAgo(10 * 60) }), // only 10 min of silence
+    ]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'send_list',
+      config: {},
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('an opted-out contact never gets the default nudge either', async () => {
+    h.state.flowRuns = [activeRun({ contacts: { ai_nudge_opt_out: true } })]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'send_buttons',
+      config: {},
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
   })
 })
