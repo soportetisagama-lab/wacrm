@@ -55,6 +55,7 @@ import {
 import { validateInteractivePayload } from "@/lib/whatsapp/interactive";
 import type { InteractiveMessagePayload, QuickReply } from "@/types";
 import { QuickReplyPicker } from "./quick-reply-picker";
+import { isEmbeddedApp } from "@/lib/mobile-app";
 
 /** Media content types an agent can send from the composer. */
 export type ComposerMediaKind = "image" | "video" | "document" | "audio";
@@ -142,6 +143,18 @@ export function MessageComposer({
   onClearReply,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
+
+  // Collapses the 4 action buttons into 1 and hides the Shift+Enter
+  // hint — but ONLY inside our own Android WebView wrapper, never for
+  // a real browser at a narrow width. Deliberately not a `sm:` CSS
+  // breakpoint: this composer is also reachable from a phone's actual
+  // mobile browser, and that experience must stay exactly as it was
+  // — the collapse is an app-specific choice, not a "phone" one. Set
+  // once on mount, same SSR-safe pattern as dashboard-shell.tsx.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -637,11 +650,13 @@ export function MessageComposer({
         </div>
       ) : (
         <div className="flex items-end gap-2">
-          {/* Desktop/tablet (sm+): four separate action buttons, unchanged.
-              Below sm they'd crowd out the textarea on a phone screen, so
-              this whole group collapses into the single "more actions"
+          {/* Everywhere except our own Android wrapper: four separate
+              action buttons, exactly as before this existed — including
+              a real phone's own mobile browser. Only inside the wrapper
+              do they crowd out the textarea enough to matter, so only
+              there do they collapse into the single "more actions"
               button below instead — same actions, WhatsApp-style. */}
-          <div className="hidden items-end gap-2 sm:flex">
+          <div className={cn("items-end gap-2", embedded ? "hidden" : "flex")}>
             {/* Attach menu — photo / video / document / voice. */}
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -739,14 +754,18 @@ export function MessageComposer({
             </GatedButton>
           </div>
 
-          {/* Phone screens (below sm): the four buttons above collapse
-              into this one — same eight actions, one tap away, so the
-              textarea + send button actually have room to breathe. */}
+          {/* Inside our own Android wrapper only: the four buttons above
+              collapse into this one — same eight actions, one tap away,
+              so the textarea + send button actually have room to
+              breathe. Never shown in a real browser, phone or not. */}
           <DropdownMenu>
             <DropdownMenuTrigger
               disabled={inputsDisabled || busy}
               title={readOnly ? t("readOnlyTitle") : undefined}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:hidden"
+              className={cn(
+                "h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+                embedded ? "inline-flex" : "hidden"
+              )}
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -833,12 +852,18 @@ export function MessageComposer({
 
       {/* Hint sits outside the flex row so its height doesn't push
           `items-end` buttons below the textarea. Indented to line up
-          under the textarea left edge. Hidden below sm: it mentions
-          Shift+Enter, a physical-keyboard shortcut that means nothing
-          on a phone's virtual keyboard, and the indent assumes the
-          four-button desktop layout that collapses on phones anyway. */}
+          under the textarea left edge. Hidden only in our own Android
+          wrapper: it mentions Shift+Enter, a physical-keyboard shortcut
+          that means nothing there, and the indent assumes the
+          four-button layout that only collapses inside the wrapper.
+          Unchanged in any real browser, phone or not. */}
       {!draft && !recording && (
-        <p className="mt-1 hidden pl-[5.5rem] text-[10px] text-muted-foreground sm:block">
+        <p
+          className={cn(
+            "mt-1 pl-[5.5rem] text-[10px] text-muted-foreground",
+            embedded && "hidden"
+          )}
+        >
           {t("draftHint")}
         </p>
       )}
