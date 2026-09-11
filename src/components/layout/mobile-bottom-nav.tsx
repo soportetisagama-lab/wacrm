@@ -59,16 +59,23 @@ export function MobileBottomNav() {
               key={tab.href}
               href={tab.href}
               className={cn(
-                "relative flex flex-1 flex-col items-center gap-0.5 rounded-full py-1.5 text-[10px] font-medium tracking-wide uppercase transition-colors",
+                "relative mx-1 flex flex-1 flex-col items-center gap-0.5 rounded-full py-1.5 text-[10px] font-medium tracking-wide uppercase transition-all",
                 isActive
-                  ? "text-primary"
+                  ? "bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] text-white shadow-md"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               <span className="relative">
                 <tab.icon className="h-5 w-5" />
                 {badgeCount > 0 && (
-                  <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold normal-case">
+                  <span
+                    className={cn(
+                      "absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold normal-case",
+                      isActive
+                        ? "bg-white text-[var(--header-bg)]"
+                        : "bg-primary text-primary-foreground"
+                    )}
+                  >
                     {badgeCount > 9 ? "9+" : badgeCount}
                   </span>
                 )}

@@ -99,18 +99,22 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
         <TotalUnreadProvider>
           <div className="flex h-screen flex-col overflow-hidden bg-background">
             <PresenceHeartbeat />
-            {/* Same dark brand panel the desktop Sidebar uses (bg-sidebar) —
-                the logo is a light/white wordmark, so it needs that dark
-                background to read at all; on the page's own bg-background
-                it was rendering nearly invisible. */}
-            <div className="bg-sidebar border-sidebar-border flex shrink-0 items-center justify-center border-b py-3 shadow-sm">
+            {/* The same brand gradient the desktop Header uses
+                (--header-bg/--header-bg-2 — blue for Inox, orange for
+                Retail, set per git branch in globals.css) instead of a
+                flat dark panel: this is the app's actual "line color",
+                and it's what makes the desktop header read as branded
+                instead of generic. The logo is a light/white wordmark,
+                so it still needs a dark-enough background to read —
+                the brand color already provides that contrast. */}
+            <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] py-4 shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
               <Image
                 src="/branding/SAGAMAMENU.png"
                 alt="Sagama CRM"
                 width={882}
                 height={283}
                 priority
-                className="h-auto w-full max-w-[120px]"
+                className="h-auto w-full max-w-[130px] drop-shadow-sm"
               />
             </div>
             <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
