@@ -11,6 +11,7 @@ import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
 import { isEmbeddedApp } from "@/lib/mobile-app";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -82,29 +83,34 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  // Android WebView wrapper: the app IS the inbox — no other route is
-  // ever loaded inside it — so skip Sidebar/Header entirely in favor
-  // of a WhatsApp-style bare shell: a slim centered-logo bar on top,
-  // the page's own content (already responsive down to phone width —
-  // see /inbox's list/thread panes) filling the rest. Both realtime
-  // providers stay: the inbox's own unread badges still read them.
+  // Android WebView wrapper: the app IS a small, phone-first tool — no
+  // desktop Sidebar/Header — in favor of a WhatsApp-style bare shell:
+  // a slim centered-logo bar on top, the page's own content (already
+  // responsive down to phone width — see /inbox's list/thread panes)
+  // filling the middle, and a floating "liquid glass" bottom tab bar
+  // (Bandeja/Contactos/Notificaciones — deliberately not the full,
+  // already role-filtered desktop nav; Panel doesn't belong in a
+  // phone-only field tool) instead of a side rail. Both realtime
+  // providers stay: the inbox's own unread badges and the bottom
+  // bar's badge dots both read them.
   if (embedded) {
     return (
       <UnreadNotificationsProvider>
         <TotalUnreadProvider>
           <div className="flex h-screen flex-col overflow-hidden bg-background">
             <PresenceHeartbeat />
-            <div className="border-border flex shrink-0 items-center justify-center border-b py-3">
+            <div className="border-border flex shrink-0 items-center justify-center border-b py-2">
               <Image
                 src="/branding/SAGAMAMENU.png"
                 alt="Sagama CRM"
                 width={882}
                 height={283}
                 priority
-                className="h-auto w-full max-w-[160px]"
+                className="h-auto w-full max-w-[112px]"
               />
             </div>
             <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
+            <MobileBottomNav />
           </div>
         </TotalUnreadProvider>
       </UnreadNotificationsProvider>
