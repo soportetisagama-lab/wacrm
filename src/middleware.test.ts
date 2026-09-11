@@ -86,6 +86,33 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
     expect(res.cookies.get(ROTATED.name)?.value).toBe("cleared");
   });
 
+  it("redirects a signed-in user off /login to /inbox instead of /dashboard when the request carries the mobile-app User-Agent marker", async () => {
+    mockUser = { id: "user-1" };
+    refreshedCookies = [ROTATED];
+
+    const res = await middleware(
+      new NextRequest("https://app.test/login", {
+        headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) WacrmMobileApp/1.0" },
+      }),
+    );
+
+    expect(res.headers.get("location")).toContain("/inbox");
+    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+
+  it("still redirects a signed-in user off /login to /dashboard for a normal browser User-Agent", async () => {
+    mockUser = { id: "user-1" };
+    refreshedCookies = [ROTATED];
+
+    const res = await middleware(
+      new NextRequest("https://app.test/login", {
+        headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120" },
+      }),
+    );
+
+    expect(res.headers.get("location")).toContain("/dashboard");
+  });
+
   it("redirects a signed-in user with an invite token to /join/<token>", async () => {
     mockUser = { id: "user-1" };
     refreshedCookies = [ROTATED];

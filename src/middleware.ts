@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { MOBILE_APP_UA_MARKER } from '@/lib/mobile-app'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -63,7 +64,13 @@ export async function middleware(request: NextRequest) {
       url.pathname = `/join/${encodeURIComponent(inviteToken)}`
       url.search = ''
     } else {
-      url.pathname = '/dashboard'
+      // Our own Android WebView wrapper (see lib/mobile-app.ts) IS the
+      // inbox — there's no sidebar to reach anything else from — so an
+      // already-signed-in relaunch lands there directly instead of the
+      // full desktop /dashboard. Read server-side off the request's own
+      // User-Agent header (no `navigator` in middleware's Edge runtime).
+      const isEmbedded = request.headers.get('user-agent')?.includes(MOBILE_APP_UA_MARKER) ?? false
+      url.pathname = isEmbedded ? '/inbox' : '/dashboard'
       url.search = ''
     }
     return withRefreshedCookies(NextResponse.redirect(url))

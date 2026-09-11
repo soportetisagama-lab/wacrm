@@ -14,6 +14,7 @@ import { AuthLogoHeader } from '@/components/auth/auth-logo-header';
 import { AuthInput } from '@/components/auth/auth-input';
 import { AuthSubmitButton } from '@/components/auth/auth-submit-button';
 import { AuthError } from '@/components/auth/auth-error';
+import { isEmbeddedApp } from '@/lib/mobile-app';
 
 // Remembers only the email/username locally, purely for prefilling the
 // field on the next visit — the real session persistence is handled by
@@ -132,9 +133,15 @@ function LoginPageInner() {
     // back to /login — which looks like the page "just refreshing"
     // instead of signing in (issue #365). Mirrors the deliberate full
     // reload the invite-accept flow already uses in join/[token].
+    // Inside our own Android WebView wrapper the app IS the inbox —
+    // there's no sidebar to reach anything else from, so land there
+    // directly instead of the full desktop /dashboard. Invite links
+    // still win (a brand-new member has nothing to triage yet).
     const destination = inviteToken
       ? `/join/${encodeURIComponent(inviteToken)}`
-      : '/dashboard';
+      : isEmbeddedApp()
+        ? '/inbox'
+        : '/dashboard';
     window.location.href = destination;
   };
 
