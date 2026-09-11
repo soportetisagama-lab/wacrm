@@ -11,6 +11,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { isEmbeddedApp } from "@/lib/mobile-app";
 
 // Icon per notification type. Only one type exists today
 // (conversation_assigned) but this keeps future types a one-line add.
@@ -27,6 +28,14 @@ export default function NotificationsPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
+  // Only true inside the Android wrapper — a plain "read" card is
+  // bg-card on a nearly-identical bg-background (both ~white), so it
+  // needs a visibly duller canvas behind it to look like a card at
+  // all. Never changes anything on the website.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const load = useCallback(async () => {
     if (!accountId) return;
@@ -200,7 +209,7 @@ export default function NotificationsPage() {
           </p>
         </div>
       ) : (
-        <ul className="space-y-2">
+        <ul className={cn("space-y-2", embedded && "-mx-4 bg-muted/60 p-3")}>
           {notifications.map((n) => {
             const Icon = TYPE_ICON[n.type] ?? Bell;
             const isUnread = !n.read_at;
@@ -214,6 +223,7 @@ export default function NotificationsPage() {
                     isUnread
                       ? "border-primary/30 bg-primary/5 hover:border-primary/50"
                       : "border-border bg-card hover:border-border/70",
+                    embedded && "rounded-2xl shadow-md active:shadow-sm",
                   )}
                 >
                   <div

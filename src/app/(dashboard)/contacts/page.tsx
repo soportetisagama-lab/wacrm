@@ -57,6 +57,7 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
+import { isEmbeddedApp } from '@/lib/mobile-app';
 
 const PAGE_SIZE = 25;
 
@@ -69,6 +70,14 @@ export default function ContactsPage() {
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+
+  // Only true inside the Android wrapper — swaps the desktop data table
+  // below for a WhatsApp-style contact card list, which is what a phone
+  // screen actually has room for. Never changes anything on the website.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -527,7 +536,118 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Mobile card list — the Android wrapper only, see `embedded` above.
+          The desktop data table below has columns (email, company,
+          created-at, bulk-select) that just don't fit a phone; a field
+          agent there mainly wants to find a contact and open/edit it. */}
+      {embedded ? (
+        <div className="flex flex-col gap-2">
+          {loading ? (
+            <div className="flex flex-col items-center gap-2 py-12">
+              <Loader2 className="size-6 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">{t('loading')}</p>
+            </div>
+          ) : contacts.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-12">
+              <Users className="size-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                {hasActiveFilters ? t('noContactsMatch') : t('noContactsYet')}
+              </p>
+              {!hasActiveFilters && (
+                <GatedButton
+                  canAct={canEdit}
+                  gateReason="add or import contacts"
+                  variant="outline"
+                  size="sm"
+                  onClick={openAddForm}
+                  className="mt-2 border-border text-muted-foreground hover:bg-muted"
+                >
+                  <Plus className="size-3.5" />
+                  {t('addFirstContact')}
+                </GatedButton>
+              )}
+            </div>
+          ) : (
+            contacts.map((contact) => {
+              const displayName =
+                contact.name || contact.phone || contact.whatsapp_user_id || t('unnamed');
+              const initials = displayName.charAt(0).toUpperCase();
+              return (
+                <div
+                  key={contact.id}
+                  onClick={() => openDetail(contact.id)}
+                  className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card p-3 shadow-md active:shadow-sm"
+                >
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-medium text-primary">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {contact.name || (
+                        <span className="italic text-muted-foreground">{t('unnamed')}</span>
+                      )}
+                    </p>
+                    <p className="truncate font-mono text-xs text-muted-foreground">
+                      {contact.phone || '-'}
+                    </p>
+                    {contact.tags && contact.tags.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {contact.tags.slice(0, 2).map((tag) => (
+                          <span
+                            key={tag.id}
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+                            style={{ backgroundColor: tag.color + '20', color: tag.color }}
+                          >
+                            {tag.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      }
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="bg-popover border-border">
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditForm(contact);
+                        }}
+                        className="text-popover-foreground focus:bg-muted focus:text-foreground"
+                      >
+                        <Pencil className="size-4" />
+                        {t('editAction')}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator className="bg-border" />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDelete(contact);
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                        {t('deleteAction')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : (
+      /* Table */
       <div className="rounded-lg border border-border overflow-hidden">
         <Table>
           <TableHeader>
@@ -692,6 +812,7 @@ export default function ContactsPage() {
           </TableBody>
         </Table>
       </div>
+      )}
 
       {/* Pagination */}
       {totalPages > 1 && (

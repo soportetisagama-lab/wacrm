@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
@@ -114,7 +114,9 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
               />
             </div>
             <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
-            <MobileBottomNav />
+            <Suspense fallback={null}>
+              <MobileBottomNav />
+            </Suspense>
           </div>
         </TotalUnreadProvider>
       </UnreadNotificationsProvider>

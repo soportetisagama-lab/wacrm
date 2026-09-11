@@ -232,16 +232,34 @@ export function ConversationList({
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
-    <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
+    <div
+      className={cn(
+        "flex h-full w-full flex-col border-r border-border lg:w-80",
+        // The card rows below are bg-card on an otherwise near-identical
+        // bg-background (both ~white in light mode) — with no canvas
+        // behind them a "card" has nothing to contrast against and reads
+        // as flat/unstyled. A visibly darker muted canvas here is what
+        // makes the elevated white cards actually look elevated.
+        embedded ? "bg-muted/60" : "bg-card"
+      )}
+    >
       {/* Search + Filter */}
-      <div className="space-y-2 border-b border-border p-3">
+      <div
+        className={cn(
+          "space-y-2 border-b border-border p-3",
+          embedded && "bg-card"
+        )}
+      >
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={handleSearchChange}
             placeholder={t("searchPlaceholder")}
-            className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
+            className={cn(
+              "border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50",
+              embedded && "h-11 rounded-full bg-muted/80"
+            )}
           />
         </div>
 
@@ -415,7 +433,7 @@ export function ConversationList({
             <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
           </div>
         ) : (
-          <div className={cn("flex flex-col", embedded && "gap-1.5 p-2")}>
+          <div className={cn("flex flex-col", embedded && "gap-2 p-3")}>
             {filtered.map((conv) => (
               <ConversationItem
                 key={conv.id}
@@ -472,10 +490,10 @@ function ConversationItem({
         "flex w-full min-w-0 items-start gap-3 text-left transition-colors",
         embedded
           ? cn(
-              "rounded-2xl border p-3 shadow-sm",
+              "rounded-2xl border p-3 shadow-md active:shadow-sm",
               isActive
-                ? "border-primary/30 bg-primary/5"
-                : "border-border/60 bg-card active:bg-muted/60"
+                ? "border-primary/40 bg-primary/5"
+                : "border-border/40 bg-card active:bg-muted/40"
             )
           : cn(
               "px-3 py-3 hover:bg-muted/50",

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Bell, MessageSquare, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTotalUnread } from "@/hooks/use-total-unread";
@@ -27,8 +27,17 @@ const TABS = [
 export function MobileBottomNav() {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+
+  // Inside an open conversation thread (/inbox?c=<id>) the thread takes
+  // over the whole screen, like a real chat app — a persistent tab bar
+  // here would sit on top of (or steal height from) the message
+  // composer. Hide it entirely and give the thread the full viewport;
+  // its own back arrow returns to the list, where the bar reappears.
+  const isInboxThreadOpen = pathname === "/inbox" && !!searchParams.get("c");
+  if (isInboxThreadOpen) return null;
 
   return (
     <nav
