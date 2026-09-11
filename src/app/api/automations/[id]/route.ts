@@ -25,6 +25,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
+
+  // Automations is an Administrador-only surface — see the equivalent
+  // guard on GET /api/automations for the full reasoning.
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -49,11 +58,12 @@ export async function PATCH(
 ) {
   const { id } = await params
 
-  // Editing an automation is a write — the RLS automations_update policy
-  // requires `agent`, but this route mutates via the service-role client
-  // which bypasses RLS, so enforce the role here.
+  // Automations is an Administrador-only surface (tighter than the RLS
+  // automations_update policy, which only requires `agent`) — this
+  // route mutates via the service-role client, which bypasses RLS
+  // entirely, so enforcing the role here is what actually matters.
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -137,10 +147,11 @@ export async function DELETE(
 ) {
   const { id } = await params
 
-  // Deleting an automation is a write — enforce `agent` (the service-role
-  // client below bypasses the agent-gated automations_delete RLS).
+  // Automations is an Administrador-only surface — see GET's comment
+  // above (the service-role client below bypasses RLS entirely, so
+  // this is what actually enforces it).
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }

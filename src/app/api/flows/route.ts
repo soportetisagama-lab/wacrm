@@ -8,10 +8,12 @@ import { getFlowTemplate } from '@/lib/flows/templates'
  * GET /api/flows — list the caller's flows.
  * POST /api/flows — create a new (draft) flow.
  *
- * Available to every authenticated user. The previous per-account
- * beta gate was removed when Flows went to soft-GA; the UI still
- * shows a "Beta" label so users know the surface is young, but the
- * routes themselves are open.
+ * Flows is an Administrador-only surface (sidebar hides it for every
+ * other role — see components/layout/sidebar.tsx); both handlers
+ * enforce `requireRole('admin')` since this route is reachable
+ * directly regardless of what the sidebar shows. The previous
+ * per-account beta gate was removed when Flows went to soft-GA; the
+ * UI still shows a "Beta" label so users know the surface is young.
  */
 
 async function requireUser(): Promise<
@@ -29,6 +31,12 @@ async function requireUser(): Promise<
 }
 
 export async function GET() {
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   const guard = await requireUser()
   if (!guard.ok) {
     return NextResponse.json(guard.body, { status: guard.status })
@@ -46,11 +54,12 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  // Creating a flow is a write — the RLS flows_insert policy requires
-  // `agent`, but this route inserts via the service-role client which
-  // bypasses RLS, so the role must be enforced here.
+  // Creating a flow is a write — Administrador-only (see the module
+  // doc comment above; this route also inserts via the service-role
+  // client, which bypasses RLS, so enforcing the role here is what
+  // actually matters).
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }

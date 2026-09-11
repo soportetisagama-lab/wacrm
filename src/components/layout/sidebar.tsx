@@ -29,7 +29,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import type { AccountRole } from '@/lib/auth/roles';
+import { hasMinRole, type AccountRole } from '@/lib/auth/roles';
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -105,6 +105,21 @@ interface NavItem {
    * later without a rewrite.
    */
   children?: { href: string; labelKey: string }[];
+  /**
+   * Minimum role to see this item at all — omit for items every role
+   * sees (Panel/Bandeja/Notificaciones/Contactos). The advanced
+   * management sections (Embudos, Difusiones, Automatizaciones,
+   * Flujos, Agentes IA, Configuración) are `'admin'` — visible to
+   * Administrador only; Gerencia, Jefe de Línea, ATC, Asesor and Visor
+   * all see just the four base items. Filtered in `Sidebar` via
+   * `hasMinRole`, failing closed (hidden) while the role is still
+   * loading — same convention as `useCan`/`RequireRole`. Cosmetic
+   * only: the underlying pages/APIs enforce this independently
+   * (`requireRole('admin')` server-side), this just keeps a
+   * lower-privileged user from seeing a link to something they can't
+   * use in the first place.
+   */
+  minRole?: AccountRole;
 }
 
 const navItems: NavItem[] = [
@@ -112,15 +127,15 @@ const navItems: NavItem[] = [
   { href: '/inbox', labelKey: 'inbox', icon: MessageSquare },
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
-  { href: '/pipelines', labelKey: 'pipelines', icon: GitBranch },
-  { href: '/broadcasts', labelKey: 'broadcasts', icon: Radio },
-  { href: '/automations', labelKey: 'automations', icon: Zap },
-  { href: '/flows', labelKey: 'flows', icon: Workflow, beta: true },
-  { href: '/agents', labelKey: 'aiAgents', icon: Bot },
+  { href: '/pipelines', labelKey: 'pipelines', icon: GitBranch, minRole: 'admin' },
+  { href: '/broadcasts', labelKey: 'broadcasts', icon: Radio, minRole: 'admin' },
+  { href: '/automations', labelKey: 'automations', icon: Zap, minRole: 'admin' },
+  { href: '/flows', labelKey: 'flows', icon: Workflow, beta: true, minRole: 'admin' },
+  { href: '/agents', labelKey: 'aiAgents', icon: Bot, minRole: 'admin' },
 ];
 
 const bottomNavItems: NavItem[] = [
-  { href: '/settings', labelKey: 'settings', icon: Settings },
+  { href: '/settings', labelKey: 'settings', icon: Settings, minRole: 'admin' },
 ];
 
 interface SidebarProps {
@@ -176,6 +191,18 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
       window.removeEventListener('keydown', onKey);
     };
   }, [open, onClose]);
+
+  // Fails closed while the role is still resolving (profileLoading) —
+  // same convention as useCan/RequireRole — so an admin-only item
+  // never flashes visible before we actually know the role.
+  const isNavItemVisible = (item: NavItem) => {
+    if (!item.minRole) return true;
+    if (profileLoading || !accountRole) return false;
+    return hasMinRole(accountRole, item.minRole);
+  };
+  // Computed once so both the list and its separator (hidden when the
+  // list would otherwise be empty — currently just Settings) agree.
+  const visibleBottomNavItems = bottomNavItems.filter(isNavItemVisible);
 
   // Shared row renderer for both the main nav list and the bottom
   // (Settings) list — same active/hover/badge treatment either way.
@@ -351,11 +378,18 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
 
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto py-3">
-          <ul className="flex flex-col">{navItems.map(renderNavItem)}</ul>
+          <ul className="flex flex-col">
+            {navItems.filter(isNavItemVisible).map(renderNavItem)}
+          </ul>
 
-          <div className="border-sidebar-border my-3 border-t" />
-
-          <ul className="flex flex-col">{bottomNavItems.map(renderNavItem)}</ul>
+          {visibleBottomNavItems.length > 0 && (
+            <>
+              <div className="border-sidebar-border my-3 border-t" />
+              <ul className="flex flex-col">
+                {visibleBottomNavItems.map(renderNavItem)}
+              </ul>
+            </>
+          )}
         </nav>
 
         {/* User section */}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 
 /**
  * GET /api/flows/[id]/runs
@@ -9,9 +10,13 @@ import { createClient } from '@/lib/supabase/server'
  * page (`/flows/[id]/runs`) to give the owner end-to-end visibility
  * into what the bot did with each customer.
  *
- * RLS does the ownership check (flow_runs has a `user_id` policy);
- * we also gate on the per-account beta flag so the route 404s for
- * non-beta accounts matching the rest of /api/flows.
+ * This exposes real customer conversation content (captured vars,
+ * message events), so — like the rest of /api/flows — it's
+ * Administrador-only, not just "signed in and owns the flow": RLS does
+ * the ownership check (flow_runs has a `user_id` policy), but that
+ * alone would still let e.g. an Asesor who happens to own a flow read
+ * its run history; requireRole('admin') is what actually enforces the
+ * role restriction.
  *
  * Limited to the 50 most recent runs. Pagination can come later;
  * the dashboard surface here is for debugging, not heavy querying.
@@ -21,6 +26,12 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params
+
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
 
   const supabase = await createClient()
   const {

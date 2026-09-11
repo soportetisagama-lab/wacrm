@@ -12,7 +12,7 @@ import { AiError, type ChatMessage } from '@/lib/ai/types'
 const MAX_TURNS = 20
 
 /**
- * POST /api/ai/playground  (agent+)
+ * POST /api/ai/playground  (admin+)
  *
  * Test-chat with the account's agent WITHOUT touching WhatsApp. Runs the
  * exact same path the auto-reply bot uses — knowledge-base retrieval +
@@ -20,10 +20,18 @@ const MAX_TURNS = 20
  * here is what a real customer would get. Reads the config even when the
  * master switch is off (requireActive:false) so you can try it before
  * going live. Stateless: the client sends the running transcript each turn.
+ *
+ * Agentes IA is an Administrador-only surface (sidebar hides the whole
+ * /agents page — where this playground lives — for every other role;
+ * see components/layout/sidebar.tsx), so this requires 'admin', not
+ * just 'agent'. Unrelated to /api/ai/draft and
+ * /api/ai/autoreply/[conversationId], which stay at 'agent' — those
+ * back the inbox composer's "draft with AI" and the per-conversation
+ * AI pause toggle, both core Asesor/Bandeja workflow.
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, userId } = await requireRole('admin')
 
     const limit = checkRateLimit(`ai-playground:${userId}`, RATE_LIMITS.aiDraft)
     if (!limit.success) return rateLimitResponse(limit)

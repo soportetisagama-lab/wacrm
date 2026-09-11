@@ -10,6 +10,16 @@ import {
 } from '@/lib/automations/validate'
 
 export async function GET() {
+  // Automations is an Administrador-only surface (sidebar hides it for
+  // every other role — see components/layout/sidebar.tsx) — enforced
+  // here too since this route is reachable directly regardless of
+  // what the sidebar shows.
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   const supabase = await createClient()
   const {
     data: { user },
@@ -25,11 +35,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  // Creating an automation is a write — the RLS automations_insert policy
-  // requires `agent`, but this route inserts via the service-role client
-  // which bypasses RLS, so the role must be enforced here.
+  // Creating an automation is a write — Administrador-only (see the
+  // GET handler's comment above for the full reasoning).
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }

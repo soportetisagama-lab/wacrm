@@ -13,9 +13,11 @@ import { supabaseAdmin } from '@/lib/flows/admin-client'
  * DELETE /api/flows/[id] — hard delete (RLS+CASCADE clean up nodes,
  *                          runs, events).
  *
- * All three require a signed-in caller who owns the flow. Flows is in
- * soft-GA — the beta gate that previously 404'd non-beta accounts is
- * gone; the "Beta" label in the UI is the only remaining signal.
+ * All three require a signed-in caller who owns the flow, AND
+ * Administrador (see the module doc comment on GET /api/flows for
+ * the full reasoning). Flows is in soft-GA — the beta gate that
+ * previously 404'd non-beta accounts is gone; the "Beta" label in the
+ * UI is the only remaining signal.
  */
 
 async function requireOwnership(
@@ -53,6 +55,13 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params
+
+  try {
+    await requireRole('admin')
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+
   const guard = await requireOwnership(id)
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status })
   const { supabase } = guard
@@ -97,11 +106,11 @@ export async function PUT(
 ) {
   const { id } = await context.params
 
-  // Writes require at least `agent` — the RLS flows_update policy demands
-  // it, but this route mutates via the service-role client which bypasses
-  // RLS, so the role must be enforced here (a viewer passes ownership).
+  // Administrador-only (see module doc comment) — this route mutates
+  // via the service-role client, which bypasses RLS entirely, so
+  // enforcing the role here is what actually matters.
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -193,10 +202,9 @@ export async function DELETE(
 ) {
   const { id } = await context.params
 
-  // Writes require at least `agent` — see the PUT handler note. The
-  // service-role client below bypasses the agent-gated flows_delete RLS.
+  // Administrador-only — see the PUT handler's note above.
   try {
-    await requireRole('agent')
+    await requireRole('admin')
   } catch (err) {
     return toErrorResponse(err)
   }
