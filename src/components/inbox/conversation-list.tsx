@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { isEmbeddedApp } from "@/lib/mobile-app";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -62,6 +63,14 @@ export function ConversationList({
     { label: t("filterPending"), value: "pending" },
     { label: t("filterClosed"), value: "closed" },
   ], [t]);
+
+  // Only ever true inside the Android wrapper (see message-composer.tsx
+  // for the same pattern) — gives the list a more phone-native, card-y
+  // look there without changing anything on the real website.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -406,7 +415,7 @@ export function ConversationList({
             <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
           </div>
         ) : (
-          <div className="flex flex-col">
+          <div className={cn("flex flex-col", embedded && "gap-1.5 p-2")}>
             {filtered.map((conv) => (
               <ConversationItem
                 key={conv.id}
@@ -414,6 +423,7 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
+                embedded={embedded}
               />
             ))}
           </div>
@@ -428,6 +438,7 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  embedded?: boolean;
 }
 
 function ConversationItem({
@@ -435,6 +446,7 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  embedded = false,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName =
@@ -451,21 +463,39 @@ function ConversationItem({
       })
     : "";
 
+  const avatarSize = embedded ? "h-12 w-12" : "h-10 w-10";
+
   return (
     <button
       onClick={handleClick}
       className={cn(
-        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
-        isActive && "border-l-2 border-primary bg-muted/70"
+        "flex w-full min-w-0 items-start gap-3 text-left transition-colors",
+        embedded
+          ? cn(
+              "rounded-2xl border p-3 shadow-sm",
+              isActive
+                ? "border-primary/30 bg-primary/5"
+                : "border-border/60 bg-card active:bg-muted/60"
+            )
+          : cn(
+              "px-3 py-3 hover:bg-muted/50",
+              isActive && "border-l-2 border-primary bg-muted/70"
+            )
       )}
     >
       {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+      <div
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-full text-sm font-medium",
+          avatarSize,
+          embedded ? "bg-primary/15 text-primary" : "bg-muted text-foreground"
+        )}
+      >
         {contact?.avatar_url ? (
           <img
             src={contact.avatar_url}
             alt={displayName}
-            className="h-10 w-10 rounded-full object-cover"
+            className={cn("rounded-full object-cover", avatarSize)}
           />
         ) : (
           initials
@@ -475,13 +505,15 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
+          <span className="min-w-0 truncate text-sm font-medium text-foreground">
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
+            {timeAgo}
+          </span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="min-w-0 truncate text-xs text-muted-foreground">
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -492,7 +524,7 @@ function ConversationItem({
             )}
             <span
               className={cn(
-                "h-2 w-2 rounded-full",
+                "h-2 w-2 shrink-0 rounded-full",
                 STATUS_COLORS[conversation.status]
               )}
               title={conversation.status}

@@ -99,14 +99,18 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
         <TotalUnreadProvider>
           <div className="flex h-screen flex-col overflow-hidden bg-background">
             <PresenceHeartbeat />
-            <div className="border-border flex shrink-0 items-center justify-center border-b py-2">
+            {/* Same dark brand panel the desktop Sidebar uses (bg-sidebar) —
+                the logo is a light/white wordmark, so it needs that dark
+                background to read at all; on the page's own bg-background
+                it was rendering nearly invisible. */}
+            <div className="bg-sidebar border-sidebar-border flex shrink-0 items-center justify-center border-b py-3 shadow-sm">
               <Image
                 src="/branding/SAGAMAMENU.png"
                 alt="Sagama CRM"
                 width={882}
                 height={283}
                 priority
-                className="h-auto w-full max-w-[112px]"
+                className="h-auto w-full max-w-[120px]"
               />
             </div>
             <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
