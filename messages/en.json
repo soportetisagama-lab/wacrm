@@ -154,6 +154,10 @@
       "company": "Company",
       "allCompanies": "All companies",
       "clearAll": "Clear all",
+      "pin": "Pin",
+      "unpin": "Unpin",
+      "pinLimitReached": "You can only pin up to {max} conversations",
+      "unpinFailed": "Couldn't unpin the conversation",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
       "unknown": "Unknown"
