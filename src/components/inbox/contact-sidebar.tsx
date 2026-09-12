@@ -16,9 +16,16 @@ import {
   StickyNote,
   Plus,
   Megaphone,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
 
@@ -39,9 +46,25 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
   const [referrals, setReferrals] = useState<ConversationReferral[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+
+  // Every tag defined for the account — powers the "add tag" picker below
+  // (issue: agents previously had to leave the conversation and go to
+  // Contacts to tag someone). Loaded once; doesn't depend on `contact`.
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("tags").select("*").order("name");
+      if (!cancelled && data) setAllTags(data as Tag[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -141,6 +164,44 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
     }
     setAddingNote(false);
   }, [contact, newNote, accountId]);
+
+  // Toggle a tag on the currently-open contact, right from the inbox —
+  // no more leaving the conversation to go tag someone in Contacts.
+  // `contact_tags` has no account/user column (migration 001), so the
+  // insert/delete only need contact_id + tag_id.
+  const handleToggleTag = useCallback(
+    async (tag: Tag) => {
+      if (!contact) return;
+      const supabase = createClient();
+      const existing = tags.find((t) => t.id === tag.id);
+
+      if (existing) {
+        // Optimistic remove, roll back on failure.
+        setTags((prev) => prev.filter((t) => t.id !== tag.id));
+        const { error } = await supabase
+          .from("contact_tags")
+          .delete()
+          .eq("id", existing.contact_tag_id);
+        if (error) {
+          console.error("Failed to remove tag:", error);
+          setTags((prev) => [...prev, existing]);
+        }
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("contact_tags")
+        .insert({ contact_id: contact.id, tag_id: tag.id })
+        .select("id")
+        .single();
+      if (error) {
+        console.error("Failed to add tag:", error);
+        return;
+      }
+      setTags((prev) => [...prev, { ...tag, contact_tag_id: data.id as string }]);
+    },
+    [contact, tags]
+  );
 
   if (!contact) {
     return (
@@ -269,9 +330,39 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
 
           {/* Tags */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <TagIcon className="h-3 w-3" />
-              {tSidebar("tags")}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <TagIcon className="h-3 w-3" />
+                {tSidebar("tags")}
+              </div>
+              {allTags.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <Plus className="h-3.5 w-3.5" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="max-h-64 w-56 border-border bg-popover"
+                  >
+                    {allTags.map((tag) => (
+                      <DropdownMenuCheckboxItem
+                        key={tag.id}
+                        checked={tags.some((t) => t.id === tag.id)}
+                        onCheckedChange={() => handleToggleTag(tag)}
+                        className="text-sm text-popover-foreground"
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="truncate">{tag.name}</span>
+                        </span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {tags.length === 0 ? (
@@ -280,13 +371,20 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                 tags.map((tag) => (
                   <span
                     key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    className="inline-flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-[10px] font-medium"
                     style={{
                       backgroundColor: `${tag.color}20`,
                       color: tag.color,
                     }}
                   >
                     {tag.name}
+                    <button
+                      onClick={() => handleToggleTag(tag)}
+                      aria-label={tSidebar("removeTag")}
+                      className="rounded-full p-0.5 hover:bg-black/10"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
                   </span>
                 ))
               )}
