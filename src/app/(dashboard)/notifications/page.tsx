@@ -178,7 +178,14 @@ export default function NotificationsPage() {
       <div
         className={cn(
           "flex items-center justify-between",
-          embedded && "rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
+          // items-center + justify-between let the button sit flush
+          // against the title on the same row with no wrap — on a
+          // narrow phone, "Notificaciones" + description on one side
+          // and the (icon + text) button on the other don't both fit,
+          // and neither side had room to give, so the button spilled
+          // past the card's own edge, then past the screen. Stacking
+          // instead removes that width pressure entirely.
+          embedded && "flex-col items-start gap-3 rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
         )}
       >
         <div>

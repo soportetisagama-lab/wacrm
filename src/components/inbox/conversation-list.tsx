@@ -11,7 +11,6 @@ import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { es } from "date-fns/locale";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import {
@@ -47,6 +46,26 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 
 
 type InboxFilter = ConversationStatus | "all" | "unread";
+
+/**
+ * WhatsApp-style ultra-short relative time ("ahora", "5 min", "2 h",
+ * "ayer", "3 d") — embedded only. The full date-fns sentence
+ * ("hace alrededor de 6 horas") was long enough to push the row wider
+ * than the phone screen, clipping the text at the device edge instead
+ * of wrapping or truncating cleanly. Short, fixed-width-ish tokens
+ * like this sidestep that regardless of the exact flex behavior.
+ */
+function formatShortTimeAgo(date: Date): string {
+  const diffMin = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (diffMin < 1) return "ahora";
+  if (diffMin < 60) return `${diffMin} min`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours} h`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return "ayer";
+  if (diffDays < 7) return `${diffDays} d`;
+  return new Intl.DateTimeFormat("es", { day: "2-digit", month: "2-digit" }).format(date);
+}
 
 export function ConversationList({
   activeConversationId,
@@ -528,13 +547,15 @@ function ConversationItem({
   }, [onSelect, conversation]);
 
   // date-fns defaults to English with no locale option — fine for the
-  // website (untouched here), but inside the app (always Spanish-only
-  // Inox/Retail) it read as "less than a minute" with no translation.
+  // website (untouched here). Inside the app it used the full Spanish
+  // sentence, which was long enough to overflow the row — see
+  // formatShortTimeAgo above.
   const timeAgo = conversation.last_message_at
-    ? formatDistanceToNow(new Date(conversation.last_message_at), {
-        addSuffix: embedded,
-        locale: embedded ? es : undefined,
-      })
+    ? embedded
+      ? formatShortTimeAgo(new Date(conversation.last_message_at))
+      : formatDistanceToNow(new Date(conversation.last_message_at), {
+          addSuffix: false,
+        })
     : "";
 
   const avatarSize = embedded ? "h-12 w-12" : "h-10 w-10";
