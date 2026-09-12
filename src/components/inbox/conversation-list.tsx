@@ -277,11 +277,11 @@ export function ConversationList({
       {/* Search + Filter */}
       <div
         className={cn(
-          "space-y-2 border-b border-border p-3",
+          "min-w-0 space-y-2 border-b border-border p-3",
           embedded && "space-y-3 bg-card pb-3 pt-5"
         )}
       >
-        <div className="relative">
+        <div className="relative min-w-0">
           <Search
             className={cn(
               "absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground",
@@ -302,7 +302,7 @@ export function ConversationList({
         {/* WhatsApp-style scrollable filter chips — embedded only. The
             desktop dropdown below stays untouched for the website. */}
         {embedded && (
-          <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="-mx-3 min-w-0 flex gap-2 overflow-x-auto px-3 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {FILTER_OPTIONS.map((opt) => {
               const isActiveFilter = filter === opt.value;
               return (
