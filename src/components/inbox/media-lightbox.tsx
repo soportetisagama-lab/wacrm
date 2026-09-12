@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { isEmbeddedApp } from "@/lib/mobile-app";
 import {
   ChevronLeft,
   ChevronRight,
@@ -68,6 +70,12 @@ export function MediaLightbox({
   const [zoomedId, setZoomedId] = useState<string | null>(null);
   const zoomed = activeId !== null && zoomedId === activeId;
   const [downloading, setDownloading] = useState(false);
+  // Only true inside the Android wrapper — see conversation-list.tsx
+  // for the same pattern (date-fns has no locale here by default).
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const toggleZoom = useCallback(() => {
     setZoomedId((current) => (current === activeId ? null : activeId));
@@ -116,7 +124,11 @@ export function MediaLightbox({
   if (!item) return null;
 
   const authorLabel = item.fromCustomer ? contactLabel : t("you");
-  const timestamp = format(new Date(item.createdAt), "MMM d, yyyy HH:mm");
+  const timestamp = format(
+    new Date(item.createdAt),
+    embedded ? "d MMM yyyy, HH:mm" : "MMM d, yyyy HH:mm",
+    { locale: embedded ? es : undefined }
+  );
 
   return (
     <Dialog

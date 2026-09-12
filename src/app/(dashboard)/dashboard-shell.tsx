@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
@@ -100,7 +101,10 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
       <UnreadNotificationsProvider>
         <TotalUnreadProvider>
           <Suspense fallback={null}>
-            <EmbeddedShell advisorName={profile?.full_name || profile?.email || null}>
+            <EmbeddedShell
+              advisorName={profile?.full_name || profile?.email || null}
+              avatarUrl={profile?.avatar_url ?? null}
+            >
               {children}
             </EmbeddedShell>
           </Suspense>
@@ -149,9 +153,11 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 function EmbeddedShell({
   children,
   advisorName,
+  avatarUrl,
 }: {
   children: React.ReactNode;
   advisorName: string | null;
+  avatarUrl: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -205,30 +211,60 @@ function EmbeddedShell({
           status, back arrow) and every pixel of height matters, same as
           WhatsApp never doubling up its chat-list header inside a chat. */}
       {!isThreadOpen && (
-        <div className="relative flex shrink-0 items-center justify-between gap-3 overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
+        <div className="relative flex shrink-0 items-center justify-between gap-3 overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 pb-6 pt-[max(1.25rem,env(safe-area-inset-top))] shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
+          {/* w-[116px] with h-auto only scales the logo's own box —
+              next/image's width/height attrs keep it at its real 882:283
+              ratio, so it can't stretch/distort no matter what width is
+              picked here. */}
           <Image
             src="/branding/SAGAMAMENU.png"
             alt="Sagama CRM"
             width={882}
             height={283}
             priority
-            className="h-auto w-[100px] shrink-0 drop-shadow-sm"
+            className="h-auto w-[116px] shrink-0 drop-shadow-sm"
           />
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
             {advisorName && (
-              <span className="max-w-[110px] truncate text-xs font-semibold text-white/95">
-                {advisorName}
-              </span>
+              <>
+                <Avatar className="size-9 shrink-0 rounded-lg ring-1 ring-white/25">
+                  {avatarUrl ? (
+                    <AvatarImage src={avatarUrl} alt={advisorName} className="rounded-lg" />
+                  ) : null}
+                  <AvatarFallback className="rounded-lg bg-white/15 text-sm font-semibold text-white">
+                    {advisorName.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="flex min-w-0 max-w-[92px] items-center gap-1 truncate text-xs font-semibold text-white/95">
+                  <span className="truncate">{advisorName}</span>
+                  <Image
+                    src="/branding/Verificado.png"
+                    alt=""
+                    width={18}
+                    height={18}
+                    className="h-3.5 w-3.5 shrink-0"
+                  />
+                </span>
+              </>
             )}
             <ModeToggle className="h-9 w-9 shrink-0 rounded-full text-white/90 hover:bg-white/15 hover:text-white" />
           </div>
         </div>
       )}
       <main className="min-h-0 flex-1 overflow-hidden">
-        {/* Keyed by route so switching Bandeja/Contactos/Notificaciones
-            (and re-entering a thread) gets a quick, deliberate fade
-            instead of an instant hard cut. */}
-        <div key={pathname + (isThreadOpen ? "-thread" : "")} className="h-full animate-in fade-in duration-200">
+        {/* Keyed by pathname only (not by thread-open state) — switching
+            Bandeja/Contactos/Notificaciones is a real route change that
+            remounts the page anyway, so the fade rides along for free.
+            Opening/closing a conversation does NOT change `pathname`
+            (still /inbox, just a different `?c=` search param) and the
+            list/thread panes underneath already coexist mounted with
+            their own CSS show/hide — keying on isThreadOpen here forced
+            an extra, unwanted remount of the whole inbox page every time
+            a thread opened (full state reset + refetch), which is what
+            caused the search bar/chips to flash before the chat
+            appeared. No fade on that specific transition now — the
+            correct fix is not reintroducing the remount for it. */}
+        <div key={pathname} className="h-full animate-in fade-in duration-200">
           {children}
         </div>
       </main>

@@ -29,6 +29,7 @@ import {
   PanelRightClose,
 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
+import { es } from 'date-fns/locale';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -39,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { isEmbeddedApp } from '@/lib/mobile-app';
 import { MessageBubble } from './message-bubble';
 import { MessageActions } from './message-actions';
 import { MediaLightbox } from './media-lightbox';
@@ -115,12 +117,18 @@ interface MessageThreadProps {
 
 function formatDateSeparator(
   dateStr: string,
-  t: ReturnType<typeof useTranslations>
+  t: ReturnType<typeof useTranslations>,
+  embedded: boolean
 ): string {
   const date = new Date(dateStr);
   if (isToday(date)) return t('today');
   if (isYesterday(date)) return t('yesterday');
-  return format(date, 'MMMM d, yyyy');
+  // date-fns defaults to English month names with no locale option —
+  // fine for the website, but the app is always Spanish-only Inox/
+  // Retail, so a fallback separator like "September 12, 2026" stood out.
+  return format(date, embedded ? "d 'de' MMMM 'de' yyyy" : 'MMMM d, yyyy', {
+    locale: embedded ? es : undefined,
+  });
 }
 
 function groupMessagesByDate(messages: Message[]) {
@@ -183,6 +191,15 @@ export function MessageThread({
 
   const { user, canAssignConversations } = useAuth();
   const { getPresence, getRow, now } = usePresence();
+  // Only true inside the Android wrapper — this header sits right at
+  // the very top of the screen there (dashboard-shell hides its own
+  // logo bar while a thread is open), so it needs its own safe-area
+  // clearance and a bit more visual weight than it does on desktop,
+  // where the real Header above it already handles both.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
@@ -929,7 +946,16 @@ export function MessageThread({
     <div className={cn('flex min-w-0 flex-1 flex-col', DOODLE_BG_CLASSES)}>
       {/* Header — solid card surface sits on top of the doodle so the
           name/avatar/dropdowns stay legible. */}
-      <div className="border-border bg-card flex items-center justify-between gap-2 border-b px-3 py-3 sm:px-4">
+      <div
+        className={cn(
+          'border-border bg-card flex items-center justify-between gap-2 border-b px-3 py-3 sm:px-4',
+          // No brand bar above this one while a thread is open (see
+          // dashboard-shell.tsx) — this header sits right at the phone's
+          // top edge, so it needs its own safe-area clearance and a bit
+          // more height/weight to not feel cramped against it.
+          embedded && 'py-4 pt-[max(1rem,env(safe-area-inset-top))]'
+        )}
+      >
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           {/* Back-to-list button — mobile only. Hidden on lg+ where the
               conversation list is always visible next to the thread. */}
@@ -938,19 +964,32 @@ export function MessageThread({
               type="button"
               onClick={onBack}
               aria-label={t('backToConversations')}
-              className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md lg:hidden"
+              className={cn(
+                'text-muted-foreground hover:bg-muted hover:text-foreground flex flex-shrink-0 items-center justify-center rounded-md lg:hidden',
+                embedded ? 'h-10 w-10' : 'h-9 w-9'
+              )}
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className={embedded ? 'h-6 w-6' : 'h-5 w-5'} />
             </button>
           )}
-          <div className="bg-muted text-foreground flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-sm font-medium">
+          <div
+            className={cn(
+              'bg-muted text-foreground flex flex-shrink-0 items-center justify-center rounded-full font-medium',
+              embedded ? 'h-11 w-11 text-base' : 'h-9 w-9 text-sm'
+            )}
+          >
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <h2 className="text-foreground truncate text-sm font-semibold">
+            <h2
+              className={cn(
+                'text-foreground truncate font-semibold',
+                embedded ? 'text-base' : 'text-sm'
+              )}
+            >
               {displayName}
             </h2>
-            <p className="text-muted-foreground truncate text-xs">
+            <p className={cn('text-muted-foreground truncate', embedded ? 'text-sm' : 'text-xs')}>
               {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
             </p>
           </div>
@@ -1155,7 +1194,7 @@ export function MessageThread({
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
                   <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-[10px] font-medium">
-                    {formatDateSeparator(group.date, t)}
+                    {formatDateSeparator(group.date, t, embedded)}
                   </span>
                 </div>
                 {/* Messages */}

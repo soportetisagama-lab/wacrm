@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { es } from "date-fns/locale";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import {
@@ -63,6 +64,17 @@ export function ConversationList({
     { label: t("filterPending"), value: "pending" },
     { label: t("filterClosed"), value: "closed" },
   ], [t]);
+
+  // Counts for the embedded filter chips — always computed from the
+  // full, unfiltered list so a chip's number doesn't shift or disappear
+  // depending on which OTHER chip happens to be active right now.
+  const filterCounts: Record<InboxFilter, number> = useMemo(() => ({
+    all: conversations.length,
+    unread: conversations.filter((c) => c.unread_count > 0).length,
+    open: conversations.filter((c) => c.status === "open").length,
+    pending: conversations.filter((c) => c.status === "pending").length,
+    closed: conversations.filter((c) => c.status === "closed").length,
+  }), [conversations]);
 
   // Only ever true inside the Android wrapper (see message-composer.tsx
   // for the same pattern) — gives the list a more phone-native, card-y
@@ -287,6 +299,14 @@ export function ConversationList({
                   )}
                 >
                   {opt.label}
+                  <span
+                    className={cn(
+                      "ml-1.5 tabular-nums",
+                      isActiveFilter ? "text-primary-foreground/80" : "text-muted-foreground/70"
+                    )}
+                  >
+                    {filterCounts[opt.value]}
+                  </span>
                 </button>
               );
             })}
@@ -507,9 +527,13 @@ function ConversationItem({
     onSelect(conversation);
   }, [onSelect, conversation]);
 
+  // date-fns defaults to English with no locale option — fine for the
+  // website (untouched here), but inside the app (always Spanish-only
+  // Inox/Retail) it read as "less than a minute" with no translation.
   const timeAgo = conversation.last_message_at
     ? formatDistanceToNow(new Date(conversation.last_message_at), {
-        addSuffix: false,
+        addSuffix: embedded,
+        locale: embedded ? es : undefined,
       })
     : "";
 
@@ -592,7 +616,13 @@ function ConversationItem({
               <span
                 className={cn(
                   "flex items-center justify-center rounded-full bg-primary font-bold text-primary-foreground",
-                  embedded ? "h-[18px] min-w-[18px] px-1.5 text-[11px]" : "h-4 min-w-4 px-1 text-[10px]"
+                  // A touch bigger and a light ring (matching the card
+                  // background) so it reads as a distinct badge instead
+                  // of blending into the timestamp/status-dot cluster —
+                  // it was barely legible at the old 18px/no-border size.
+                  embedded
+                    ? "h-5 min-w-5 px-1.5 text-xs shadow-sm ring-2 ring-card"
+                    : "h-4 min-w-4 px-1 text-[10px]"
                 )}
               >
                 {conversation.unread_count}

@@ -16,6 +16,7 @@ import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isEmbeddedApp } from "@/lib/mobile-app";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -42,6 +43,12 @@ function InboxPageInner() {
    * automatically instead of showing the empty center panel.
    */
   const deepLinkConvId = searchParams.get("c");
+
+  // Only true inside the Android wrapper — see the root className below.
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(isEmbeddedApp());
+  }, []);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] =
@@ -584,7 +591,20 @@ function InboxPageInner() {
   const hasActiveConv = !!activeConversation;
 
   return (
-    <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+    <div
+      className={cn(
+        "flex flex-col overflow-hidden",
+        // The -m-4/calc(100vh-3.5rem) combo below cancels out the
+        // desktop shell's <main> padding and its fixed-height Header —
+        // numbers that only mean something in that specific layout.
+        // The embedded shell's <main> has no padding to cancel, and its
+        // own header can be 0px (hidden inside an open thread) or its
+        // full height (list screens) — h-full just inherits whatever
+        // height <main> actually has at the time, correctly, without
+        // hardcoding either shell's chrome dimensions here.
+        embedded ? "h-full" : "-m-4 h-[calc(100vh-3.5rem)] sm:-m-6"
+      )}
+    >
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
