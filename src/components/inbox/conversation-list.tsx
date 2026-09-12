@@ -9,9 +9,10 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, Pin } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -22,6 +23,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { isEmbeddedApp } from "@/lib/mobile-app";
+import { useAuth } from "@/hooks/use-auth";
+
+/** Matches the DB trigger in migration 063 — kept in sync manually
+ *  since there's no single source of truth shared between SQL and TS. */
+const MAX_PINNED_CONVERSATIONS = 3;
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -75,7 +81,8 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  
+  const { user } = useAuth();
+
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
@@ -112,6 +119,85 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+
+  // Per-agent conversation pins (migration 063) — personal, not shared:
+  // keyed by conversation_id -> pinned_at (ISO string) so pinned rows can
+  // be sorted most-recently-pinned-first, same as WhatsApp. RLS already
+  // scopes `conversation_pins` rows to `user_id = auth.uid()`, so this
+  // fetch never needs an explicit .eq('user_id', ...) filter for
+  // correctness — it's included anyway, matching the write side below.
+  const [pinnedAt, setPinnedAt] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!user?.id) return;
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("conversation_pins")
+        .select("conversation_id, pinned_at")
+        .eq("user_id", user.id);
+      if (!cancelled && data) {
+        setPinnedAt(
+          new Map(data.map((p) => [p.conversation_id as string, p.pinned_at as string]))
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const handleTogglePin = useCallback(
+    async (convId: string) => {
+      if (!user?.id) return;
+      const supabase = createClient();
+
+      if (pinnedAt.has(convId)) {
+        const previous = pinnedAt.get(convId)!;
+        setPinnedAt((prev) => {
+          const next = new Map(prev);
+          next.delete(convId);
+          return next;
+        });
+        const { error } = await supabase
+          .from("conversation_pins")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("conversation_id", convId);
+        if (error) {
+          console.error("Failed to unpin conversation:", error);
+          // Roll back the optimistic removal.
+          setPinnedAt((prev) => new Map(prev).set(convId, previous));
+          toast.error(t("unpinFailed"));
+        }
+        return;
+      }
+
+      if (pinnedAt.size >= MAX_PINNED_CONVERSATIONS) {
+        toast.error(t("pinLimitReached", { max: MAX_PINNED_CONVERSATIONS }));
+        return;
+      }
+
+      const now = new Date().toISOString();
+      setPinnedAt((prev) => new Map(prev).set(convId, now));
+      const { error } = await supabase
+        .from("conversation_pins")
+        .insert({ user_id: user.id, conversation_id: convId, pinned_at: now });
+      if (error) {
+        console.error("Failed to pin conversation:", error);
+        setPinnedAt((prev) => {
+          const next = new Map(prev);
+          next.delete(convId);
+          return next;
+        });
+        // The DB trigger enforces the same 3-pin cap server-side (a second
+        // tab/device could have pinned one in the meantime) — surface that
+        // race with the same message as the client-side check above.
+        toast.error(t("pinLimitReached", { max: MAX_PINNED_CONVERSATIONS }));
+      }
+    },
+    [user?.id, pinnedAt, t]
+  );
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -229,6 +315,22 @@ export function ConversationList({
 
     return result;
   }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+
+  // Pinned conversations float to the top (most-recently-pinned first),
+  // same as WhatsApp; everything else keeps the order `filtered` already
+  // gave it. Skips the partition entirely when nothing is pinned.
+  const sorted = useMemo(() => {
+    if (pinnedAt.size === 0) return filtered;
+    const pinned: Conversation[] = [];
+    const rest: Conversation[] = [];
+    for (const c of filtered) {
+      (pinnedAt.has(c.id) ? pinned : rest).push(c);
+    }
+    pinned.sort(
+      (a, b) => new Date(pinnedAt.get(b.id)!).getTime() - new Date(pinnedAt.get(a.id)!).getTime()
+    );
+    return [...pinned, ...rest];
+  }, [filtered, pinnedAt]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -521,13 +623,13 @@ export function ConversationList({
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
           </div>
         ) : (
           <div className={cn("flex flex-col", embedded && "gap-2 p-3")}>
-            {filtered.map((conv) => (
+            {sorted.map((conv) => (
               <ConversationItem
                 key={conv.id}
                 conversation={conv}
@@ -535,6 +637,8 @@ export function ConversationList({
                 onSelect={handleSelect}
                 t={t}
                 embedded={embedded}
+                isPinned={pinnedAt.has(conv.id)}
+                onTogglePin={handleTogglePin}
               />
             ))}
           </div>
@@ -550,6 +654,8 @@ interface ConversationItemProps {
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
   embedded?: boolean;
+  isPinned: boolean;
+  onTogglePin: (conversationId: string) => void;
 }
 
 function ConversationItem({
@@ -558,6 +664,8 @@ function ConversationItem({
   onSelect,
   t,
   embedded = false,
+  isPinned,
+  onTogglePin,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName =
@@ -567,6 +675,29 @@ function ConversationItem({
   const handleClick = useCallback(() => {
     onSelect(conversation);
   }, [onSelect, conversation]);
+
+  // Row switched from <button> to <div role="button"> (below) specifically
+  // so this pin toggle can be a real nested <button> — a <button> inside a
+  // <button> is invalid HTML and unreliable across browsers for click
+  // targeting. Keyboard activation (Enter/Space) for the row itself is
+  // handled by handleKeyDown below.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onSelect(conversation);
+      }
+    },
+    [onSelect, conversation]
+  );
+
+  const handlePinClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onTogglePin(conversation.id);
+    },
+    [onTogglePin, conversation.id]
+  );
 
   // date-fns defaults to English with no locale option — fine for the
   // website (untouched here). Inside the app it used the full Spanish
@@ -584,10 +715,13 @@ function ConversationItem({
   const hasUnread = conversation.unread_count > 0;
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
       className={cn(
-        "flex w-full min-w-0 items-start gap-3 text-left transition-colors",
+        "flex w-full min-w-0 cursor-pointer items-start gap-3 text-left transition-colors",
         embedded
           ? cn(
               "min-h-[68px] rounded-2xl border p-3.5 shadow-md active:shadow-sm",
@@ -640,13 +774,31 @@ function ConversationItem({
           >
             {displayName}
           </span>
-          <span
-            className={cn(
-              "shrink-0 whitespace-nowrap leading-none text-muted-foreground",
-              embedded ? "text-[11px] text-muted-foreground/70" : "text-[10px]"
-            )}
-          >
-            {timeAgo}
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={handlePinClick}
+              aria-label={isPinned ? t("unpin") : t("pin")}
+              title={isPinned ? t("unpin") : t("pin")}
+              className={cn(
+                "rounded-full p-0.5 transition-colors",
+                isPinned
+                  ? "text-primary"
+                  : "text-muted-foreground/40 hover:text-muted-foreground"
+              )}
+            >
+              <Pin
+                className={cn("h-3 w-3", isPinned && "fill-current")}
+              />
+            </button>
+            <span
+              className={cn(
+                "whitespace-nowrap leading-none text-muted-foreground",
+                embedded ? "text-[11px] text-muted-foreground/70" : "text-[10px]"
+              )}
+            >
+              {timeAgo}
+            </span>
           </span>
         </div>
         <div className={cn("flex items-center justify-between gap-2 overflow-hidden", embedded ? "mt-1" : "mt-0.5")}>
@@ -686,6 +838,6 @@ function ConversationItem({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }

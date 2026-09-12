@@ -154,6 +154,10 @@
       "company": "Empresa",
       "allCompanies": "Todas las empresas",
       "clearAll": "Limpiar todo",
+      "pin": "Anclar",
+      "unpin": "Desanclar",
+      "pinLimitReached": "Solo puedes anclar hasta {max} conversaciones",
+      "unpinFailed": "No se pudo desanclar la conversación",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Todavía no hay mensajes",
       "unknown": "Desconocido"
