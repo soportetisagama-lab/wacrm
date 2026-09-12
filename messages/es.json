@@ -158,6 +158,9 @@
       "unpin": "Desanclar",
       "pinLimitReached": "Solo puedes anclar hasta {max} conversaciones",
       "unpinFailed": "No se pudo desanclar la conversación",
+      "agent": "Asesor",
+      "allAgents": "Todos los asesores",
+      "unassigned": "Sin asignar",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Todavía no hay mensajes",
       "unknown": "Desconocido"
@@ -312,6 +315,7 @@
       "notes": "Notas",
       "deals": "Negocios",
       "noTags": "Sin etiquetas",
+      "removeTag": "Quitar etiqueta",
       "noDeals": "Sin negocios",
       "addNotePlaceholder": "Agregar una nota...",
       "adSource": "Origen del anuncio",

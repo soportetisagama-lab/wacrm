@@ -158,6 +158,9 @@
       "unpin": "Unpin",
       "pinLimitReached": "You can only pin up to {max} conversations",
       "unpinFailed": "Couldn't unpin the conversation",
+      "agent": "Agent",
+      "allAgents": "All agents",
+      "unassigned": "Unassigned",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
       "unknown": "Unknown"
@@ -312,6 +315,7 @@
       "notes": "Notes",
       "deals": "Deals",
       "noTags": "No tags",
+      "removeTag": "Remove tag",
       "noDeals": "No deals",
       "addNotePlaceholder": "Add a note...",
       "adSource": "Ad source",

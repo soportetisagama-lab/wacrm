@@ -8,7 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Tag } from "@/types";
+import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X, Pin } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -28,6 +28,10 @@ import { useAuth } from "@/hooks/use-auth";
 /** Matches the DB trigger in migration 063 — kept in sync manually
  *  since there's no single source of truth shared between SQL and TS. */
 const MAX_PINNED_CONVERSATIONS = 3;
+
+/** Sentinel for the "assigned agent" filter's "no agent assigned yet"
+ *  option — distinct from `null`, which means "no filter, show all". */
+const UNASSIGNED_AGENT = "__unassigned__";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -196,7 +200,7 @@ export function ConversationList({
         toast.error(t("pinLimitReached", { max: MAX_PINNED_CONVERSATIONS }));
       }
     },
-    [user?.id, pinnedAt, t]
+    [user, pinnedAt, t]
   );
 
   // Keep the latest callback in a ref so the fetch effect below can
@@ -266,6 +270,37 @@ export function ConversationList({
     };
   }, []);
 
+  // Team members for the "assigned agent" filter (web only, see the
+  // dropdown below) and for showing who's handling each row inline.
+  // Same query message-thread.tsx already runs for its own "Asignar"
+  // dropdown — RLS bounds this to whatever the current user is allowed
+  // to see.
+  const [agents, setAgents] = useState<Profile[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("full_name");
+      if (!cancelled) {
+        if (error) console.error("Failed to fetch agents:", error);
+        else setAgents((data as Profile[]) ?? []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const agentsById = useMemo(() => {
+    const m = new Map<string, Profile>();
+    for (const a of agents) m.set(a.user_id, a);
+    return m;
+  }, [agents]);
+
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
   // are worth offering as an inbox filter.
@@ -313,8 +348,14 @@ export function ConversationList({
       });
     }
 
+    if (selectedAgentId === UNASSIGNED_AGENT) {
+      result = result.filter((c) => !c.assigned_agent_id);
+    } else if (selectedAgentId) {
+      result = result.filter((c) => c.assigned_agent_id === selectedAgentId);
+    }
+
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, search, selectedTagIds, selectedCompany, selectedAgentId]);
 
   // Pinned conversations float to the top (most-recently-pinned first),
   // same as WhatsApp; everything else keeps the order `filtered` already
@@ -550,6 +591,70 @@ export function ConversationList({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+
+          {/* Web only, per product ask — the embedded app's filter row is
+              already the WhatsApp-style chip strip above and doesn't have
+              room for a fourth control. */}
+          {!embedded && agents.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  selectedAgentId
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <span className="truncate">
+                  {selectedAgentId === UNASSIGNED_AGENT
+                    ? t("unassigned")
+                    : (agentsById.get(selectedAgentId ?? "")?.full_name ?? t("agent"))}
+                </span>
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="max-h-64 w-56 border-border bg-popover"
+              >
+                <DropdownMenuItem
+                  onClick={() => setSelectedAgentId(null)}
+                  className={cn(
+                    "text-sm",
+                    selectedAgentId === null
+                      ? "text-primary"
+                      : "text-popover-foreground"
+                  )}
+                >
+                  {t("allAgents")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setSelectedAgentId(UNASSIGNED_AGENT)}
+                  className={cn(
+                    "text-sm",
+                    selectedAgentId === UNASSIGNED_AGENT
+                      ? "text-primary"
+                      : "text-popover-foreground"
+                  )}
+                >
+                  {t("unassigned")}
+                </DropdownMenuItem>
+                {agents.map((a) => (
+                  <DropdownMenuItem
+                    key={a.user_id}
+                    onClick={() => setSelectedAgentId(a.user_id)}
+                    className={cn(
+                      "text-sm",
+                      selectedAgentId === a.user_id
+                        ? "text-primary"
+                        : "text-popover-foreground"
+                    )}
+                  >
+                    <span className="truncate">{a.full_name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         {hasContactFilters && (
@@ -639,6 +744,11 @@ export function ConversationList({
                 embedded={embedded}
                 isPinned={pinnedAt.has(conv.id)}
                 onTogglePin={handleTogglePin}
+                assignedAgentName={
+                  conv.assigned_agent_id
+                    ? (agentsById.get(conv.assigned_agent_id)?.full_name ?? null)
+                    : null
+                }
               />
             ))}
           </div>
@@ -656,6 +766,8 @@ interface ConversationItemProps {
   embedded?: boolean;
   isPinned: boolean;
   onTogglePin: (conversationId: string) => void;
+  /** Web only (see the render call) — null when unassigned. */
+  assignedAgentName: string | null;
 }
 
 function ConversationItem({
@@ -666,6 +778,7 @@ function ConversationItem({
   embedded = false,
   isPinned,
   onTogglePin,
+  assignedAgentName,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName =
@@ -766,14 +879,26 @@ function ConversationItem({
           flex layout allocated it, whatever the exact cause was. */}
       <div className="min-w-0 flex-1 overflow-hidden">
         <div className="flex items-center justify-between gap-2 overflow-hidden">
-          <span
-            className={cn(
-              "min-w-0 truncate text-foreground",
-              embedded ? "text-[15px] font-semibold" : "text-sm font-medium"
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            <span
+              className={cn(
+                "min-w-0 truncate text-foreground",
+                embedded ? "text-[15px] font-semibold" : "text-sm font-medium"
+              )}
+            >
+              {displayName}
+            </span>
+            {/* Web only — the embedded card is already tight on space and
+                this is a "who's handling it" hint, not essential there. */}
+            {!embedded && assignedAgentName && (
+              <span
+                className="shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                title={assignedAgentName}
+              >
+                {assignedAgentName}
+              </span>
             )}
-          >
-            {displayName}
-          </span>
+          </div>
           <span className="flex shrink-0 items-center gap-1">
             <button
               type="button"
