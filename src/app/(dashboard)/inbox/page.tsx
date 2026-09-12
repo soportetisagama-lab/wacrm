@@ -619,10 +619,24 @@ function InboxPageInner() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
-            thread can occupy the full width. Always visible on lg+. */}
+            thread can occupy the full width. Always visible on lg+.
+
+            `min-w-0` is load-bearing, same reasoning as the thread
+            panel below (issue #165): as a flex item of the row above,
+            this wrapper's automatic min-width otherwise falls back to
+            the min-content size of its subtree. ConversationList's own
+            root — and the search/chips rows inside it — already carry
+            min-w-0 (see the three rounds of fixes in
+            conversation-list.tsx: 5b3e577, b039599, ff6b5ab), but that
+            doesn't reliably bubble up through an ancestor flex item
+            that itself lacks min-w-0 — this wrapper was the one
+            remaining link in the chain still defaulting to
+            min-width:auto, which is what kept forcing the embedded
+            search bar and scrollable filter chips wider than the
+            screen instead of letting them shrink/scroll internally. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            "flex h-full min-w-0 flex-1 lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >
