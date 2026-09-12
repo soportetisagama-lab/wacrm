@@ -133,6 +133,7 @@ interface WhatsAppMessage {
    */
   contacts?: Array<{
     origin?: 'contact_request' | 'other'
+    name?: { formatted_name?: string }
     phones?: Array<{ phone: string; type?: string; wa_id?: string }>
   }>
 }
@@ -1021,6 +1022,82 @@ async function promoteBsuidContactPhoneIfRequested(
   }
 }
 
+/**
+ * Root-cause fix for a duplicate-contact/duplicate-conversation bug
+ * confirmed against production data (a BSUID-only contact and a
+ * phone-only contact for the same person, 42 seconds apart, each with
+ * their own conversation that independently replayed the flow's
+ * welcome message).
+ *
+ * The customer's reply to our own REQUEST_CONTACT_INFO button arrives
+ * as `type: 'contacts'` with `origin: 'contact_request'` — but Meta
+ * populates `message.from` with the customer's REAL phone number on
+ * THIS ONE delivery, even though every other message from a
+ * username-only sender omits it. `findOrCreateContact` always
+ * prioritizes phone over BSUID when a phone is present, so without
+ * this special case it resolved a brand-new phone-keyed contact
+ * instead of the existing BSUID-keyed one already mid-conversation —
+ * `findOrCreateConversation` then opened a second conversation for
+ * that new contact, and `promoteBsuidContactPhoneIfRequested` (below)
+ * ran too late to help: by then it was being asked to promote the
+ * phone onto the WRONG (already-phone-having) contact, so its
+ * `contact.phone` guard just no-opped.
+ *
+ * Resolves + promotes directly onto the ORIGINAL BSUID contact so the
+ * caller reuses it (and therefore reuses the same conversation).
+ * Returns null for every other case (not this exact reply, no BSUID,
+ * no matching contact yet) so the caller falls through to the normal
+ * findOrCreateContact(phone, bsuid, name) resolution unchanged.
+ */
+async function resolveContactRequestReply(
+  message: WhatsAppMessage,
+  accountId: string,
+  senderBsuid: string | null,
+): Promise<ContactOutcome | null> {
+  if (message.type !== 'contacts' || !senderBsuid) return null
+  const shared = message.contacts?.[0]
+  if (!shared || shared.origin !== 'contact_request') return null
+
+  const existing = await findExistingContactByBsuid(supabaseAdmin(), accountId, senderBsuid)
+  if (!existing) return null // no BSUID contact yet — let the normal path create one
+
+  if (existing.phone) return { contact: existing, wasCreated: false } // already promoted
+
+  const rawPhone = shared.phones?.[0]?.phone
+  const sanitized = rawPhone ? normalizePhone(rawPhone) : null
+  if (!sanitized) return { contact: existing, wasCreated: false }
+
+  // Same collision guard as promoteBsuidContactPhoneIfRequested: don't
+  // blindly attach a phone that already belongs to a different contact.
+  const collision = await findExistingContact(supabaseAdmin(), accountId, sanitized)
+  if (collision && collision.id !== existing.id) {
+    console.warn(
+      `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} already belongs to contact ${collision.id}; not merging into ${existing.id}`
+    )
+    return { contact: existing, wasCreated: false }
+  }
+
+  const { data: updated, error } = await supabaseAdmin()
+    .from('contacts')
+    .update({ phone: sanitized, updated_at: new Date().toISOString() })
+    .eq('id', existing.id)
+    .select()
+    .single()
+
+  if (error) {
+    if (isUniqueViolation(error)) {
+      console.warn(
+        `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} collided with another contact on write; not merging`
+      )
+    } else {
+      console.error('[webhook] Error promoting BSUID contact phone (pre-resolution):', error)
+    }
+    return { contact: existing, wasCreated: false }
+  }
+
+  return { contact: updated, wasCreated: false }
+}
+
 async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
@@ -1046,14 +1123,19 @@ async function processMessage(
   const senderBsuid = message.from_user_id ?? null
   const contactName = contact.profile.name
 
-  // Find or create contact
-  const contactOutcome = await findOrCreateContact(
-    accountId,
-    configOwnerUserId,
-    senderPhone,
-    senderBsuid,
-    contactName
-  )
+  // Find or create contact. The REQUEST_CONTACT_INFO reply special case
+  // must run FIRST and win — see resolveContactRequestReply's doc
+  // comment for why the generic phone-priority path below would
+  // otherwise silently fork this contact (and conversation) in two.
+  const contactOutcome =
+    (await resolveContactRequestReply(message, accountId, senderBsuid)) ??
+    (await findOrCreateContact(
+      accountId,
+      configOwnerUserId,
+      senderPhone,
+      senderBsuid,
+      contactName
+    ))
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
 
@@ -1627,6 +1709,21 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'contacts': {
+      // Previously fell to `default` and stored the literal string
+      // "[Unsupported message type: contacts]" — this is what a customer
+      // sees in the inbox after replying to our own REQUEST_CONTACT_INFO
+      // button (or sharing a card unprompted). The actual merge of the
+      // shared phone onto a BSUID contact happens elsewhere
+      // (resolveContactRequestReply / promoteBsuidContactPhoneIfRequested)
+      // — this only makes the message bubble itself legible.
+      const shared = message.contacts?.[0]
+      const name = shared?.name?.formatted_name
+      const phone = shared?.phones?.[0]?.phone
+      const label = [name, phone].filter(Boolean).join(' · ')
+      return { ...empty, contentText: `📇 ${label || 'Contacto compartido'}` }
     }
 
     default:
