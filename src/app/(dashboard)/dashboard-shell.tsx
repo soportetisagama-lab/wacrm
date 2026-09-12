@@ -1,17 +1,19 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
-import { isEmbeddedApp } from "@/lib/mobile-app";
+import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
+import { App } from "@capacitor/app";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -21,7 +23,7 @@ const SIDEBAR_COLLAPSED_KEY = 'wacrm.sidebarCollapsed';
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const t = useTranslations("Common");
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const router = useRouter();
 
   // Set once on mount — the Android WebView wrapper's User-Agent never
@@ -85,7 +87,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   // Android WebView wrapper: the app IS a small, phone-first tool — no
   // desktop Sidebar/Header — in favor of a WhatsApp-style bare shell:
-  // a slim centered-logo bar on top, the page's own content (already
+  // a slim top bar on list screens, the page's own content (already
   // responsive down to phone width — see /inbox's list/thread panes)
   // filling the middle, and a floating "liquid glass" bottom tab bar
   // (Bandeja/Contactos/Notificaciones — deliberately not the full,
@@ -97,31 +99,11 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     return (
       <UnreadNotificationsProvider>
         <TotalUnreadProvider>
-          <div className="flex h-screen flex-col overflow-hidden bg-background">
-            <PresenceHeartbeat />
-            {/* The same brand gradient the desktop Header uses
-                (--header-bg/--header-bg-2 — blue for Inox, orange for
-                Retail, set per git branch in globals.css) instead of a
-                flat dark panel: this is the app's actual "line color",
-                and it's what makes the desktop header read as branded
-                instead of generic. The logo is a light/white wordmark,
-                so it still needs a dark-enough background to read —
-                the brand color already provides that contrast. */}
-            <div className="relative flex shrink-0 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] py-4 shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
-              <Image
-                src="/branding/SAGAMAMENU.png"
-                alt="Sagama CRM"
-                width={882}
-                height={283}
-                priority
-                className="h-auto w-full max-w-[130px] drop-shadow-sm"
-              />
-            </div>
-            <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
-            <Suspense fallback={null}>
-              <MobileBottomNav />
-            </Suspense>
-          </div>
+          <Suspense fallback={null}>
+            <EmbeddedShell advisorName={profile?.full_name || profile?.email || null}>
+              {children}
+            </EmbeddedShell>
+          </Suspense>
         </TotalUnreadProvider>
       </UnreadNotificationsProvider>
     );
@@ -156,6 +138,102 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
         </div>
       </TotalUnreadProvider>
     </UnreadNotificationsProvider>
+  );
+}
+
+/**
+ * The embedded (Android wrapper) shell's own route-aware bits —
+ * split out from DashboardShellInner because useSearchParams()
+ * requires a Suspense boundary, and only this branch needs it.
+ */
+function EmbeddedShell({
+  children,
+  advisorName,
+}: {
+  children: React.ReactNode;
+  advisorName: string | null;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isThreadOpen = isInboxThreadRoute(pathname, searchParams);
+
+  // Keep the latest route in a ref so the back-button listener (set up
+  // once below) always reads current state instead of the closure from
+  // whenever it was registered — avoids tearing the native listener
+  // down and re-adding it on every navigation.
+  const routeRef = useRef({ pathname, searchParams });
+  useEffect(() => {
+    routeRef.current = { pathname, searchParams };
+  });
+
+  // Hardware back button (Android): inside an open conversation thread,
+  // go back to the list — same place the in-app back arrow goes.
+  // Anywhere else (any list screen — Bandeja/Contactos/Notificaciones)
+  // is "root" for this phone-only shell, so back there exits the app,
+  // same as pressing back on WhatsApp's own chat list. Without this
+  // listener the WebView's default behaviour is to just close the
+  // activity outright, even from inside a chat.
+  useEffect(() => {
+    let listenerHandle: { remove: () => void } | undefined;
+    let cancelled = false;
+    App.addListener("backButton", () => {
+      const { pathname: currentPath, searchParams: currentParams } = routeRef.current;
+      if (isInboxThreadRoute(currentPath, currentParams)) {
+        router.replace("/inbox", { scroll: false });
+      } else {
+        App.exitApp();
+      }
+    }).then((handle) => {
+      if (cancelled) {
+        handle.remove();
+      } else {
+        listenerHandle = handle;
+      }
+    });
+    return () => {
+      cancelled = true;
+      listenerHandle?.remove();
+    };
+  }, [router]);
+
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
+      <PresenceHeartbeat />
+      {/* The logo/brand bar only belongs on the list screens — inside an
+          open chat, MessageThread renders its own header (contact name,
+          status, back arrow) and every pixel of height matters, same as
+          WhatsApp never doubling up its chat-list header inside a chat. */}
+      {!isThreadOpen && (
+        <div className="relative flex shrink-0 items-center justify-between gap-3 overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
+          <Image
+            src="/branding/SAGAMAMENU.png"
+            alt="Sagama CRM"
+            width={882}
+            height={283}
+            priority
+            className="h-auto w-[100px] shrink-0 drop-shadow-sm"
+          />
+          <div className="flex min-w-0 items-center gap-2">
+            {advisorName && (
+              <span className="max-w-[110px] truncate text-xs font-semibold text-white/95">
+                {advisorName}
+              </span>
+            )}
+            <ModeToggle className="h-9 w-9 shrink-0 rounded-full text-white/90 hover:bg-white/15 hover:text-white" />
+          </div>
+        </div>
+      )}
+      <main className="min-h-0 flex-1 overflow-hidden">
+        {/* Keyed by route so switching Bandeja/Contactos/Notificaciones
+            (and re-entering a thread) gets a quick, deliberate fade
+            instead of an instant hard cut. */}
+        <div key={pathname + (isThreadOpen ? "-thread" : "")} className="h-full animate-in fade-in duration-200">
+          {children}
+        </div>
+      </main>
+      {!isThreadOpen && <MobileBottomNav />}
+    </div>
   );
 }
 

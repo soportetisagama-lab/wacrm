@@ -58,6 +58,7 @@ import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 import { isEmbeddedApp } from '@/lib/mobile-app';
+import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 25;
 
@@ -349,9 +350,16 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className={cn("space-y-6", embedded && "p-4")}>
+      {/* Header — wrapped in its own card when embedded so the title
+          and subtitle read as a designed block instead of plain text
+          floating on the page background. */}
+      <div
+        className={cn(
+          "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4",
+          embedded && "rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
+        )}
+      >
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -576,18 +584,18 @@ export default function ContactsPage() {
                 <div
                   key={contact.id}
                   onClick={() => openDetail(contact.id)}
-                  className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card p-3 shadow-md active:shadow-sm"
+                  className="flex min-h-[68px] items-center gap-3 rounded-2xl border border-border/40 bg-card p-3.5 shadow-md active:bg-muted/40 active:shadow-sm"
                 >
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-medium text-primary">
                     {initials}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">
+                    <p className="truncate text-[15px] font-semibold text-foreground">
                       {contact.name || (
                         <span className="italic text-muted-foreground">{t('unnamed')}</span>
                       )}
                     </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground">
+                    <p className="truncate font-mono text-[13px] text-muted-foreground/80">
                       {contact.phone || '-'}
                     </p>
                     {contact.tags && contact.tags.length > 0 && (

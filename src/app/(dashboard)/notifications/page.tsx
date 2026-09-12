@@ -173,8 +173,13 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className={cn("space-y-6", embedded && "p-4")}>
+      <div
+        className={cn(
+          "flex items-center justify-between",
+          embedded && "rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
+        )}
+      >
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -209,7 +214,7 @@ export default function NotificationsPage() {
           </p>
         </div>
       ) : (
-        <ul className={cn("space-y-2", embedded && "-mx-4 bg-muted/60 p-3")}>
+        <ul className={cn("space-y-2", embedded && "rounded-2xl bg-muted/60 p-3")}>
           {notifications.map((n) => {
             const Icon = TYPE_ICON[n.type] ?? Bell;
             const isUnread = !n.read_at;
@@ -223,7 +228,7 @@ export default function NotificationsPage() {
                     isUnread
                       ? "border-primary/30 bg-primary/5 hover:border-primary/50"
                       : "border-border bg-card hover:border-border/70",
-                    embedded && "rounded-2xl shadow-md active:shadow-sm",
+                    embedded && "min-h-[68px] rounded-2xl p-3.5 shadow-md active:bg-muted/40 active:shadow-sm",
                   )}
                 >
                   <div
@@ -253,7 +258,10 @@ export default function NotificationsPage() {
                       {isUnread && (
                         <span
                           aria-label={t("unread")}
-                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
+                          className={cn(
+                            "flex-shrink-0 rounded-full bg-primary",
+                            embedded ? "h-2.5 w-2.5" : "h-2 w-2",
+                          )}
                         />
                       )}
                     </div>

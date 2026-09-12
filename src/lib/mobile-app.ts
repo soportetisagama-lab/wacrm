@@ -18,3 +18,18 @@ export function isEmbeddedApp(): boolean {
   if (typeof navigator === "undefined") return false;
   return navigator.userAgent.includes(MOBILE_APP_UA_MARKER);
 }
+
+/**
+ * True when the given route describes an open /inbox conversation
+ * thread (`/inbox?c=<id>`) rather than the conversation list. Derived
+ * purely from the URL — not React state — so it's correct on the very
+ * first render after a refresh, and safe to check from anywhere
+ * (mobile-bottom-nav.tsx, dashboard-shell.tsx) without those places
+ * needing to agree on or share any local state.
+ */
+export function isInboxThreadRoute(
+  pathname: string,
+  searchParams: URLSearchParams
+): boolean {
+  return pathname === "/inbox" && searchParams.has("c");
+}

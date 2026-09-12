@@ -556,7 +556,18 @@ export function MessageComposer({
   // ---- Render --------------------------------------------------------
 
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div
+      className={cn(
+        "border-t border-border bg-card p-3",
+        // The fixed-width send button was sitting flush against the
+        // screen edge on devices with a rounded corner / camera cutout
+        // on that side — safe-area-inset makes sure it isn't, and the
+        // slightly larger base padding matches the rest of the app's
+        // more generous embedded spacing.
+        embedded &&
+          "pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]"
+      )}
+    >
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -823,7 +834,9 @@ export function MessageComposer({
                 ? t("readOnlyPlaceholder")
                 : sessionExpired
                   ? t("sessionExpiredPlaceholder")
-                  : t("typeMessagePlaceholder")
+                  : embedded
+                    ? t("typeMessagePlaceholderApp")
+                    : t("typeMessagePlaceholder")
             }
             disabled={sessionExpired || readOnly}
             rows={1}

@@ -247,25 +247,57 @@ export function ConversationList({
       <div
         className={cn(
           "space-y-2 border-b border-border p-3",
-          embedded && "bg-card"
+          embedded && "space-y-3 bg-card pb-3 pt-5"
         )}
       >
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            className={cn(
+              "absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground",
+              embedded && "left-4 h-[18px] w-[18px]"
+            )}
+          />
           <Input
             value={search}
             onChange={handleSearchChange}
             placeholder={t("searchPlaceholder")}
             className={cn(
               "border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50",
-              embedded && "h-11 rounded-full bg-muted/80"
+              embedded && "h-12 rounded-full bg-muted/80 pl-11 text-[15px]"
             )}
           />
         </div>
 
+        {/* WhatsApp-style scrollable filter chips — embedded only. The
+            desktop dropdown below stays untouched for the website. */}
+        {embedded && (
+          <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {FILTER_OPTIONS.map((opt) => {
+              const isActiveFilter = filter === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFilter(opt.value)}
+                  className={cn(
+                    "shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors",
+                    isActiveFilter
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-muted text-muted-foreground active:bg-muted/70"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-1">
+          {/* Replaced by the chip row above when embedded — the tags/
+              company filters just below stay available either way. */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+            <DropdownMenuTrigger className={cn("inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted", embedded && "hidden")}>
                 {activeFilter?.label ?? t("filterAll")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
@@ -482,6 +514,7 @@ function ConversationItem({
     : "";
 
   const avatarSize = embedded ? "h-12 w-12" : "h-10 w-10";
+  const hasUnread = conversation.unread_count > 0;
 
   return (
     <button
@@ -490,10 +523,15 @@ function ConversationItem({
         "flex w-full min-w-0 items-start gap-3 text-left transition-colors",
         embedded
           ? cn(
-              "rounded-2xl border p-3 shadow-md active:shadow-sm",
+              "min-h-[68px] rounded-2xl border p-3.5 shadow-md active:shadow-sm",
               isActive
                 ? "border-primary/40 bg-primary/5"
-                : "border-border/40 bg-card active:bg-muted/40"
+                : hasUnread
+                  // Same accent as the unread badge/dot below, just at a
+                  // much lower opacity — makes an unread row readable at
+                  // a glance instead of only via the small dot.
+                  ? "border-primary/20 bg-primary/[0.06] active:bg-muted/40"
+                  : "border-border/40 bg-card active:bg-muted/40"
             )
           : cn(
               "px-3 py-3 hover:bg-muted/50",
@@ -523,26 +561,47 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-sm font-medium text-foreground">
+          <span
+            className={cn(
+              "min-w-0 truncate text-foreground",
+              embedded ? "text-[15px] font-semibold" : "text-sm font-medium"
+            )}
+          >
             {displayName}
           </span>
-          <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
+          <span
+            className={cn(
+              "shrink-0 whitespace-nowrap text-muted-foreground",
+              embedded ? "text-[11px]/none text-muted-foreground/70" : "text-[10px]"
+            )}
+          >
             {timeAgo}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-xs text-muted-foreground">
+        <div className={cn("flex items-center justify-between gap-2", embedded ? "mt-1" : "mt-0.5")}>
+          <p
+            className={cn(
+              "min-w-0 truncate text-muted-foreground",
+              embedded ? "text-[13px] text-muted-foreground/80" : "text-xs"
+            )}
+          >
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
-            {conversation.unread_count > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+            {hasUnread && (
+              <span
+                className={cn(
+                  "flex items-center justify-center rounded-full bg-primary font-bold text-primary-foreground",
+                  embedded ? "h-[18px] min-w-[18px] px-1.5 text-[11px]" : "h-4 min-w-4 px-1 text-[10px]"
+                )}
+              >
                 {conversation.unread_count}
               </span>
             )}
             <span
               className={cn(
-                "h-2 w-2 shrink-0 rounded-full",
+                "shrink-0 rounded-full",
+                embedded ? "h-2.5 w-2.5" : "h-2 w-2",
                 STATUS_COLORS[conversation.status]
               )}
               title={conversation.status}

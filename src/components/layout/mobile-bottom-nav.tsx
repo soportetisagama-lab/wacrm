@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import { useTranslations } from "next-intl";
+import { isInboxThreadRoute } from "@/lib/mobile-app";
 
 /**
  * Bottom tab bar for the Android WebView wrapper (see dashboard-shell.tsx's
@@ -36,8 +37,7 @@ export function MobileBottomNav() {
   // here would sit on top of (or steal height from) the message
   // composer. Hide it entirely and give the thread the full viewport;
   // its own back arrow returns to the list, where the bar reappears.
-  const isInboxThreadOpen = pathname === "/inbox" && !!searchParams.get("c");
-  if (isInboxThreadOpen) return null;
+  if (isInboxThreadRoute(pathname, searchParams)) return null;
 
   return (
     <nav
@@ -59,7 +59,7 @@ export function MobileBottomNav() {
               key={tab.href}
               href={tab.href}
               className={cn(
-                "relative mx-1 flex flex-1 flex-col items-center gap-0.5 rounded-full py-1.5 text-[10px] font-medium tracking-wide uppercase transition-all",
+                "relative mx-1 flex flex-1 flex-col items-center gap-0.5 rounded-full py-2 text-[10px] font-medium tracking-wide uppercase transition-all",
                 isActive
                   ? "bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] text-white shadow-md"
                   : "text-muted-foreground hover:text-foreground"
@@ -70,7 +70,7 @@ export function MobileBottomNav() {
                 {badgeCount > 0 && (
                   <span
                     className={cn(
-                      "absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold normal-case",
+                      "absolute -top-2 -right-2.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-semibold normal-case",
                       isActive
                         ? "bg-white text-[var(--header-bg)]"
                         : "bg-primary text-primary-foreground"

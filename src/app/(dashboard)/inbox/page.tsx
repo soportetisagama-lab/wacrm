@@ -501,6 +501,28 @@ function InboxPageInner() {
     router.replace("/inbox", { scroll: false });
   }, [router]);
 
+  // Mirrors handleCloseConversation's reset, but reacts to `?c=` being
+  // dropped from OUTSIDE this component instead of the in-app back
+  // button calling that handler directly — namely the Android wrapper's
+  // hardware back button (dashboard-shell.tsx), which only has access
+  // to the router, not this page's local state. Keys off an observed
+  // non-null → null transition (via the ref) rather than just "is
+  // currently null", so it can't fire from the transient render where a
+  // just-selected conversation's URL update hasn't landed yet — at that
+  // point the *previous* value was already null too, so the condition
+  // below stays false until deepLinkConvId genuinely reflects the open
+  // thread first.
+  const prevDeepLinkConvIdRef = useRef(deepLinkConvId);
+  useEffect(() => {
+    const prev = prevDeepLinkConvIdRef.current;
+    prevDeepLinkConvIdRef.current = deepLinkConvId;
+    if (prev && !deepLinkConvId && activeConversation) {
+      setActiveConversation(null);
+      setActiveContact(null);
+      setMessages([]);
+      autoSelectedForDeepLinkRef.current = null;
+    }
+  }, [deepLinkConvId, activeConversation]);
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
