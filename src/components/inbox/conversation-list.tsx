@@ -265,7 +265,7 @@ export function ConversationList({
     // row with the thread + contact sidebar.
     <div
       className={cn(
-        "flex h-full w-full flex-col border-r border-border lg:w-80",
+        "flex h-full w-full min-w-0 flex-col border-r border-border lg:w-80",
         // The card rows below are bg-card on an otherwise near-identical
         // bg-background (both ~white in light mode) — with no canvas
         // behind them a "card" has nothing to contrast against and reads
@@ -494,7 +494,29 @@ export function ConversationList({
           every conversation instead of shrinking to the remaining
           space — the list then overflows and gets clipped by the
           parent's overflow-hidden with no scrollbar (issue #229). */}
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea
+        className={cn(
+          // The real root cause: as a flex item, ScrollArea's Root
+          // defaults to min-width:auto, refusing to shrink below its
+          // content's natural width — that demand pushed the whole
+          // list wider than the screen (search bar and chips included,
+          // since they share this same flex-col parent). min-w-0 lets
+          // it actually shrink to the space it's given, which is what
+          // keeps both side margins intact like Notificaciones already
+          // has.
+          "min-h-0 min-w-0 flex-1",
+          // @base-ui/react's ScrollArea Viewport hardcodes
+          // `style={{ overflow: 'scroll' }}` on BOTH axes as a library
+          // default (it's not something our own className controls) —
+          // if a row ever computes even a hair wider than the screen,
+          // instead of clipping it just becomes reachable by swiping
+          // right, which nobody does on a chat list, so it looks like
+          // missing/cut-off text. `!` (important) is required to beat
+          // that inline style's specificity; targeted at the Viewport
+          // via its own data-slot so this can't affect anything else.
+          embedded && "[&_[data-slot=scroll-area-viewport]]:overflow-x-hidden!"
+        )}
+      >
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -603,9 +625,13 @@ function ConversationItem({
         )}
       </div>
 
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
+      {/* Content — overflow-hidden on this and both inner rows is a
+          hard backstop: min-w-0/truncate on the individual name and
+          message spans should already be enough, but this guarantees
+          neither row can ever force its own box wider than what the
+          flex layout allocated it, whatever the exact cause was. */}
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="flex items-center justify-between gap-2 overflow-hidden">
           <span
             className={cn(
               "min-w-0 truncate text-foreground",
@@ -616,14 +642,14 @@ function ConversationItem({
           </span>
           <span
             className={cn(
-              "shrink-0 whitespace-nowrap text-muted-foreground",
-              embedded ? "text-[11px]/none text-muted-foreground/70" : "text-[10px]"
+              "shrink-0 whitespace-nowrap leading-none text-muted-foreground",
+              embedded ? "text-[11px] text-muted-foreground/70" : "text-[10px]"
             )}
           >
             {timeAgo}
           </span>
         </div>
-        <div className={cn("flex items-center justify-between gap-2", embedded ? "mt-1" : "mt-0.5")}>
+        <div className={cn("flex items-center justify-between gap-2 overflow-hidden", embedded ? "mt-1" : "mt-0.5")}>
           <p
             className={cn(
               "min-w-0 truncate text-muted-foreground",
