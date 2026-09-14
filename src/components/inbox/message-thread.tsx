@@ -153,7 +153,11 @@ const STATUS_OPTIONS: {
   value: ConversationStatus;
   color: string;
 }[] = [
-  { label: 'Open', value: 'open', color: 'text-primary' },
+  // 'open' is fixed to green rather than `text-primary` on purpose —
+  // primary is each line's brand color (e.g. Retail's is orange), which
+  // collides with Pending's amber and made "answered" indistinguishable
+  // from "pending" there. Green stays constant across every brand.
+  { label: 'Open', value: 'open', color: 'text-green-500' },
   { label: 'Pending', value: 'pending', color: 'text-amber-400' },
   { label: 'Closed', value: 'closed', color: 'text-muted-foreground' },
 ];

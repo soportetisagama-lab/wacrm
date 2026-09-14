@@ -321,6 +321,8 @@
       "adSource": "광고 출처",
       "viewAd": "광고 보기",
       "adId": "광고 ID",
+      "collapseAd": "광고 접기",
+      "expandAd": "광고 펼치기",
       "noPhoneNumber": "전화번호 없음"
     },
     "aiBanner": {

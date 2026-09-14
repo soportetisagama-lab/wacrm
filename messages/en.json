@@ -321,6 +321,8 @@
       "adSource": "Ad source",
       "viewAd": "View ad",
       "adId": "Ad ID",
+      "collapseAd": "Collapse ad",
+      "expandAd": "Expand ad",
       "noPhoneNumber": "No phone number"
     },
     "aiBanner": {
