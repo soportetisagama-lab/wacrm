@@ -938,7 +938,7 @@ async function sendBsuidContactInfoRequest(
       conversation_id: conversationId,
       sender_type: 'bot',
       content_type: 'interactive',
-      content_text: 'Requested contact info',
+      content_text: 'Se solicitó el número de contacto',
       message_id: messageId,
       status: 'sent',
     })
@@ -949,7 +949,7 @@ async function sendBsuidContactInfoRequest(
     await supabaseAdmin()
       .from('conversations')
       .update({
-        last_message_text: 'Requested contact info',
+        last_message_text: 'Se solicitó el número de contacto',
         last_message_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
