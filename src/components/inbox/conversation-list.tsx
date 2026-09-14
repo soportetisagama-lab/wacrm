@@ -47,8 +47,13 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
+// 'open' is fixed to green rather than `bg-primary` — primary is each
+// line's brand color (e.g. Retail's is orange), which collided with
+// Pending's amber and made "answered" indistinguishable from
+// "pending" there. Green stays constant across every brand. Mirrors
+// the same fix in message-thread.tsx's STATUS_OPTIONS.
 const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-primary",
+  open: "bg-green-500",
   pending: "bg-amber-500",
   closed: "bg-muted-foreground",
 };
@@ -85,7 +90,7 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  const { user } = useAuth();
+  const { user, isAgent } = useAuth();
 
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
@@ -594,8 +599,12 @@ export function ConversationList({
 
           {/* Web only, per product ask — the embedded app's filter row is
               already the WhatsApp-style chip strip above and doesn't have
-              room for a fourth control. */}
-          {!embedded && agents.length > 0 && (
+              room for a fourth control. Hidden for Asesor (agent):
+              can_view_conversation (migration 039) already scopes their
+              conversation list to only their own, so this filter can
+              never do anything for them — it would just expose every
+              other teammate's name for no functional reason. */}
+          {!embedded && !isAgent && agents.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(

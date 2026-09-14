@@ -17,6 +17,7 @@ import {
   Plus,
   Megaphone,
   X,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -48,6 +49,9 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [referrals, setReferrals] = useState<ConversationReferral[]>([]);
+  // Collapses only the ad's own headline/body per referral card — the
+  // ad id and date/time below stay visible either way (see the JSX).
+  const [collapsedReferralIds, setCollapsedReferralIds] = useState<Set<string>>(new Set());
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -126,9 +130,28 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
       .then(({ data }) => setReferrals(data ?? []));
   }, [conversationId]);
 
+  const toggleReferralCollapsed = useCallback((referralId: string) => {
+    setCollapsedReferralIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(referralId)) next.delete(referralId);
+      else next.add(referralId);
+      return next;
+    });
+  }, []);
+
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
-    await navigator.clipboard.writeText(contact.phone);
+    // Copy just the 9-digit local number, without Peru's "51" country
+    // code — agents/ATC paste this into systems that expect the bare
+    // number. The displayed text above is untouched; only the
+    // clipboard value changes. Only strips it for the exact
+    // "51" + 9-digit shape so a differently-formatted number (a
+    // landline, or some future non-Peru contact) is copied as-is.
+    const toCopy =
+      contact.phone.startsWith('51') && contact.phone.length === 11
+        ? contact.phone.slice(2)
+        : contact.phone;
+    await navigator.clipboard.writeText(toCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
@@ -286,40 +309,66 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                   {tSidebar("adSource")}
                 </div>
                 <div className="mt-2 space-y-2">
-                  {referrals.map((referral) => (
-                    <div key={referral.id} className="rounded-lg bg-muted px-3 py-2">
-                      {referral.headline && (
-                        <p className="text-sm font-medium text-foreground">
-                          {referral.headline}
-                        </p>
-                      )}
-                      {referral.body && (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {referral.body}
-                        </p>
-                      )}
-                      {referral.source_id && (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {tSidebar("adId")}: {referral.source_id}
-                        </p>
-                      )}
-                      <div className="mt-1 flex items-center justify-between gap-2">
-                        <p className="text-[10px] text-muted-foreground">
-                          {format(new Date(referral.created_at), "MMM d, yyyy HH:mm")}
-                        </p>
-                        {referral.source_url && (
-                          <a
-                            href={referral.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] font-medium text-primary hover:underline"
-                          >
-                            {tSidebar("viewAd")}
-                          </a>
+                  {referrals.map((referral) => {
+                    const hasAdContent = Boolean(referral.headline || referral.body);
+                    const isCollapsed = collapsedReferralIds.has(referral.id);
+                    return (
+                      <div key={referral.id} className="rounded-lg bg-muted px-3 py-2">
+                        {hasAdContent && (
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              {!isCollapsed && referral.headline && (
+                                <p className="text-sm font-medium text-foreground">
+                                  {referral.headline}
+                                </p>
+                              )}
+                              {!isCollapsed && referral.body && (
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {referral.body}
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleReferralCollapsed(referral.id)}
+                              aria-label={isCollapsed ? tSidebar("expandAd") : tSidebar("collapseAd")}
+                              className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-black/10 hover:text-foreground"
+                            >
+                              <ChevronDown
+                                className={cn(
+                                  "h-3.5 w-3.5 transition-transform",
+                                  isCollapsed && "-rotate-90"
+                                )}
+                              />
+                            </button>
+                          </div>
                         )}
+                        {/* Ad id and date/time stay visible regardless of
+                            the collapse state above — only the headline/
+                            body (the ad's own text) collapses. */}
+                        {referral.source_id && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {tSidebar("adId")}: {referral.source_id}
+                          </p>
+                        )}
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            {format(new Date(referral.created_at), "MMM d, yyyy HH:mm")}
+                          </p>
+                          {referral.source_url && (
+                            <a
+                              href={referral.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs font-medium text-primary hover:underline"
+                            >
+                              {tSidebar("viewAd")}
+                            </a>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </>

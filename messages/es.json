@@ -321,6 +321,8 @@
       "adSource": "Origen del anuncio",
       "viewAd": "Ver anuncio",
       "adId": "ID del anuncio",
+      "collapseAd": "Colapsar anuncio",
+      "expandAd": "Expandir anuncio",
       "noPhoneNumber": "Sin número de teléfono"
     },
     "aiBanner": {
