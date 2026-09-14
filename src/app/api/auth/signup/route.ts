@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: inviteToken
-          ? 'Este enlace de invitación no es válido o venció. Si tenés un código de administrador, ingresalo para continuar.'
+          ? 'Este enlace de invitación no es válido o venció. Si tienes un código de administrador, ingrésalo para continuar.'
           : 'Código incorrecto',
         ...(inviteToken ? { reason: 'invite_invalid' } : {}),
       },

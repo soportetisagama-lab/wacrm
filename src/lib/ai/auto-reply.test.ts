@@ -283,9 +283,36 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('skips when auto-reply was disabled on this conversation', async () => {
+  it('resumes when auto-reply was disabled on this conversation but nobody has claimed it and the cap was not the reason (ai_reply_count below the cap)', async () => {
+    // A prior handoff (model-decided or Flow-side) set ai_autoreply_disabled,
+    // but no agent ever picked it up — must not strand the customer.
+    // See the "menú"/reopen work: this mirrors isConversationBotEligible's
+    // own relaxation on the Flows side.
     h.state.conv = {
       assigned_agent_id: null,
+      ai_autoreply_disabled: true,
+      ai_reply_count: 1,
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+
+  it('still blocks when ai_autoreply_disabled AND ai_reply_count is at/over the cap — the cap-reached event itself must not resend its closing line on every new message', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: true,
+      ai_reply_count: 3, // === the default autoReplyMaxPerConversation
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+  })
+
+  it('still blocks unconditionally once a human agent has actually claimed the thread, regardless of ai_reply_count', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: true,
       ai_reply_count: 0,
     }
