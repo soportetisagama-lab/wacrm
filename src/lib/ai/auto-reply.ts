@@ -354,16 +354,23 @@ export async function runAutoReplyNow(
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
-    if (conv.ai_autoreply_disabled) return // handed off / turned off here
+    // `ai_autoreply_disabled` alone is no longer sticky forever once
+    // nobody has actually claimed the thread (assigned_agent_id null,
+    // checked above) — a model-decided handoff or a Flow handoff mid-
+    // conversation must not silence the bot permanently if no agent
+    // ever picks it up. The one case that must still stay blocked is
+    // the reply-cap event itself: `ai_reply_count` stays >= the cap
+    // forever (nothing resets it except the manual "Resume AI" action),
+    // which is exactly the signal that distinguishes "disabled because
+    // the cap was hit" (keep blocking, or handleAutoReplyCapReached
+    // below would resend its closing line on every single new message)
+    // from "disabled because of a handoff earlier in the conversation,
+    // still unclaimed" (should reopen).
+    if (conv.ai_autoreply_disabled && conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      return
+    }
     // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound). Previously a
-    // bare `return` here — the customer got silence with no signal
-    // anywhere that a human should take over. handleAutoReplyCapReached
-    // sends a closing line and marks the conversation the same way a
-    // model-decided handoff does; because this returns immediately, a
-    // SECOND capped inbound never reaches this line at all — it exits
-    // earlier at the `ai_autoreply_disabled` check above, now true —
-    // so the closing message only ever sends once per cap event.
+    // below (this read can race a concurrent inbound).
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
       await handleAutoReplyCapReached(db, {
         accountId,
