@@ -141,14 +141,13 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® no está conectado. Andá a Configuración para conectar tu cuenta."
+      "whatsappNotConnected": "WhatsApp® no está conectado. Andá a Configuración para conectar tu cuenta.",
+      "newMessageFallbackTitle": "Nuevo mensaje"
     },
     "conversationList": {
       "searchPlaceholder": "Buscar conversaciones...",
       "filterAll": "Todas",
       "filterUnread": "Sin leer",
-      "filterOpen": "Abiertas",
-      "filterPending": "Pendientes",
       "filterClosed": "Cerradas",
       "tags": "Etiquetas",
       "company": "Empresa",
@@ -1952,7 +1951,12 @@
     "retry": "Reintentar",
     "emptyTitle": "Todavía no hay notificaciones",
     "emptyHint": "Vas a ver un aviso acá cuando alguien te asigne una conversación.",
-    "unread": "No leída"
+    "unread": "No leída",
+    "enableNotifications": "Activar notificaciones",
+    "disableNotifications": "Desactivar",
+    "notificationsEnabled": "Notificaciones activadas",
+    "notificationsPromptHint": "Recibí un aviso cuando te asignen una conversación o llegue un mensaje nuevo, aunque no tengas esta pantalla abierta.",
+    "notificationsBlockedHint": "Las notificaciones están bloqueadas en el navegador. Activalas desde la configuración del sitio para recibir avisos."
   },
   "Agents": {
     "usage": {
