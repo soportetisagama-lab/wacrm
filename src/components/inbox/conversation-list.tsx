@@ -8,7 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
+import type { Conversation, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X, Pin } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -47,20 +47,39 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
-// 'open' is fixed to green rather than `bg-primary` — primary is each
-// line's brand color (e.g. Retail's is orange), which collided with
-// Pending's amber and made "answered" indistinguishable from
-// "pending" there. Green stays constant across every brand. Mirrors
-// the same fix in message-thread.tsx's STATUS_OPTIONS.
-const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-green-500",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
-};
+// The list used to show a green/amber status dot (open/pending) next
+// to every row — advisors reported it as confusing ("what does the
+// color mean?"). Simplified to a single WhatsApp-style signal: the
+// unread-count badge is the only thing that shows, and only when
+// there's something unread. `ConversationStatus` (open/pending/closed)
+// still exists and still drives the explicit status control inside an
+// open thread (message-thread.tsx's STATUS_OPTIONS) — just not this
+// passive dot.
 
+// Conversations idle for longer than this are treated as "closed" by
+// the Inbox filter below — a time-based read on the WhatsApp 24h
+// session window, not the `status` column (an agent can leave a
+// conversation marked "open" indefinitely; this filter is about
+// staleness, not the manual status).
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+function isStale(conversation: Conversation): boolean {
+  if (!conversation.last_message_at) return false;
+  return Date.now() - new Date(conversation.last_message_at).getTime() > STALE_AFTER_MS;
+}
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+type InboxFilter = "all" | "unread" | "stale";
+
+/**
+ * Search matching for the phone field is digit-only so "123 456 789"
+ * and "123456789" match the same contact regardless of how either side
+ * is spaced/punctuated — advisors were typing the spaced format WhatsApp
+ * itself displays and getting no results because the stored phone has
+ * no spaces.
+ */
+function toDigits(value: string): string {
+  return value.replace(/[^\d]/g, "");
+}
 
 /**
  * WhatsApp-style ultra-short relative time ("ahora", "5 min", "2 h",
@@ -95,9 +114,7 @@ export function ConversationList({
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
-    { label: t("filterOpen"), value: "open" },
-    { label: t("filterPending"), value: "pending" },
-    { label: t("filterClosed"), value: "closed" },
+    { label: t("filterClosed"), value: "stale" },
   ], [t]);
 
   // Counts for the embedded filter chips — always computed from the
@@ -106,9 +123,7 @@ export function ConversationList({
   const filterCounts: Record<InboxFilter, number> = useMemo(() => ({
     all: conversations.length,
     unread: conversations.filter((c) => c.unread_count > 0).length,
-    open: conversations.filter((c) => c.status === "open").length,
-    pending: conversations.filter((c) => c.status === "pending").length,
-    closed: conversations.filter((c) => c.status === "closed").length,
+    stale: conversations.filter(isStale).length,
   }), [conversations]);
 
   // Only ever true inside the Android wrapper (see message-composer.tsx
@@ -329,8 +344,8 @@ export function ConversationList({
 
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
-      result = result.filter((c) => c.status === filter);
+    } else if (filter === "stale") {
+      result = result.filter(isStale);
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -345,11 +360,13 @@ export function ConversationList({
 
     if (search.trim()) {
       const q = search.toLowerCase();
+      const qDigits = toDigits(search);
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
-        const phone = c.contact?.phone?.toLowerCase() ?? "";
+        const phone = c.contact?.phone ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        const phoneMatches = qDigits.length > 0 && toDigits(phone).includes(qDigits);
+        return name.includes(q) || phoneMatches || lastMsg.includes(q);
       });
     }
 
@@ -897,11 +914,13 @@ function ConversationItem({
             >
               {displayName}
             </span>
-            {/* Web only — the embedded card is already tight on space and
-                this is a "who's handling it" hint, not essential there. */}
-            {!embedded && assignedAgentName && (
+            {/* Tinted with the line's own brand color (green for Inox,
+                orange for Retail — whatever `--primary` resolves to) at
+                low opacity, so it reads as a soft accent rather than a
+                loud badge. Shown on web and inside the embedded app. */}
+            {assignedAgentName && (
               <span
-                className="shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                className="shrink-0 truncate rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-black"
                 title={assignedAgentName}
               >
                 {assignedAgentName}
@@ -961,14 +980,6 @@ function ConversationItem({
                 {conversation.unread_count}
               </span>
             )}
-            <span
-              className={cn(
-                "shrink-0 rounded-full",
-                embedded ? "h-2.5 w-2.5" : "h-2 w-2",
-                STATUS_COLORS[conversation.status]
-              )}
-              title={conversation.status}
-            />
           </div>
         </div>
       </div>

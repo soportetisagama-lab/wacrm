@@ -141,14 +141,13 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp®이 연결되어 있지 않습니다. 설정으로 이동해 계정을 연결하세요."
+      "whatsappNotConnected": "WhatsApp®이 연결되어 있지 않습니다. 설정으로 이동해 계정을 연결하세요.",
+      "newMessageFallbackTitle": "새 메시지"
     },
     "conversationList": {
       "searchPlaceholder": "대화 검색...",
       "filterAll": "전체",
       "filterUnread": "읽지 않음",
-      "filterOpen": "열림",
-      "filterPending": "대기 중",
       "filterClosed": "닫힘",
       "tags": "태그",
       "company": "회사",
@@ -1952,7 +1951,12 @@
     "retry": "다시 시도",
     "emptyTitle": "아직 알림이 없습니다",
     "emptyHint": "누군가 대화를 배정하면 여기에 알림이 표시됩니다.",
-    "unread": "읽지 않음"
+    "unread": "읽지 않음",
+    "enableNotifications": "알림 활성화",
+    "disableNotifications": "끄기",
+    "notificationsEnabled": "알림 켜짐",
+    "notificationsPromptHint": "이 화면을 열어두지 않아도 대화가 배정되거나 새 메시지가 도착하면 알림을 받습니다.",
+    "notificationsBlockedHint": "브라우저에서 알림이 차단되어 있습니다. 사이트 설정에서 알림을 허용해주세요."
   },
   "Agents": {
     "usage": {

@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isEmbeddedApp } from "@/lib/mobile-app";
+import { showBrowserNotification } from "@/lib/notifications/browser-push";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -121,10 +122,19 @@ function InboxPageInner() {
    * realtime channel). The ref is kept in sync via the effect below.
    */
   const knownConvIdsRef = useRef<Set<string>>(new Set());
+  // Mirrors knownConvIdsRef but keeps the full row — the new-message
+  // notification below needs the contact's name/phone for its body,
+  // which isn't on the realtime message payload itself.
+  const conversationsByIdRef = useRef<Map<string, Conversation>>(new Map());
   useEffect(() => {
     const next = new Set<string>();
-    for (const c of conversations) next.add(c.id);
+    const nextById = new Map<string, Conversation>();
+    for (const c of conversations) {
+      next.add(c.id);
+      nextById.set(c.id, c);
+    }
     knownConvIdsRef.current = next;
+    conversationsByIdRef.current = nextById;
   }, [conversations]);
 
   // Pull the conversation row with its `contact` joined and merge it
@@ -225,6 +235,25 @@ function InboxPageInner() {
       const newMsg = event.new;
 
       if (event.eventType === "INSERT") {
+        const isActiveConv = activeConversation?.id === newMsg.conversation_id;
+
+        // Notify on inbound customer messages for any conversation that
+        // isn't the one currently open — same "not looking at it right
+        // now" condition the unread-count bump below already uses, so
+        // the banner and the badge never disagree with each other.
+        if (newMsg.sender_type === "customer" && !isActiveConv) {
+          const conv = conversationsByIdRef.current.get(newMsg.conversation_id);
+          const contactName =
+            conv?.contact?.name || conv?.contact?.phone || undefined;
+          showBrowserNotification(contactName ?? t("newMessageFallbackTitle"), {
+            body: newMsg.content_text || undefined,
+            tag: `message-${newMsg.conversation_id}`,
+            onClick: () => {
+              router.replace(`/inbox?c=${newMsg.conversation_id}`, { scroll: false });
+            },
+          });
+        }
+
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -279,7 +308,7 @@ function InboxPageInner() {
         );
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, router, t]
   );
 
   // Handle realtime conversation events

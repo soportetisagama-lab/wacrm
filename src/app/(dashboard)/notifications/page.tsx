@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import type { Notification } from "@/types";
-import { Bell, CheckCheck, Loader2, UserPlus } from "lucide-react";
+import { Bell, BellOff, BellRing, CheckCheck, Loader2, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 import { useTranslations } from "next-intl";
@@ -13,6 +13,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isEmbeddedApp } from "@/lib/mobile-app";
+import {
+  disableBrowserNotifications,
+  enableBrowserNotifications,
+  getNotificationPermission,
+  isNotificationEnabled,
+} from "@/lib/notifications/browser-push";
 
 // Icon per notification type. Only one type exists today
 // (conversation_assigned) but this keeps future types a one-line add.
@@ -37,6 +43,34 @@ export default function NotificationsPage() {
   useEffect(() => {
     setEmbedded(isEmbeddedApp());
   }, []);
+
+  // Permission state is only known client-side (SSR always sees
+  // "unsupported"), so it's read after mount, same pattern as `embedded`.
+  const [notifPermission, setNotifPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const [requestingNotif, setRequestingNotif] = useState(false);
+
+  const refreshNotifState = useCallback(() => {
+    setNotifPermission(getNotificationPermission());
+    setNotifEnabled(isNotificationEnabled());
+  }, []);
+  useEffect(() => {
+    refreshNotifState();
+  }, [refreshNotifState]);
+
+  const handleEnableNotifications = useCallback(async () => {
+    setRequestingNotif(true);
+    await enableBrowserNotifications();
+    setRequestingNotif(false);
+    refreshNotifState();
+  }, [refreshNotifState]);
+
+  const handleDisableNotifications = useCallback(() => {
+    disableBrowserNotifications();
+    refreshNotifState();
+  }, [refreshNotifState]);
 
   const load = useCallback(async () => {
     if (!accountId) return;
@@ -208,6 +242,64 @@ export default function NotificationsPage() {
           {t("markAllAsRead")}
         </Button>
       </div>
+
+      {notifPermission !== "unsupported" && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
+            notifEnabled
+              ? "border-primary/30 bg-primary/5"
+              : "border-border bg-muted/40",
+            embedded && "rounded-2xl"
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+                notifEnabled ? "bg-primary/15" : "bg-muted"
+              )}
+              aria-hidden
+            >
+              {notifEnabled ? (
+                <BellRing className="h-4 w-4 text-primary" />
+              ) : (
+                <BellOff className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {notifEnabled ? t("notificationsEnabled") : t("enableNotifications")}
+              </p>
+              {notifPermission === "denied" ? (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {t("notificationsBlockedHint")}
+                </p>
+              ) : !notifEnabled ? (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {t("notificationsPromptHint")}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          {notifPermission !== "denied" && (
+            <Button
+              variant={notifEnabled ? "outline" : "default"}
+              size="sm"
+              disabled={requestingNotif}
+              onClick={notifEnabled ? handleDisableNotifications : handleEnableNotifications}
+            >
+              {requestingNotif ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : notifEnabled ? (
+                t("disableNotifications")
+              ) : (
+                t("enableNotifications")
+              )}
+            </Button>
+          )}
+        </div>
+      )}
 
       {notifications.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/40">

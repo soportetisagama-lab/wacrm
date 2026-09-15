@@ -7,8 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Notification } from "@/types";
+import { showBrowserNotification } from "@/lib/notifications/browser-push";
 
 const UnreadNotificationsContext = createContext<number>(0);
 
@@ -38,6 +40,7 @@ export function UnreadNotificationsProvider({
   children: ReactNode;
 }) {
   const [count, setCount] = useState(0);
+  const router = useRouter();
 
   useEffect(() => {
     const supabase = createClient();
@@ -62,7 +65,23 @@ export function UnreadNotificationsProvider({
         (payload) => {
           if (payload.eventType === "INSERT") {
             const row = payload.new as Notification;
-            if (!row.read_at) setCount((n) => n + 1);
+            if (!row.read_at) {
+              setCount((n) => n + 1);
+              // "Derivación" — someone assigned you a conversation.
+              // Covers both web and the embedded app: same JS, same
+              // Notification API, whichever process is alive.
+              showBrowserNotification(row.title, {
+                body: row.body,
+                tag: `notification-${row.id}`,
+                onClick: () => {
+                  if (row.conversation_id) {
+                    router.push(`/inbox?c=${row.conversation_id}`);
+                  } else {
+                    router.push("/notifications");
+                  }
+                },
+              });
+            }
           } else if (payload.eventType === "UPDATE") {
             // Updates here only ever set read_at (marking a notification
             // read). Derive purely from the new row so we don't rely on
@@ -81,7 +100,9 @@ export function UnreadNotificationsProvider({
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+    // `router` from next/navigation is referentially stable across
+    // renders, so including it here can't cause an extra resubscribe.
+  }, [router]);
 
   return (
     <UnreadNotificationsContext.Provider value={count}>

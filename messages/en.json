@@ -141,14 +141,13 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
+      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
+      "newMessageFallbackTitle": "New message"
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",
       "filterAll": "All",
       "filterUnread": "Unread",
-      "filterOpen": "Open",
-      "filterPending": "Pending",
       "filterClosed": "Closed",
       "tags": "Tags",
       "company": "Company",
@@ -1952,7 +1951,12 @@
     "retry": "Retry",
     "emptyTitle": "No notifications yet",
     "emptyHint": "You'll see an alert here when someone assigns you a conversation.",
-    "unread": "Unread"
+    "unread": "Unread",
+    "enableNotifications": "Enable notifications",
+    "disableNotifications": "Turn off",
+    "notificationsEnabled": "Notifications on",
+    "notificationsPromptHint": "Get notified when a conversation is assigned to you or a new message arrives, even without this screen open.",
+    "notificationsBlockedHint": "Notifications are blocked in the browser. Enable them from the site settings to get alerts."
   },
   "Agents": {
     "usage": {
