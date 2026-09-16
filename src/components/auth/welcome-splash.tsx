@@ -33,15 +33,15 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
       )}
       role="status"
       aria-live="polite"
-      aria-label="Cargando Sagama Inox CRM"
+      aria-label="Cargando Sagama Castor CRM"
     >
       <div className={styles.splashBg} />
       <div className={styles.splashGlow} />
 
       <div className="relative z-10 flex flex-col items-center">
         <Image
-          src="/branding/SAGAMA.png"
-          alt="Sagama Inox"
+          src="/branding/SAGAMA_CASTOR.png"
+          alt="Sagama Castor"
           width={300}
           height={93}
           priority
