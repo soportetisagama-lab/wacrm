@@ -141,7 +141,7 @@ function SignupPageInner() {
           subtitle={
             inviteToken
               ? 'Verifica tu email y luego acepta la invitación para unirte a tu equipo.'
-              : 'Completa tus datos para comenzar con Sagama Inox CRM'
+              : 'Completa tus datos para comenzar con Sagama Maxi CRM'
           }
         />
 

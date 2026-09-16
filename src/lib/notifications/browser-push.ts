@@ -68,7 +68,7 @@ export function showBrowserNotification(title: string, { body, tag, onClick }: S
     const n = new Notification(title, {
       body,
       tag,
-      icon: "/branding/SAGAMAMENU.png",
+      icon: "/branding/SAGAMAMENU_MAXI.png",
     });
     if (onClick) {
       n.onclick = () => {

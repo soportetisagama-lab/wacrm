@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -42,7 +42,7 @@ function getPageTitleKey(pathname: string): string {
 }
 
 interface HeaderProps {
-  /** Wired to the shell's drawer state. Used only on mobile — the
+  /** Wired to the shell's drawer state. Used only on mobile â€” the
    *  hamburger button is hidden on lg+. */
   onOpenSidebar?: () => void;
   /** Desktop icon-rail state, lifted to the shell so both the header
@@ -74,7 +74,7 @@ export function Header({
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 lg:px-6">
       <div className="flex min-w-0 items-center gap-2">
-        {/* Hamburger — mobile only. 44×44 hit target per Apple HIG. */}
+        {/* Hamburger â€” mobile only. 44Ã—44 hit target per Apple HIG. */}
         <button
           type="button"
           onClick={onOpenSidebar}
@@ -84,18 +84,18 @@ export function Header({
           <Menu className="h-5 w-5" />
         </button>
 
-        {/* Fullscreen + sidebar-collapse — same pill styling as the
+        {/* Fullscreen + sidebar-collapse â€” same pill styling as the
             ModeToggle override below (white circle on the blue header
             background). Hidden below sm alongside the rest of the
             header's secondary controls; the mobile header is already
             tight with the hamburger + title. */}
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
-          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#e6007e] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
           {onToggleSidebarCollapsed && (
             <SidebarCollapseToggle
               collapsed={sidebarCollapsed}
               onToggle={onToggleSidebarCollapsed}
-              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
+              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#e6007e] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
             />
           )}
         </div>
@@ -106,9 +106,9 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5">
-        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#247afa] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#e6007e] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
 
-        {/* Notifications — same unread count the sidebar's nav item
+        {/* Notifications â€” same unread count the sidebar's nav item
             surfaces, mirrored here as a quick-glance bell. */}
         <Link
           href="/notifications"
@@ -156,7 +156,7 @@ export function Header({
                 alt={profile.full_name ?? t("defaultAvatar")}
               />
             ) : null}
-            <AvatarFallback className="bg-white text-sm font-medium text-[#247afa]">
+            <AvatarFallback className="bg-white text-sm font-medium text-[#e6007e]">
               {initial}
             </AvatarFallback>
           </Avatar>
@@ -211,7 +211,7 @@ export function Header({
         </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Quick sign-out — same action as the dropdown's item above,
+        {/* Quick sign-out â€” same action as the dropdown's item above,
             just promoted to a one-click circle per the reference navbar. */}
         <button
           type="button"
