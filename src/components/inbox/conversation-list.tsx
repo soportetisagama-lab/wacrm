@@ -955,19 +955,6 @@ function ConversationItem({
                 {assignedAgentName}
               </span>
             )}
-            {/* status === 'pending' is exactly the state a bot handoff
-                (or a human) leaves a conversation in when it needs a
-                reply — shown regardless of unread_count/assigned_agent_id
-                so it reads correctly even when the assignee hasn't
-                changed (see engine.ts's markConversationPendingHandoff). */}
-            {conversation.status === "pending" && (
-              <span
-                className="shrink-0 truncate rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
-                title={t("pendingReply")}
-              >
-                {t("pendingReply")}
-              </span>
-            )}
           </div>
           <span className="flex shrink-0 items-center gap-1">
             <button
@@ -1024,6 +1011,24 @@ function ConversationItem({
             )}
           </div>
         </div>
+        {/* Own row, below the name/message lines — sharing a line with
+            the customer name (its original spot) squeezed it out on
+            longer names. status === 'pending' is exactly the state a
+            bot handoff (or a human) leaves a conversation in when it
+            needs a reply — shown regardless of unread_count/
+            assigned_agent_id so it reads correctly even when the
+            assignee hasn't changed (see engine.ts's
+            markConversationPendingHandoff). */}
+        {conversation.status === "pending" && (
+          <div className={cn(embedded ? "mt-1.5" : "mt-1")}>
+            <span
+              className="inline-flex shrink-0 items-center rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+              title={t("pendingReply")}
+            >
+              {t("pendingReply")}
+            </span>
+          </div>
+        )}
       </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
