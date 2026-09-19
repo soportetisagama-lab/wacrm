@@ -497,12 +497,21 @@ export async function sendMessageToConversation(
       ? interactivePayloadPreviewText(interactivePayload!)
       : contentText || `[${messageType}]`;
 
+  // Reopen on send — an agent (or a template/API call sent as the
+  // account) replying is "we're no longer waiting to respond", the
+  // same status a fresh inbound message would put the conversation
+  // back into. Without this, a conversation a bot handed off
+  // (status: 'pending') stays stuck showing "needs reply" forever
+  // once a human actually answers, since nothing else ever flips it
+  // back — status is otherwise only ever changed by hand from the
+  // header dropdown.
   await db
     .from('conversations')
     .update({
       last_message_text: lastMessageText,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      status: 'open',
     })
     .eq('id', conversationId);
 
