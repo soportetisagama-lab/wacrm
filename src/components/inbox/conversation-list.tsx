@@ -9,7 +9,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, Profile, Tag } from "@/types";
-import { Search, ChevronDown, X, Pin } from "lucide-react";
+import { Search, ChevronDown, X, Pin, MailOpen, Mail } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -22,6 +22,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -853,32 +859,55 @@ function ConversationItem({
   const avatarSize = embedded ? "h-12 w-12" : "h-10 w-10";
   const hasUnread = conversation.unread_count > 0;
 
+  // WhatsApp-style manual unread toggle — right click on desktop, long
+  // press on mobile (ContextMenu below handles both natively). Writes
+  // straight to `conversations.unread_count`, same as message-thread.tsx's
+  // reset-to-0 on open; the realtime UPDATE this triggers is what actually
+  // syncs the badge back into inbox/page.tsx's list state, not a local
+  // optimistic update here.
+  const handleToggleUnread = useCallback(async () => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("conversations")
+      .update({ unread_count: hasUnread ? 0 : 1 })
+      .eq("id", conversation.id);
+    if (error) {
+      console.error("Failed to toggle unread state:", error);
+      toast.error(t("markUnreadFailed"));
+    }
+  }, [conversation.id, hasUnread, t]);
+
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        "flex w-full min-w-0 cursor-pointer items-start gap-3 text-left transition-colors",
-        embedded
-          ? cn(
-              "min-h-[68px] rounded-2xl border p-3.5 shadow-md active:shadow-sm",
-              isActive
-                ? "border-primary/40 bg-primary/5"
-                : hasUnread
-                  // Same accent as the unread badge/dot below, just at a
-                  // much lower opacity — makes an unread row readable at
-                  // a glance instead of only via the small dot.
-                  ? "border-primary/20 bg-primary/[0.06] active:bg-muted/40"
-                  : "border-border/40 bg-card active:bg-muted/40"
-            )
-          : cn(
-              "px-3 py-3 hover:bg-muted/50",
-              isActive && "border-l-2 border-primary bg-muted/70"
-            )
-      )}
-    >
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleClick}
+            onKeyDown={handleKeyDown}
+            className={cn(
+              "flex w-full min-w-0 cursor-pointer items-start gap-3 text-left transition-colors",
+              embedded
+                ? cn(
+                    "min-h-[68px] rounded-2xl border p-3.5 shadow-md active:shadow-sm",
+                    isActive
+                      ? "border-primary/40 bg-primary/5"
+                      : hasUnread
+                        // Same accent as the unread badge/dot below, just at a
+                        // much lower opacity — makes an unread row readable at
+                        // a glance instead of only via the small dot.
+                        ? "border-primary/20 bg-primary/[0.06] active:bg-muted/40"
+                        : "border-border/40 bg-card active:bg-muted/40"
+                  )
+                : cn(
+                    "px-3 py-3 hover:bg-muted/50",
+                    isActive && "border-l-2 border-primary bg-muted/70"
+                  )
+            )}
+          />
+        }
+      >
       {/* Avatar */}
       <div
         className={cn(
@@ -983,6 +1012,20 @@ function ConversationItem({
           </div>
         </div>
       </div>
-    </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={handleToggleUnread}>
+          {hasUnread ? (
+            <>
+              <MailOpen /> {t("markAsRead")}
+            </>
+          ) : (
+            <>
+              <Mail /> {t("markAsUnread")}
+            </>
+          )}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
