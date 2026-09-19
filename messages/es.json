@@ -160,6 +160,7 @@
       "markAsUnread": "Marcar como no leído",
       "markAsRead": "Marcar como leído",
       "markUnreadFailed": "No se pudo marcar la conversación",
+      "pendingReply": "Falta responder",
       "agent": "Asesor",
       "allAgents": "Todos los asesores",
       "unassigned": "Sin asignar",
