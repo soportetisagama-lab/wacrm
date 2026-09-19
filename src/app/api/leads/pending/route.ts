@@ -10,14 +10,17 @@ import { supabaseAdmin } from '@/lib/flows/admin-client'
  * and no visibility into this account's WhatsApp inbox, so it can't
  * tell which contacts still need a lead created from a fresh
  * conversation. This returns that list: open conversations with at
- * least one unread inbound message, for the one account this
- * deployment serves.
+ * least one unread inbound message AND no agent assigned yet, for the
+ * one account this deployment serves — once someone in the CRM claims
+ * the conversation (assigned_agent_id set), it's "derivado" already
+ * and drops off this list even if it's still unread.
  *
- * "Pending" here means "conversation still open and unread" — it does
- * NOT check whether a lead already exists in the PHP app's MySQL
- * `project_list` table (this app has no access to that database). A
- * number can still show up here after a lead was created for it, if
- * the conversation itself hasn't been read/closed in the CRM yet.
+ * "Pending" here means "conversation still open, unread, and
+ * unassigned" — it does NOT check whether a lead already exists in
+ * the PHP app's MySQL `project_list` table (this app has no access to
+ * that database). A number can still show up here after a lead was
+ * created for it, if nobody has claimed the conversation in the CRM
+ * yet.
  *
  * Auth re-uses AUTOMATION_CRON_SECRET (see /api/flows/cron) rather
  * than provisioning a second secret — same "one secret, multiple
@@ -50,6 +53,7 @@ export async function GET(request: Request) {
     .eq('account_id', accountId)
     .eq('status', 'open')
     .gt('unread_count', 0)
+    .is('assigned_agent_id', null)
     .order('last_message_at', { ascending: false })
 
   if (error) {
