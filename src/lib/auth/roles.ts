@@ -138,6 +138,17 @@ export function canViewOnly(role: AccountRole): boolean {
   return role === 'viewer';
 }
 
+/**
+ * Owner / admin / gerencia / jefe_linea / atc: dashboard quick-action
+ * shortcuts (new contact / deal / broadcast / automation). A plain
+ * agent (asesor) works the inbound conversations they're assigned,
+ * not create these from scratch — keeping the tiles off their
+ * dashboard avoids exposing actions outside their actual job.
+ */
+export function canUseQuickActions(role: AccountRole): boolean {
+  return hasMinRole(role, 'atc');
+}
+
 /** Owner only: irreversible destructive operations. */
 export function canDeleteAccount(role: AccountRole): boolean {
   return role === 'owner';

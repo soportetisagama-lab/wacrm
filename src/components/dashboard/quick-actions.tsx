@@ -6,6 +6,9 @@ import type { ComponentType } from 'react'
 
 import { useTranslations } from 'next-intl'
 
+import { useAuth } from '@/hooks/use-auth'
+import { canUseQuickActions } from '@/lib/auth/roles'
+
 // Quick-action shortcuts. Each navigates to the page that owns the
 // relevant "create" flow. We deliberately don't try to auto-open any
 // modal on the target page — that'd require touching those pages,
@@ -26,7 +29,12 @@ const ACTIONS: Action[] = [
 
 export function QuickActions() {
   const t = useTranslations('Dashboard.quickActions')
-  
+  const { accountRole } = useAuth()
+
+  // Asesores (agent) and viewers work their assigned conversations — the
+  // create-from-scratch shortcuts are for ATC and above.
+  if (!accountRole || !canUseQuickActions(accountRole)) return null
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {ACTIONS.map((a) => {
