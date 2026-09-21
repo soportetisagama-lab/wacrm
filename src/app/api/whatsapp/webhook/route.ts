@@ -1079,7 +1079,13 @@ async function dispatchWelcomeAfterPhoneKnown(
     .from('flows')
     .select('id, entry_node_id')
     .eq('account_id', accountId)
-    .eq('trigger_type', 'first_inbound_message')
+    // Either trigger type is entry-eligible for a brand-new contact
+    // (both match on "no active flow_run" — see findEntryFlow in
+    // lib/flows/engine.ts). Accounts commonly author their welcome flow
+    // as `returning_message` (a superset that also re-shows the menu to
+    // an existing contact), not literally `first_inbound_message` —
+    // confirmed against production data, don't assume the narrower type.
+    .in('trigger_type', ['first_inbound_message', 'returning_message'])
     .eq('status', 'active')
     .maybeSingle()
 
