@@ -2,7 +2,10 @@
   "Common": {
     "close": "Cerrar",
     "loading": "Cargando...",
-    "serverUnreachable": "No se pudo conectar con el servidor"
+    "serverUnreachable": "No se pudo conectar con el servidor",
+    "updateAvailable": "Hay una versión nueva disponible",
+    "updateNow": "Actualizar",
+    "dismiss": "Cerrar aviso"
   },
   "LoginPage": {
     "titleAccept": "Inicia sesión para aceptar",
@@ -160,7 +163,6 @@
       "markAsUnread": "Marcar como no leído",
       "markAsRead": "Marcar como leído",
       "markUnreadFailed": "No se pudo marcar la conversación",
-      "pendingReply": "Falta responder",
       "agent": "Asesor",
       "allAgents": "Todos los asesores",
       "unassigned": "Sin asignar",
@@ -1183,6 +1185,7 @@
         "isAbsent": "está ausente",
         "equals": "es igual a",
         "contains": "contiene",
+        "startsWith": "empieza con",
         "valueLabel": "Valor",
         "ifTrueAdvance": "Si es verdadero → avanzar a",
         "ifFalseAdvance": "Si es falso → avanzar a",
@@ -1300,6 +1303,7 @@
       "audio": "Audio",
       "hasTag": "tiene la etiqueta {tag}",
       "opContains": "contiene",
+      "opStartsWith": "empieza con",
       "opExists": "existe",
       "opMissing": "falta",
       "modeAdd": "Agregar",

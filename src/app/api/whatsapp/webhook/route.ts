@@ -22,6 +22,19 @@ import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { sendPushToUser } from '@/lib/notifications/push-send'
+
+// Push notification body for non-text inbound content — mirrors
+// WhatsApp's own "📷 Photo" style preview when there's no caption.
+const PUSH_MEDIA_LABEL: Record<string, string> = {
+  image: '📷 Foto',
+  video: '🎥 Video',
+  audio: '🎤 Audio',
+  document: '📄 Documento',
+  location: '📍 Ubicación',
+  template: 'Nuevo mensaje',
+  interactive: 'Nuevo mensaje',
+}
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -894,12 +907,15 @@ async function saveReferralIfPresent(
 }
 
 /**
- * Proactively ask a brand-new BSUID-only contact for their phone
- * number via the REQUEST_CONTACT_INFO button (migration 042) —
- * gated by whatsapp_config.bsuid_request_contact_info_enabled at the
- * call site. Fires once, right when the contact is first created;
- * never re-fires on a later phone-less message from the same contact
- * (the caller only reaches this on contactOutcome.wasCreated).
+ * Proactively ask a BSUID-only contact for their phone number via the
+ * REQUEST_CONTACT_INFO button (migration 042) — gated by
+ * whatsapp_config.bsuid_request_contact_info_enabled at the call
+ * site. Re-fires on every inbound message from that contact for as
+ * long as `contactRecord.phone` stays null — deliberate product
+ * choice (no cooldown, no cap): the lead is worth little without a
+ * real phone number, so we keep asking until either they share it
+ * (promoteBsuidContactPhoneIfRequested picks it up) or an agent takes
+ * over the conversation by hand.
  *
  * NOT YET EMPIRICALLY VERIFIED: `to` is used here for the BSUID
  * target, matching every other BSUID send path in this codebase
@@ -974,21 +990,32 @@ async function sendBsuidContactInfoRequest(
  * Best-effort: mirrors saveReferralIfPresent — a failure here must
  * not break the main inbound-message flow.
  */
+/**
+ * Returns the newly-set sanitized phone only when this call actually
+ * just promoted it onto a previously phone-less contact — null for
+ * every guard/early-return/error path. `contact.phone` passed in stays
+ * stale (this only writes the DB row, it doesn't mutate the caller's
+ * object), so the caller needs this return value — not `contact.phone`
+ * — to learn the number that just became known. Callers use this
+ * (alongside ContactOutcome.phoneJustPromoted for the
+ * resolveContactRequestReply path above) to know whether a contact's
+ * country just became knowable for the first time.
+ */
 async function promoteBsuidContactPhoneIfRequested(
   message: WhatsAppMessage,
   accountId: string,
   contact: { id: string; phone: string | null }
-) {
-  if (message.type !== 'contacts' || contact.phone) return
+): Promise<string | null> {
+  if (message.type !== 'contacts' || contact.phone) return null
 
   const shared = message.contacts?.[0]
-  if (!shared || shared.origin !== 'contact_request') return
+  if (!shared || shared.origin !== 'contact_request') return null
 
   const rawPhone = shared.phones?.[0]?.phone
-  if (!rawPhone) return
+  if (!rawPhone) return null
 
   const sanitized = normalizePhone(rawPhone)
-  if (!sanitized) return
+  if (!sanitized) return null
 
   try {
     // Don't blindly overwrite: if this number already belongs to a
@@ -1000,7 +1027,7 @@ async function promoteBsuidContactPhoneIfRequested(
       console.warn(
         `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} already belongs to contact ${collision.id}; not merging into ${contact.id}`
       )
-      return
+      return null
     }
 
     const { error } = await supabaseAdmin()
@@ -1013,12 +1040,71 @@ async function promoteBsuidContactPhoneIfRequested(
         console.warn(
           `[webhook] REQUEST_CONTACT_INFO reply phone ${sanitized} collided with another contact on write; not merging`
         )
-        return
+        return null
       }
       console.error('[webhook] Error promoting BSUID contact phone:', error)
+      return null
     }
+    return sanitized
   } catch (err) {
     console.error('[webhook] promoteBsuidContactPhoneIfRequested failed:', err)
+    return null
+  }
+}
+
+/**
+ * Peru-vs-foreign welcome gate, other half: a BSUID contact's phone
+ * was unknown on their first message, so the "Bienvenida" flow's own
+ * `check_phone_presente` gate (see the Flows builder) fell through to
+ * its `absent` branch and ended without sending anything — the native
+ * "share your contact" ask (above) was the only prompt. Now that the
+ * phone just became known, that flow_run already ended and won't
+ * re-evaluate on its own, so this explicitly starts a fresh run of the
+ * SAME flow at its entry node — `check_phone_presente` runs again,
+ * this time finding a phone, and cascades to the correct Peru/foreign
+ * branch on its own.
+ *
+ * No node_key convention to keep in sync: `entry_node_id` is a real
+ * column on `flows`, so renaming nodes inside the flow in the builder
+ * can't break this. The only two failure modes below are logged since
+ * they'd otherwise strand this lead with no welcome at all, silently.
+ */
+async function dispatchWelcomeAfterPhoneKnown(
+  accountId: string,
+  contactId: string,
+  conversationId: string
+): Promise<void> {
+  const db = supabaseAdmin()
+  const { data: flow, error } = await db
+    .from('flows')
+    .select('id, entry_node_id')
+    .eq('account_id', accountId)
+    .eq('trigger_type', 'first_inbound_message')
+    .eq('status', 'active')
+    .maybeSingle()
+
+  if (error || !flow || !flow.entry_node_id) {
+    console.error(
+      `[webhook] dispatchWelcomeAfterPhoneKnown: no active first_inbound_message flow for account ${accountId} (contact ${contactId}, conversation ${conversationId})`,
+      error
+    )
+    return
+  }
+
+  const result = await startFlowRunAtNode({
+    accountId,
+    flowId: flow.id as string,
+    nodeKey: flow.entry_node_id as string,
+    contactId,
+    conversationId,
+    startedVia: { reason: 'bsuid_phone_promoted' },
+  })
+
+  if (!result.consumed) {
+    console.error(
+      `[webhook] dispatchWelcomeAfterPhoneKnown: startFlowRunAtNode did not start a run for account ${accountId}, contact ${contactId}, flow ${flow.id}`,
+      result
+    )
   }
 }
 
@@ -1095,7 +1181,7 @@ async function resolveContactRequestReply(
     return { contact: existing, wasCreated: false }
   }
 
-  return { contact: updated, wasCreated: false }
+  return { contact: updated, wasCreated: false, phoneJustPromoted: true }
 }
 
 async function processMessage(
@@ -1179,16 +1265,22 @@ async function processMessage(
   //
   // BSUID follow-ups (migration 042) — both best-effort, never block
   // the main inbound flow:
-  //   1. A brand-new, still phone-less contact — if the account opted
-  //      in, ask them for their number once, right now.
+  //   1. Still phone-less contact — if the account opted in, ask them
+  //      for their number again on THIS message too. Skipped for a
+  //      reaction (nothing to reply to) and for a `contacts` message
+  //      (that's the reply we're hoping for — let #2 below process it
+  //      first; `contactRecord.phone` here is still the pre-promotion
+  //      value, so without this exclusion a contact card arriving
+  //      would get asked again in the same breath it was answered).
   //   2. Any inbound `contacts`-type message — if it's the reply to
   //      that exact button (origin: 'contact_request'), promote the
   //      shared phone onto this contact.
   if (
-    contactOutcome.wasCreated &&
     !contactRecord.phone &&
     contactRecord.whatsapp_user_id &&
-    requestContactInfoEnabled
+    requestContactInfoEnabled &&
+    message.type !== 'reaction' &&
+    message.type !== 'contacts'
   ) {
     await sendBsuidContactInfoRequest(
       conversation.id,
@@ -1197,7 +1289,18 @@ async function processMessage(
       accessToken
     )
   }
-  await promoteBsuidContactPhoneIfRequested(message, accountId, contactRecord)
+  const promotedPhone = await promoteBsuidContactPhoneIfRequested(message, accountId, contactRecord)
+
+  // Either promotion path just resolved this contact's country for the
+  // first time (resolveContactRequestReply's fast path already set
+  // contactRecord.phone; the fallback above returns the phone it just
+  // wrote since contactRecord itself is stale) — (re)start the
+  // Bienvenida flow now so its phone gate can route correctly. See
+  // dispatchWelcomeAfterPhoneKnown's doc comment for why this can't
+  // just happen on its own.
+  if (contactOutcome.phoneJustPromoted || promotedPhone) {
+    await dispatchWelcomeAfterPhoneKnown(accountId, contactRecord.id, conversation.id)
+  }
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
@@ -1296,6 +1399,24 @@ async function processMessage(
   if (msgError || !insertedMessage) {
     console.error('Error inserting message:', msgError)
     return
+  }
+
+  // Native push (FCM) for the assigned agent's phone — best-effort,
+  // never blocks the inbound flow. Unassigned conversations don't
+  // push to anyone; there's no single "right" recipient for those and
+  // paging the whole account for every unassigned inbound is not the
+  // behaviour we want (see push-send.ts for the no-op-when-unconfigured
+  // contract this relies on).
+  if (conversation.assigned_agent_id) {
+    const pushBody =
+      contentType === 'text' && contentText
+        ? contentText
+        : PUSH_MEDIA_LABEL[contentType] ?? 'Nuevo mensaje'
+    sendPushToUser(conversation.assigned_agent_id, {
+      title: contactRecord.name || contactRecord.phone || 'Nuevo mensaje',
+      body: pushBody,
+      data: { conversationId: conversation.id },
+    }).catch((err) => console.error('[webhook] sendPushToUser failed:', err))
   }
 
   // Shared by both audio-transcription call sites below (dispatchInboundToAiReply
@@ -1742,6 +1863,12 @@ interface ContactOutcome {
   /** True when this call created the row; drives new_contact_created
    *  automation dispatch in processMessage. */
   wasCreated: boolean
+  /** True only when THIS call is what just set `contact.phone` on a
+   *  previously phone-less (BSUID-only) contact — never true for a
+   *  contact that already had a phone coming in. Drives the
+   *  Peru-vs-foreign welcome dispatch in processMessage (see the
+   *  `phoneJustPromoted` handling below `promoteBsuidContactPhoneIfRequested`). */
+  phoneJustPromoted?: boolean
 }
 
 async function findOrCreateContact(

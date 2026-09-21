@@ -1,10 +1,10 @@
 /**
  * Thin wrapper around the standard Web Notification API — shows an
- * OS-level banner (desktop browser, or the Android WebView process,
- * while the app is running) when a new message or a handoff/assignment
- * arrives. This is NOT native push: it can't wake up a fully closed
- * app. True background push would need FCM + a Firebase project, which
- * is a separate, deliberately out-of-scope follow-up.
+ * OS-level banner in a desktop browser tab when a new message or a
+ * handoff/assignment arrives. This is NOT native push: it can't wake
+ * a fully closed browser tab, and the Android wrapper's WebView
+ * doesn't implement this API at all — see native-push.ts (FCM) for
+ * that side, used instead whenever isEmbeddedApp().
  *
  * Gated behind an explicit per-device opt-in (`STORAGE_KEY`), separate
  * from the OS permission itself — a user can grant the browser
@@ -13,6 +13,14 @@
  */
 
 const STORAGE_KEY = "wacrm:notifications:enabled";
+
+/** Short brand tag appended to the notification title — the OS-level
+ *  banner's own subtext already shows the raw domain (a browser
+ *  security feature we can't change), so this is the one place we
+ *  can put something a human actually recognizes, e.g. for someone
+ *  fielding more than one line from the same browser. Matches the
+ *  tab-title suffix in layout.tsx's metadata (kept in sync by hand). */
+const BRAND_LABEL = "XLR9-MX";
 
 export function isBrowserNotificationSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -65,10 +73,17 @@ interface ShowNotificationOptions {
 export function showBrowserNotification(title: string, { body, tag, onClick }: ShowNotificationOptions = {}): void {
   if (!isNotificationEnabled()) return;
   try {
-    const n = new Notification(title, {
+    const n = new Notification(`${title} · ${BRAND_LABEL}`, {
       body,
       tag,
-      icon: "/branding/SAGAMAMENU_MAXI.png",
+      // The square app-icon mark, not the wide header banner — browsers
+      // scale/crop this into a small square slot, and a ~3:1 banner
+      // ends up squashed and unrecognizable there.
+      // Cache-busted: browsers/Windows Action Center cache a Notification's
+      // icon quite persistently, sometimes surviving a normal page reload —
+      // bump this version whenever the underlying image file changes so
+      // viewers actually see the new one instead of a stale cached copy.
+      icon: "/branding/icon-square.png?v=2",
     });
     if (onClick) {
       n.onclick = () => {

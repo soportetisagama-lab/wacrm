@@ -2,7 +2,10 @@
   "Common": {
     "close": "Close",
     "loading": "Loading...",
-    "serverUnreachable": "Could not reach the server"
+    "serverUnreachable": "Could not reach the server",
+    "updateAvailable": "A new version is available",
+    "updateNow": "Update",
+    "dismiss": "Dismiss"
   },
   "LoginPage": {
     "titleAccept": "Sign in to accept",
@@ -160,7 +163,6 @@
       "markAsUnread": "Mark as unread",
       "markAsRead": "Mark as read",
       "markUnreadFailed": "Couldn't mark the conversation",
-      "pendingReply": "Needs reply",
       "agent": "Agent",
       "allAgents": "All agents",
       "unassigned": "Unassigned",
@@ -1183,6 +1185,7 @@
         "isAbsent": "is absent",
         "equals": "equals",
         "contains": "contains",
+        "startsWith": "starts with",
         "valueLabel": "Value",
         "ifTrueAdvance": "If true → advance to",
         "ifFalseAdvance": "If false → advance to",
@@ -1300,6 +1303,7 @@
       "audio": "Audio",
       "hasTag": "has tag {tag}",
       "opContains": "contains",
+      "opStartsWith": "starts with",
       "opExists": "exists",
       "opMissing": "missing",
       "modeAdd": "Add",
