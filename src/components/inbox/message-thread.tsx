@@ -472,26 +472,67 @@ export function MessageThread({
     setReplyTo(null);
   }, [conversationId]);
 
-  // Reset the server-side unread_count to 0 whenever an unread count
-  // surfaces on the active conversation — covers both (a) opening a
-  // conversation that had unread messages and (b) new messages arriving
-  // while the user is already viewing the thread (webhook server-bumps
-  // unread_count to N+1; the realtime UPDATE propagates it into the
-  // client, which re-runs this effect and flips it back to 0).
+  // Reset the server-side unread_count to 0 the moment a conversation
+  // with pending unread messages is OPENED — case (a) only. Case (b),
+  // a new message arriving while the thread is already open, is
+  // handled separately by inbox/page.tsx's message-realtime handler
+  // (it already knows precisely when a fresh message lands for the
+  // active conversation — see handleNewMessage there), not by this
+  // effect watching the conversation row's `unread_count` in general.
   //
-  // Guarding on hasUnread prevents the eq-update loop: once unread_count
-  // is 0 the condition is false, so no further UPDATE is issued.
+  // That split matters: `unread_count` also gets bumped back up by
+  // things that are NOT "a message this viewer hasn't seen" — the
+  // list's right-click/long-press "mark as unread", and the
+  // mark_unread_on_reassignment DB trigger flagging a conversation
+  // unread for whoever it just got handed to (migration 066). Both of
+  // those can legitimately fire while the conversation happens to be
+  // sitting open in this exact pane (e.g. the person doing the
+  // reassignment had it open to read it first) — reacting to "hasUnread
+  // is now true" in general, like this effect used to, instantly
+  // reverted that intentional flag back to 0. Firing only once per
+  // genuine conversationId transition — tracked via the ref below,
+  // never re-armed just because hasUnread flips true again on the same
+  // id — means those writes stick instead of bouncing straight back.
+  const openedUnreadResetIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!conversationId || !hasUnread) return;
-    const supabase = createClient();
-    supabase
-      .from('conversations')
-      .update({ unread_count: 0 })
-      .eq('id', conversationId)
-      .then(({ error }) => {
-        if (error) console.error('Failed to reset unread_count:', error);
-      });
-  }, [conversationId, hasUnread]);
+    if (!conversationId || openedUnreadResetIdRef.current === conversationId) return;
+
+    // `unread_count` is a single column shared by every viewer, not a
+    // per-agent inbox state — so only the conversation's OWN assigned
+    // agent opening it should clear it. Anyone else looking (ATC,
+    // gerencia, jefe de línea, admin/owner auditing a conversation
+    // that isn't theirs) must leave it untouched, or their glance would
+    // silently wipe the badge the actually-assigned advisor still needs
+    // to see. An unassigned conversation has nobody's badge to protect,
+    // so it still clears for whoever opens it first.
+    const assignedAgentId = conversation?.assigned_agent_id ?? null;
+    const viewerOwnsThisConversation =
+      !assignedAgentId || assignedAgentId === user?.id;
+
+    const tryReset = () => {
+      // Also guarded on document visibility: this pane never unmounts
+      // (parent CSS show/hide — see dashboard-shell.tsx), so a
+      // backgrounded/stale tab could otherwise "open" a conversation
+      // nobody is actually looking at right now. Retry once it's
+      // genuinely visible instead of silently giving up.
+      if (document.visibilityState !== 'visible') return;
+      openedUnreadResetIdRef.current = conversationId;
+      document.removeEventListener('visibilitychange', tryReset);
+      if (!hasUnread || !viewerOwnsThisConversation) return;
+      const supabase = createClient();
+      supabase
+        .from('conversations')
+        .update({ unread_count: 0 })
+        .eq('id', conversationId)
+        .then(({ error }) => {
+          if (error) console.error('Failed to reset unread_count:', error);
+        });
+    };
+
+    tryReset();
+    document.addEventListener('visibilitychange', tryReset);
+    return () => document.removeEventListener('visibilitychange', tryReset);
+  }, [conversationId, hasUnread, conversation?.assigned_agent_id, user?.id]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
