@@ -2,7 +2,10 @@
   "Common": {
     "close": "닫기",
     "loading": "로딩 중...",
-    "serverUnreachable": "서버에 연결할 수 없습니다"
+    "serverUnreachable": "서버에 연결할 수 없습니다",
+    "updateAvailable": "새 버전이 있습니다",
+    "updateNow": "업데이트",
+    "dismiss": "닫기"
   },
   "LoginPage": {
     "titleAccept": "로그인하여 수락하기",
@@ -160,7 +163,6 @@
       "markAsUnread": "읽지 않음으로 표시",
       "markAsRead": "읽음으로 표시",
       "markUnreadFailed": "대화 상태를 변경하지 못했습니다",
-      "pendingReply": "답장 필요",
       "agent": "상담원",
       "allAgents": "전체 상담원",
       "unassigned": "미배정",
@@ -1183,6 +1185,7 @@
         "isAbsent": "존재하지 않음",
         "equals": "일치함",
         "contains": "포함함",
+        "startsWith": "다음으로 시작함",
         "valueLabel": "값",
         "ifTrueAdvance": "참일 경우 → 다음 진행",
         "ifFalseAdvance": "거짓일 경우 → 다음 진행",
@@ -1300,6 +1303,7 @@
       "audio": "오디오",
       "hasTag": "{tag} 태그 있음",
       "opContains": "포함함",
+      "opStartsWith": "다음으로 시작함",
       "opExists": "존재함",
       "opMissing": "존재하지 않음",
       "modeAdd": "추가",

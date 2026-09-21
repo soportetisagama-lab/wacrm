@@ -689,7 +689,7 @@ function SendListForm({
 interface ConditionCfg {
   subject?: "var" | "tag" | "contact_field";
   subject_key?: string;
-  operator?: "equals" | "contains" | "present" | "absent";
+  operator?: "equals" | "contains" | "starts_with" | "present" | "absent";
   value?: string;
   true_next?: string;
   false_next?: string;
@@ -718,7 +718,7 @@ function ConditionForm({
 
   const subject = cfg.subject ?? "var";
   const operator = cfg.operator ?? "equals";
-  const showValue = operator === "equals" || operator === "contains";
+  const showValue = operator === "equals" || operator === "contains" || operator === "starts_with";
 
   return (
     <>
@@ -815,6 +815,7 @@ function ConditionForm({
               <SelectItem value="absent">{t("isAbsent")}</SelectItem>
               <SelectItem value="equals">{t("equals")}</SelectItem>
               <SelectItem value="contains">{t("contains")}</SelectItem>
+              <SelectItem value="starts_with">{t("startsWith")}</SelectItem>
             </SelectContent>
           </Select>
         </div>

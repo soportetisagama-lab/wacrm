@@ -488,6 +488,44 @@ describe("evaluateConditionPredicate", () => {
       }),
     ).toBe(false);
   });
+
+  it("starts_with: prefix match (e.g. Peru country code on a digits-only phone)", () => {
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "51987654321",
+        configValue: "51",
+      }),
+    ).toBe(true);
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "12084204292",
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
+
+  it("starts_with: a substring in the middle doesn't count — must be a real prefix (unlike `contains`)", () => {
+    // Contains "51" at position 3, but the actual country code is 34 (Spain).
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "34651234567",
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
+
+  it("starts_with: undefined subject never matches", () => {
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: undefined,
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("isConversationBotEligible", () => {
@@ -607,6 +645,51 @@ describe("findEntryFlow — reentry_keywords", () => {
     // instead, for an unrelated message.
     const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("hola"), true);
     expect(flow?.id).toBe("flow-faq");
+  });
+});
+
+// ============================================================
+// findEntryFlow — returning_message skip keywords
+// ============================================================
+
+const RETURNING_FLOW: Partial<FlowRow> = {
+  id: "flow-returning",
+  account_id: "acct-1",
+  status: "active",
+  trigger_type: "returning_message",
+  trigger_config: {},
+  entry_node_id: "start",
+};
+
+describe("findEntryFlow — returning_message skip keywords", () => {
+  it("matches on ordinary text, same as before this existed", async () => {
+    const db = makeFlowsFakeDb([RETURNING_FLOW]);
+    const flow = await findEntryFlow(db, "acct-1", "conv-1", textMessage("hola"), false);
+    expect(flow?.id).toBe("flow-returning");
+  });
+
+  it("skips restarting the flow for a closing/farewell remark, letting it fall through instead", async () => {
+    const db = makeFlowsFakeDb([RETURNING_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("Ya no necesito nada, gracias"),
+      false,
+    );
+    expect(flow).toBeNull();
+  });
+
+  it("skip check is accent/case-insensitive (foldDiacritics, same as every other keyword match here)", async () => {
+    const db = makeFlowsFakeDb([RETURNING_FLOW]);
+    const flow = await findEntryFlow(
+      db,
+      "acct-1",
+      "conv-1",
+      textMessage("ESTA BIEN GRACIAS, NO NECESITO MÁS"),
+      false,
+    );
+    expect(flow).toBeNull();
   });
 });
 
@@ -756,6 +839,10 @@ function makeReentryOverrideFakeDb(opts: {
    *  simulates a `flow_run_events` "handoff" row already logged within
    *  the cooldown window. */
   recentHandoffExists?: boolean;
+  /** Backs the stale-interactive-tap phone lookup — omitted means no
+   *  `contacts` mock at all, so that lookup throws and the "has phone"
+   *  fallback kicks in (see dispatchInboundToFlows's stale-tap branch). */
+  contactPhone?: string | null;
 }) {
   const conversationUpdates: Record<string, unknown>[] = [];
   const flowRunInserts: Record<string, unknown>[] = [];
@@ -836,6 +923,16 @@ function makeReentryOverrideFakeDb(opts: {
             eq: () => ({
               eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
               maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "contacts" && opts.contactPhone !== undefined) {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: { phone: opts.contactPhone }, error: null }),
             }),
           }),
         };
@@ -981,6 +1078,31 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
     expect(engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("Ya tenemos tus datos"),
+      }),
+    );
+    expect(
+      conversationUpdates.some(
+        (u) => u.status === "pending" && u.ai_autoreply_disabled === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("gives the phone-less variant of the stale-tap notice for a BSUID-only contact — 'ya tenemos tus datos' would be false", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+      contactState: { selected_options: { topics: ["catalog"] } },
+      contactPhone: null,
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(tapInput("quote_inox"));
+
+    expect(result).toEqual({ consumed: true, outcome: "stale_interactive_notice" });
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Todavía no nos compartiste tu número"),
       }),
     );
     expect(

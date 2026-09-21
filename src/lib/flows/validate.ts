@@ -723,7 +723,7 @@ function validateNode(
       const cfg = node.config as {
         subject?: "var" | "tag" | "contact_field";
         subject_key?: string;
-        operator?: "equals" | "contains" | "present" | "absent";
+        operator?: "equals" | "contains" | "starts_with" | "present" | "absent";
         value?: string;
         true_next?: string;
         false_next?: string;
@@ -748,7 +748,7 @@ function validateNode(
       }
       if (
         !cfg.operator ||
-        !["equals", "contains", "present", "absent"].includes(cfg.operator)
+        !["equals", "contains", "starts_with", "present", "absent"].includes(cfg.operator)
       ) {
         issues.push({
           severity: "error",
@@ -758,7 +758,7 @@ function validateNode(
           message: "Condition needs an operator.",
         });
       } else if (
-        (cfg.operator === "equals" || cfg.operator === "contains") &&
+        (cfg.operator === "equals" || cfg.operator === "contains" || cfg.operator === "starts_with") &&
         (cfg.value === undefined || cfg.value === "")
       ) {
         issues.push({

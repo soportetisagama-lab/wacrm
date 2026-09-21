@@ -130,6 +130,23 @@ function foldDiacritics(s: string): string {
  * and "contains" would over-match on (e.g. inside an unrelated longer
  * word).
  */
+/** See the `returning_message` branch of `findEntryFlow` below — a
+ *  message containing any of these skips restarting the flow instead
+ *  of re-showing the full menu to someone who just said they're done. */
+const RETURNING_MESSAGE_SKIP_KEYWORDS = [
+  "ya no necesito",
+  "no necesito nada",
+  "no necesito mas",
+  "nada mas gracias",
+  "listo gracias",
+  "ya no gracias",
+  "no hace falta",
+  "esta bien gracias",
+  "eso es todo",
+  "eso seria todo",
+  "no era nada",
+];
+
 export function matchesKeywordTrigger(
   text: string,
   cfg: KeywordTriggerConfig,
@@ -364,6 +381,9 @@ export function evaluateConditionPredicate(args: {
     case "contains":
       if (args.subjectValue === undefined) return false;
       return args.subjectValue.includes(args.configValue ?? "");
+    case "starts_with":
+      if (args.subjectValue === undefined) return false;
+      return args.subjectValue.startsWith(args.configValue ?? "");
   }
 }
 
@@ -854,6 +874,27 @@ export async function findEntryFlow(
       // message, not just the contact's first ever. Lets a flow
       // restart (e.g. re-show its menu) after a prior run for this
       // contact reached a terminal status.
+      //
+      // EXCEPT a closing/farewell remark (RETURNING_MESSAGE_SKIP_KEYWORDS)
+      // — without this, a customer whose prior run already ended
+      // (handoff or otherwise) gets blasted with the full welcome menu
+      // again for something like "ya no necesito nada, gracias", since
+      // this branch used to return the flow unconditionally on ANY
+      // text. Skipping lets it fall through to dispatchInboundToAiReply
+      // instead, which replies briefly instead of re-showing a whole
+      // menu to someone who just said they're done. Keyword-only (not
+      // an AI classification call like classifyFirstInboundContext
+      // above) — deliberately cheap and synchronous; a returning
+      // message is common enough that a per-message model call here
+      // would add real latency/cost for a narrow case.
+      if (
+        matchesKeywordTrigger(message.text, {
+          keywords: RETURNING_MESSAGE_SKIP_KEYWORDS,
+          match_type: "contains",
+        })
+      ) {
+        continue;
+      }
       return flow;
     }
     // 'manual' triggers do not auto-start from inbound messages.
@@ -1058,6 +1099,14 @@ const ALREADY_HANDLED_OPTION_TEXT =
  *  quiet, or pretending nothing happened. */
 const STALE_INTERACTIVE_TEXT =
   "Recibimos tu mensaje. Ya tenemos tus datos — en un momento un asesor se va a comunicar contigo. 🙂";
+
+/** Same STALE-tap situation as STALE_INTERACTIVE_TEXT, but for a
+ *  contact whose phone is still missing (BSUID-only — see
+ *  sendBsuidContactInfoRequest in the webhook) — "ya tenemos tus
+ *  datos" would be false in that case, and could read as us having a
+ *  number to call/text outside WhatsApp when we don't. */
+const STALE_INTERACTIVE_TEXT_NO_PHONE =
+  "Recibimos tu mensaje. Todavía no nos compartiste tu número de contacto, pero un asesor va a seguir la conversación por este mismo chat en breve. 🙂";
 
 /**
  * Pure decision for whether /api/flows/cron should send an inactivity
@@ -1296,6 +1345,14 @@ async function handOffFromCollectAi(
       ? await wasHandedOffRecently(db, run.conversation_id)
       : false;
 
+  // Tracked so the handoff node we're about to advance into (below)
+  // knows a customer-facing message already went out for this exact
+  // transition and doesn't send its own on top of it — see
+  // advanceFromNodeKey's `suppressHandoffCustomerMessage` doc comment.
+  // Stays false on a send failure, so executeHandoff's own message
+  // still reaches the customer as a fallback instead of them getting
+  // nothing.
+  let sentOutgoingMessage = false;
   if (outgoingText && !isDuplicate) {
     try {
       await engineSendText({
@@ -1306,6 +1363,7 @@ async function handOffFromCollectAi(
         text: outgoingText,
         aiGenerated: usedModelMessage,
       });
+      sentOutgoingMessage = true;
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
         reason: "collect_ai_handoff_message_send_failed",
@@ -1322,7 +1380,9 @@ async function handOffFromCollectAi(
   });
 
   if (cfg.handoff_node_key) {
-    return advanceFromNodeKey(db, run, cfg.handoff_node_key, nodes);
+    return advanceFromNodeKey(db, run, cfg.handoff_node_key, nodes, {
+      suppressHandoffCustomerMessage: sentOutgoingMessage,
+    });
   }
 
   if (run.conversation_id) {
@@ -1476,23 +1536,40 @@ async function handleCollectAiOutcome(
   }
 
   if (decision.kind === "complete") {
-    if (decision.message) {
+    // Same precedence rule as handOffFromCollectAi: outside business
+    // hours, the configured after-hours text wins over the model's own
+    // closing line, because the model has no clock and must never be
+    // the one deciding time-sensitive wording. Only kicks in when the
+    // node configured `handoff_fallback_text_after_hours` — unset
+    // means this is skipped and behavior is identical to before.
+    const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
+    const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
+    const outgoingText = useAfterHoursText ? afterHoursText! : decision.message;
+    // Tracked so the node we advance into below (often a handoff node)
+    // knows a closing message already went out for this exact
+    // transition and doesn't send its own on top of it — see
+    // advanceFromNodeKey's `suppressHandoffCustomerMessage` doc comment.
+    let sentClosingMessage = false;
+    if (outgoingText) {
       try {
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
           userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
-          text: decision.message,
+          text: outgoingText,
           // decision.message on "complete" is always result.replyText
           // (decideCollectAiOutcome) — the model's own closing line.
-          aiGenerated: true,
+          // Not AI-generated when the after-hours override wins.
+          aiGenerated: !useAfterHoursText,
         });
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "collect_ai",
           whatsapp_message_id,
           closing: true,
+          ...(useAfterHoursText ? { after_hours_fallback: true } : {}),
         });
+        sentClosingMessage = true;
       } catch (err) {
         // Best-effort — the run still completed successfully even if
         // this closing line didn't land.
@@ -1506,7 +1583,9 @@ async function handleCollectAiOutcome(
       node_type: "collect_ai",
       collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
     });
-    return advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
+    return advanceFromNodeKey(db, run, cfg.next_node_key, nodes, {
+      suppressHandoffCustomerMessage: sentClosingMessage,
+    });
   }
 
   // decision.kind === "continue" — decision.message is always
@@ -1714,6 +1793,12 @@ async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
+  // True when the caller already sent its own hours-aware closing
+  // message for this exact transition (see advanceFromNodeKey's
+  // `suppressHandoffCustomerMessage` doc comment) — skips ONLY the
+  // customer-visible send below; markConversationPendingHandoff still
+  // always runs.
+  suppressCustomerMessage = false,
 ): Promise<void> {
   const cfg = node.config as {
     assign_to?: string;
@@ -1747,7 +1832,7 @@ async function executeHandoff(
   // Sent BEFORE the DB-side handoff writes — best-effort, mirrors every
   // other closing-message send in this file (a failure here is logged
   // but must never block the handoff itself from completing).
-  if (!isDuplicate && run.conversation_id && run.contact_id) {
+  if (!isDuplicate && !suppressCustomerMessage && run.conversation_id && run.contact_id) {
     try {
       await engineSendText({
         accountId: run.account_id,
@@ -1914,8 +1999,23 @@ async function advanceFromNodeKey(
   run: FlowRunRow,
   startNodeKey: string,
   nodes: Map<string, FlowNodeRow>,
+  // `suppressHandoffCustomerMessage`: true when the caller (a
+  // collect_ai node's "complete" or "handoff" exit) already sent its
+  // own customer-facing closing message for THIS transition — e.g.
+  // handOffFromCollectAi or handleCollectAiOutcome's "complete"
+  // branch, both of which pick one hours-aware message and then hand
+  // off straight into a `handoff_node_key`/`next_node_key` that may
+  // itself be a `node_type: "handoff"` node. Without this,
+  // executeHandoff (below) would independently re-check business
+  // hours and send a SECOND, possibly contradictory message for the
+  // same handoff. Only applies to the very first node this call
+  // processes — never a later hop reached via a "start"/redirect
+  // continue — since that's the only one collect_ai is actually
+  // handing off into.
+  opts?: { suppressHandoffCustomerMessage?: boolean },
 ): Promise<{ outcome: "advanced" | "completed" | "handed_off" }> {
   let currentKey: string | null = startNodeKey;
+  let isFirstNode = true;
   // Defensive cap — if a flow has a cycle (which the validator
   // SHOULD catch but doesn't yet in v1), we bail rather than loop.
   for (let safety = 0; safety < 64; safety += 1) {
@@ -1937,6 +2037,8 @@ async function advanceFromNodeKey(
     await logEvent(db, run.id, "node_entered", node.node_key, {
       node_type: node.node_type,
     });
+    const suppressThisNode = isFirstNode;
+    isFirstNode = false;
 
     if (node.node_type === "start") {
       currentKey = (node.config as unknown as StartNodeConfig).next_node_key;
@@ -2162,7 +2264,12 @@ async function advanceFromNodeKey(
       return { outcome: "advanced" };
     }
     if (node.node_type === "handoff") {
-      await executeHandoff(db, run, node);
+      await executeHandoff(
+        db,
+        run,
+        node,
+        suppressThisNode && Boolean(opts?.suppressHandoffCustomerMessage),
+      );
       return { outcome: "handed_off" };
     }
     if (node.node_type === "end") {
@@ -2292,6 +2399,23 @@ export async function dispatchInboundToFlows(
       const alreadyHandled = Object.values(contactState.selected_options).some(
         (ids) => ids.includes(replyId),
       );
+      // "Ya tenemos tus datos" is only true if we actually have a
+      // phone number — a BSUID-only contact (see
+      // sendBsuidContactInfoRequest in the webhook) has neither, so
+      // that wording would overclaim. Best-effort lookup: a failure
+      // here just falls back to the original wording rather than
+      // blocking the notice send entirely.
+      let hasPhone = true;
+      try {
+        const { data: contactRow } = await db
+          .from("contacts")
+          .select("phone")
+          .eq("id", input.contactId)
+          .maybeSingle();
+        hasPhone = Boolean(contactRow?.phone);
+      } catch (err) {
+        console.error("[flows] contact phone lookup failed:", err);
+      }
       // Either way there is no live run this tap can advance — never
       // fall through to `no_match` here (that used to mean total
       // silence: findEntryFlow never matches interactive replies, and
@@ -2304,7 +2428,11 @@ export async function dispatchInboundToFlows(
           userId: input.userId,
           conversationId: input.conversationId,
           contactId: input.contactId,
-          text: alreadyHandled ? ALREADY_HANDLED_OPTION_TEXT : STALE_INTERACTIVE_TEXT,
+          text: alreadyHandled
+            ? ALREADY_HANDLED_OPTION_TEXT
+            : hasPhone
+              ? STALE_INTERACTIVE_TEXT
+              : STALE_INTERACTIVE_TEXT_NO_PHONE,
           aiGenerated: false,
         });
       } catch (err) {
