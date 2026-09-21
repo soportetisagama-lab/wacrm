@@ -18,6 +18,7 @@ import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 import { showBrowserNotification } from "@/lib/notifications/browser-push";
+import { useAuth } from "@/hooks/use-auth";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -44,6 +45,7 @@ function InboxPageInner() {
    * automatically instead of showing the empty center panel.
    */
   const deepLinkConvId = searchParams.get("c");
+  const { user } = useAuth();
 
   // Only true inside the Android wrapper — see the root className below.
   const [embedded, setEmbedded] = useState(false);
@@ -236,6 +238,17 @@ function InboxPageInner() {
 
       if (event.eventType === "INSERT") {
         const isActiveConv = activeConversation?.id === newMsg.conversation_id;
+        // `unread_count` is a single column shared by every viewer, not
+        // per-agent inbox state — only clear it live when the person
+        // actually looking at it right now is the conversation's own
+        // assigned agent (or nobody's assigned it yet). Otherwise a
+        // supervisor (ATC, gerencia, jefe de línea, admin/owner) just
+        // glancing at someone else's conversation would silently wipe
+        // the badge the actually-assigned advisor still needs to see.
+        const viewerOwnsActiveConv =
+          isActiveConv &&
+          (!activeConversation?.assigned_agent_id ||
+            activeConversation.assigned_agent_id === user?.id);
 
         // Notify on inbound customer messages for any conversation that
         // isn't the one currently open — same "not looking at it right
@@ -283,10 +296,7 @@ function InboxPageInner() {
                     ...c,
                     last_message_text: newMsg.content_text ?? "",
                     last_message_at: newMsg.created_at,
-                    unread_count:
-                      activeConversation?.id === newMsg.conversation_id
-                        ? 0
-                        : c.unread_count + 1,
+                    unread_count: viewerOwnsActiveConv ? 0 : c.unread_count + 1,
                   }
                 : c,
             ),
@@ -299,6 +309,31 @@ function InboxPageInner() {
           // converge state when it arrives.
           hydrateConversation(newMsg.conversation_id);
         }
+
+        // Persist the read-state server-side, not just the optimistic
+        // local zero above — a genuinely new customer message just
+        // landed for the conversation we're actively viewing right
+        // now. Deliberately NOT the same effect that watches
+        // `conversation.unread_count` in message-thread.tsx: that one
+        // only fires once per conversation *open* (see its comment) so
+        // it can't be re-triggered by someone else marking this same
+        // conversation unread — the flag/reassignment case, not "I
+        // just saw a new message," is the one that must stick.
+        // Guarded on visibility for the same reason: a backgrounded
+        // tab isn't "actively viewing" anything.
+        if (
+          viewerOwnsActiveConv &&
+          newMsg.sender_type === "customer" &&
+          document.visibilityState === "visible"
+        ) {
+          createClient()
+            .from("conversations")
+            .update({ unread_count: 0 })
+            .eq("id", newMsg.conversation_id)
+            .then(({ error }) => {
+              if (error) console.error("Failed to reset unread_count:", error);
+            });
+        }
       }
 
       if (event.eventType === "UPDATE") {
@@ -308,7 +343,7 @@ function InboxPageInner() {
         );
       }
     },
-    [activeConversation, hydrateConversation, router, t]
+    [activeConversation, hydrateConversation, router, t, user?.id]
   );
 
   // Handle realtime conversation events
@@ -337,19 +372,28 @@ function InboxPageInner() {
 
       if (event.eventType === "UPDATE") {
         if (knownConvIdsRef.current.has(conv.id)) {
-          // If this UPDATE is for the conv the user is currently viewing,
-          // suppress the incoming unread_count — the user is reading it
-          // RIGHT NOW, so any positive value would just flicker the badge
-          // back on for the ~100ms it takes for the reset effect's server
-          // UPDATE to round-trip. Non-active convs take the value as-is.
+          // If this UPDATE is for the conv the user is currently viewing
+          // AND they're the one it's assigned to, suppress the incoming
+          // unread_count — a write to 0 is genuinely in flight from our
+          // own reset effect, and without this it'd flicker the badge
+          // back on for the ~100ms round-trip. A viewer who ISN'T the
+          // assigned agent (a supervisor just glancing at someone else's
+          // conversation) never issues that write, so their view must
+          // take the server's real value as-is, same as any other
+          // non-active conv — otherwise their local suppression would
+          // itself put a stray 0 in front of them for a value that never
+          // actually changed server-side.
           const isActive = activeConversation?.id === conv.id;
+          const viewerOwnsThisConv =
+            !conv.assigned_agent_id || conv.assigned_agent_id === user?.id;
           setConversations((prev) =>
             prev.map((c) =>
               c.id === conv.id
                 ? {
                     ...c,
                     ...conv,
-                    unread_count: isActive ? 0 : conv.unread_count,
+                    unread_count:
+                      isActive && viewerOwnsThisConv ? 0 : conv.unread_count,
                   }
                 : c,
             ),
@@ -370,7 +414,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, user?.id]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
@@ -469,7 +513,13 @@ function InboxPageInner() {
           // does — the user just deep-linked into this conv, treat that the
           // same as a click. Leaves activeConversation.unread_count alone so
           // the MessageThread reset effect still fires the server UPDATE.
-          if (match.unread_count > 0) {
+          // Same ownership guard as that effect: only optimistically zero
+          // it here when this viewer is actually the assigned agent (or
+          // nobody is), otherwise a supervisor's own list would show a
+          // stale 0 for a value that never really changed server-side.
+          const viewerOwnsMatch =
+            !match.assigned_agent_id || match.assigned_agent_id === user?.id;
+          if (match.unread_count > 0 && viewerOwnsMatch) {
             setConversations((prev) =>
               prev.map((c) =>
                 c.id === match.id ? { ...c, unread_count: 0 } : c,
@@ -479,7 +529,7 @@ function InboxPageInner() {
         }
       }
     },
-    [deepLinkConvId, activeConversation?.id]
+    [deepLinkConvId, activeConversation?.id, user?.id]
   );
 
   const handleSelectConversation = useCallback(
@@ -501,13 +551,23 @@ function InboxPageInner() {
       // here means the user sees the badge disappear the instant they
       // click instead of waiting for the round-trip — and it persists
       // even if the realtime UPDATE is dropped.
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === conv.id && c.unread_count > 0
-            ? { ...c, unread_count: 0 }
-            : c,
-        ),
-      );
+      // Only when this viewer actually owns the conversation, though —
+      // same guard as MessageThread's reset effect. Otherwise a
+      // supervisor opening someone else's conversation would see (and
+      // leave behind, since no write follows to correct it) a stale 0
+      // for a badge that's still genuinely unread for the assigned
+      // advisor.
+      const viewerOwnsConv =
+        !conv.assigned_agent_id || conv.assigned_agent_id === user?.id;
+      if (viewerOwnsConv) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conv.id && c.unread_count > 0
+              ? { ...c, unread_count: 0 }
+              : c,
+          ),
+        );
+      }
       // Record the selection on the deep-link ref BEFORE we change the
       // URL. The router.replace below flips `deepLinkConvId`, which can
       // in turn cause ConversationList to refetch and eventually call
@@ -521,7 +581,7 @@ function InboxPageInner() {
       // replace() to avoid polluting browser history with every click.
       router.replace(`/inbox?c=${conv.id}`, { scroll: false });
     },
-    [activeConversation?.id, router]
+    [activeConversation?.id, router, user?.id]
   );
 
   // Mobile "back" — deselect the conversation so the list pane comes
