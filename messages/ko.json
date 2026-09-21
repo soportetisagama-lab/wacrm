@@ -163,6 +163,7 @@
       "markAsUnread": "읽지 않음으로 표시",
       "markAsRead": "읽음으로 표시",
       "markUnreadFailed": "대화 상태를 변경하지 못했습니다",
+      "pendingReply": "답장 필요",
       "agent": "상담원",
       "allAgents": "전체 상담원",
       "unassigned": "미배정",
