@@ -488,6 +488,44 @@ describe("evaluateConditionPredicate", () => {
       }),
     ).toBe(false);
   });
+
+  it("starts_with: prefix match (e.g. Peru country code on a digits-only phone)", () => {
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "51987654321",
+        configValue: "51",
+      }),
+    ).toBe(true);
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "12084204292",
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
+
+  it("starts_with: a substring in the middle doesn't count — must be a real prefix (unlike `contains`)", () => {
+    // Contains "51" at position 3, but the actual country code is 34 (Spain).
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: "34651234567",
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
+
+  it("starts_with: undefined subject never matches", () => {
+    expect(
+      evaluateConditionPredicate({
+        operator: "starts_with",
+        subjectValue: undefined,
+        configValue: "51",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("isConversationBotEligible", () => {

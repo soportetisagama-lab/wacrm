@@ -68,7 +68,11 @@ export function showBrowserNotification(title: string, { body, tag, onClick }: S
     const n = new Notification(title, {
       body,
       tag,
-      icon: "/branding/icon-square.png",
+      // Cache-busted: browsers/Windows Action Center cache a Notification's
+      // icon quite persistently, sometimes surviving a normal page reload —
+      // bump this version whenever the underlying image file changes so
+      // viewers actually see the new one instead of a stale cached copy.
+      icon: "/branding/icon-square.png?v=2",
     });
     if (onClick) {
       n.onclick = () => {

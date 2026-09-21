@@ -364,6 +364,9 @@ export function evaluateConditionPredicate(args: {
     case "contains":
       if (args.subjectValue === undefined) return false;
       return args.subjectValue.includes(args.configValue ?? "");
+    case "starts_with":
+      if (args.subjectValue === undefined) return false;
+      return args.subjectValue.startsWith(args.configValue ?? "");
   }
 }
 
