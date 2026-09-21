@@ -413,14 +413,16 @@ export function summarizeNode(
           ? '=='
           : cfg.operator === 'contains'
             ? t ? t('opContains') : 'contains'
-            : cfg.operator === 'present'
-              ? t ? t('opExists') : 'exists'
-              : cfg.operator === 'absent'
-                ? t ? t('opMissing') : 'missing'
-                : '';
+            : cfg.operator === 'starts_with'
+              ? t ? t('opStartsWith') : 'starts with'
+              : cfg.operator === 'present'
+                ? t ? t('opExists') : 'exists'
+                : cfg.operator === 'absent'
+                  ? t ? t('opMissing') : 'missing'
+                  : '';
       const value = typeof cfg.value === 'string' ? cfg.value : '';
       const valStr =
-        (cfg.operator === 'equals' || cfg.operator === 'contains') && value
+        (cfg.operator === 'equals' || cfg.operator === 'contains' || cfg.operator === 'starts_with') && value
           ? ` "${truncate(value, 20)}"`
           : '';
       return subject === 'tag' ? subjectStr : `${subjectStr} ${op}${valStr}`;

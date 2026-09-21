@@ -425,6 +425,7 @@ export interface CollectAiNodeConfig {
 export type ConditionOperator =
   | "equals"
   | "contains"
+  | "starts_with"
   | "present"
   | "absent";
 
@@ -444,7 +445,7 @@ export interface ConditionNodeConfig {
    */
   subject_key: string;
   operator: ConditionOperator;
-  /** Compared against `subject` for `equals`/`contains`. Ignored for `present`/`absent`. */
+  /** Compared against `subject` for `equals`/`contains`/`starts_with`. Ignored for `present`/`absent`. */
   value?: string;
   /** Node to advance to when the predicate evaluates true. */
   true_next: string;
