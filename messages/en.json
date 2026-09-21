@@ -163,6 +163,7 @@
       "markAsUnread": "Mark as unread",
       "markAsRead": "Mark as read",
       "markUnreadFailed": "Couldn't mark the conversation",
+      "pendingReply": "Needs reply",
       "agent": "Agent",
       "allAgents": "All agents",
       "unassigned": "Unassigned",
