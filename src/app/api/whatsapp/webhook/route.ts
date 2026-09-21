@@ -894,12 +894,15 @@ async function saveReferralIfPresent(
 }
 
 /**
- * Proactively ask a brand-new BSUID-only contact for their phone
- * number via the REQUEST_CONTACT_INFO button (migration 042) —
- * gated by whatsapp_config.bsuid_request_contact_info_enabled at the
- * call site. Fires once, right when the contact is first created;
- * never re-fires on a later phone-less message from the same contact
- * (the caller only reaches this on contactOutcome.wasCreated).
+ * Proactively ask a BSUID-only contact for their phone number via the
+ * REQUEST_CONTACT_INFO button (migration 042) — gated by
+ * whatsapp_config.bsuid_request_contact_info_enabled at the call
+ * site. Re-fires on every inbound message from that contact for as
+ * long as `contactRecord.phone` stays null — deliberate product
+ * choice (no cooldown, no cap): the lead is worth little without a
+ * real phone number, so we keep asking until either they share it
+ * (promoteBsuidContactPhoneIfRequested picks it up) or an agent takes
+ * over the conversation by hand.
  *
  * NOT YET EMPIRICALLY VERIFIED: `to` is used here for the BSUID
  * target, matching every other BSUID send path in this codebase
@@ -1249,16 +1252,22 @@ async function processMessage(
   //
   // BSUID follow-ups (migration 042) — both best-effort, never block
   // the main inbound flow:
-  //   1. A brand-new, still phone-less contact — if the account opted
-  //      in, ask them for their number once, right now.
+  //   1. Still phone-less contact — if the account opted in, ask them
+  //      for their number again on THIS message too. Skipped for a
+  //      reaction (nothing to reply to) and for a `contacts` message
+  //      (that's the reply we're hoping for — let #2 below process it
+  //      first; `contactRecord.phone` here is still the pre-promotion
+  //      value, so without this exclusion a contact card arriving
+  //      would get asked again in the same breath it was answered).
   //   2. Any inbound `contacts`-type message — if it's the reply to
   //      that exact button (origin: 'contact_request'), promote the
   //      shared phone onto this contact.
   if (
-    contactOutcome.wasCreated &&
     !contactRecord.phone &&
     contactRecord.whatsapp_user_id &&
-    requestContactInfoEnabled
+    requestContactInfoEnabled &&
+    message.type !== 'reaction' &&
+    message.type !== 'contacts'
   ) {
     await sendBsuidContactInfoRequest(
       conversation.id,
