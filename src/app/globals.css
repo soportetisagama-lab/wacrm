@@ -142,13 +142,13 @@ html[data-mode="light"] {
 
 :root,
 html[data-theme="violet"] {
-  --primary: #e6007e;
+  --primary: #006fb5;
   --primary-foreground: #ffffff;
-  --primary-hover: #f0339c;
-  --primary-soft: rgba(230, 0, 126, 0.12);
-  --primary-soft-2: rgba(230, 0, 126, 0.22);
-  --ring: #e6007e;
-  --chart-1: #e6007e;
+  --primary-hover: #338cc4;
+  --primary-soft: rgba(0, 111, 181, 0.12);
+  --primary-soft-2: rgba(0, 111, 181, 0.22);
+  --ring: #006fb5;
+  --chart-1: #006fb5;
 }
 
 html[data-theme="emerald"] {
@@ -196,7 +196,7 @@ html[data-theme="rose"] {
 }
 
 /* ---- SIDEBAR: brand-locked surface ----
- * The primary nav is a fixed brand element (Sagama Maxi magenta),
+ * The primary nav is a fixed brand element (Sagama Industrial blue),
  * independent of the MODE/ACCENT system above — it doesn't change with
  * light/dark mode or the user's chosen accent color. --sidebar-accent-dim
  * and --sidebar-sub aren't part of shadcn's default sidebar token set;
@@ -207,10 +207,10 @@ html[data-theme="rose"] {
   --sidebar-border: rgba(255, 255, 255, 0.08);
   --sidebar-accent: rgba(255, 255, 255, 0.05);
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-accent-dim: rgba(230, 0, 126, 0.16);
-  --sidebar-primary: #e6007e;
+  --sidebar-accent-dim: rgba(0, 111, 181, 0.16);
+  --sidebar-primary: #006fb5;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-ring: #e6007e;
+  --sidebar-ring: #006fb5;
   --sidebar-sub: #1c252e;
 }
 
@@ -218,8 +218,8 @@ html[data-theme="rose"] {
  * The topbar is a fixed brand element too, same rationale as the
  * SIDEBAR block above — independent of light/dark mode. */
 :root {
-  --header-bg: #e6007e;
-  --header-bg-2: #b8005f;
+  --header-bg: #006fb5;
+  --header-bg-2: #005991;
 }
 
 /* Notification bell — ring wobble on the icon, an expanding pulse ring

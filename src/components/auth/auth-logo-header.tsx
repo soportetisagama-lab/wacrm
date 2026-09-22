@@ -1,7 +1,7 @@
 import Image from 'next/image';
 
 // Shared header for the "form" state of each auth screen: the Sagama
-// Maxi wordmark, an optional bold heading, and an optional description
+// Industrial wordmark, an optional bold heading, and an optional description
 // line.
 export function AuthLogoHeader({
   title,
@@ -19,8 +19,8 @@ export function AuthLogoHeader({
           actually grow (~10-14%) instead of the cap silently doing
           nothing. */}
       <Image
-        src="/branding/BIENVENIDO_MAXI.png"
-        alt="Bienvenido a Sagama Maxi"
+        src="/branding/BIENVENIDO_INDUSTRIAL.png"
+        alt="Bienvenido a Sagama Industrial"
         width={862}
         height={134}
         priority

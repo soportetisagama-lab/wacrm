@@ -1,7 +1,7 @@
-name: Build and Push Docker Image (Sagama Maxi)
+name: Build and Push Docker Image (Sagama Industrial)
 on:
   push:
-    branches: [xlr9-maxi]
+    branches: [xlr9-industrial]
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -22,8 +22,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/soportetisagama-lab/wacrm:xlr9-maxi
+          tags: ghcr.io/soportetisagama-lab/wacrm:xlr9-industrial
           build-args: |
-            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.MAXI_NEXT_PUBLIC_SUPABASE_URL }}
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.MAXI_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-            NEXT_PUBLIC_SITE_URL=${{ secrets.MAXI_NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.INDUSTRIAL_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.INDUSTRIAL_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_SITE_URL=${{ secrets.INDUSTRIAL_NEXT_PUBLIC_SITE_URL }}
