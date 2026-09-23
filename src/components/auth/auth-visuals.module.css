@@ -28,8 +28,8 @@
 html[data-mode='light'] .glassCard {
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.4),
-    rgba(235, 244, 255, 0.24)
+    rgba(255, 255, 255, 0.8),
+    rgba(235, 244, 255, 0.7)
   );
   backdrop-filter: blur(10px) saturate(135%);
   -webkit-backdrop-filter: blur(10px) saturate(135%);
