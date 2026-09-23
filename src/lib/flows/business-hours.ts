@@ -21,23 +21,28 @@ const PERU_UTC_OFFSET_HOURS = -5;
 
 /** Attention hours, in minutes-since-midnight, Peru local time. */
 const HOURS = {
-  weekday: { start: 8 * 60, end: 17 * 60 }, // Mon-Fri 8:00am-5:00pm
+  monToThu: { start: 8 * 60, end: 17 * 60 }, // Mon-Thu 8:00am-5:00pm
+  friday: { start: 8 * 60, end: 17 * 60 + 30 }, // Fri 8:00am-5:30pm
   saturday: { start: 8 * 60 + 30, end: 12 * 60 + 30 }, // Sat 8:30am-12:30pm
 };
 
 /**
  * True when `now` (any instant, defaults to the current time) falls
- * within business hours: Mon-Fri 8:00am-5:00pm, Sat 8:30am-12:30pm,
- * closed Sundays. The end time is exclusive (17:00 itself is already
- * closed), matching how the range reads to a human ("until 5pm").
+ * within business hours: Mon-Thu 8:00am-5:00pm, Fri 8:00am-5:30pm,
+ * Sat 8:30am-12:30pm, closed Sundays. The end time is exclusive
+ * (17:00 itself is already closed), matching how the range reads to
+ * a human ("until 5pm").
  */
 export function isWithinBusinessHours(now: Date = new Date()): boolean {
   const peru = new Date(now.getTime() + PERU_UTC_OFFSET_HOURS * 60 * 60 * 1000);
   const day = peru.getUTCDay(); // 0=Sun..6=Sat, already shifted to Peru time
   const minutesOfDay = peru.getUTCHours() * 60 + peru.getUTCMinutes();
 
-  if (day >= 1 && day <= 5) {
-    return minutesOfDay >= HOURS.weekday.start && minutesOfDay < HOURS.weekday.end;
+  if (day >= 1 && day <= 4) {
+    return minutesOfDay >= HOURS.monToThu.start && minutesOfDay < HOURS.monToThu.end;
+  }
+  if (day === 5) {
+    return minutesOfDay >= HOURS.friday.start && minutesOfDay < HOURS.friday.end;
   }
   if (day === 6) {
     return minutesOfDay >= HOURS.saturday.start && minutesOfDay < HOURS.saturday.end;

@@ -534,6 +534,36 @@ export function MessageThread({
     return () => document.removeEventListener('visibilitychange', tryReset);
   }, [conversationId, hasUnread, conversation?.assigned_agent_id, user?.id]);
 
+  // Clear the "you were assigned this conversation" notification (the
+  // NOTIFICACIONES badge) the moment its conversation is opened —
+  // otherwise it sits there forever unless the agent separately visits
+  // the Notifications page and marks it read by hand, even though
+  // opening the conversation itself is a stronger signal they've
+  // already seen it. Independent of the unread-count reset above
+  // (fires regardless of `hasUnread`) and of its ref, since this is
+  // a different table with its own "already handled this id" guard.
+  const markedNotificationsReadIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      !conversationId ||
+      !user?.id ||
+      markedNotificationsReadIdRef.current === conversationId
+    ) {
+      return;
+    }
+    markedNotificationsReadIdRef.current = conversationId;
+    const supabase = createClient();
+    supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('conversation_id', conversationId)
+      .eq('user_id', user.id)
+      .is('read_at', null)
+      .then(({ error }) => {
+        if (error) console.error('Failed to mark assignment notifications read:', error);
+      });
+  }, [conversationId, user?.id]);
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
