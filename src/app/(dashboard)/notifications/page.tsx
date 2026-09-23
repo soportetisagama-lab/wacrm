@@ -19,6 +19,13 @@ import {
   getNotificationPermission,
   isNotificationEnabled,
 } from "@/lib/notifications/browser-push";
+import {
+  disableNativePush,
+  enableNativePush,
+  getNativePushPermission,
+  isNativePushEnabled,
+  isNativePushSupported,
+} from "@/lib/notifications/native-push";
 
 // Icon per notification type. Only one type exists today
 // (conversation_assigned) but this keeps future types a one-line add.
@@ -52,9 +59,18 @@ export default function NotificationsPage() {
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [requestingNotif, setRequestingNotif] = useState(false);
 
-  const refreshNotifState = useCallback(() => {
-    setNotifPermission(getNotificationPermission());
-    setNotifEnabled(isNotificationEnabled());
+  // Inside the Android wrapper, use real FCM push (survives the app
+  // being fully closed) instead of the browser Notification API,
+  // which the wrapper's WebView doesn't implement at all — see
+  // native-push.ts's and browser-push.ts's top comments.
+  const refreshNotifState = useCallback(async () => {
+    if (isNativePushSupported()) {
+      setNotifPermission(await getNativePushPermission());
+      setNotifEnabled(isNativePushEnabled());
+    } else {
+      setNotifPermission(getNotificationPermission());
+      setNotifEnabled(isNotificationEnabled());
+    }
   }, []);
   useEffect(() => {
     refreshNotifState();
@@ -62,13 +78,21 @@ export default function NotificationsPage() {
 
   const handleEnableNotifications = useCallback(async () => {
     setRequestingNotif(true);
-    await enableBrowserNotifications();
+    if (isNativePushSupported()) {
+      await enableNativePush();
+    } else {
+      await enableBrowserNotifications();
+    }
     setRequestingNotif(false);
-    refreshNotifState();
+    await refreshNotifState();
   }, [refreshNotifState]);
 
   const handleDisableNotifications = useCallback(() => {
-    disableBrowserNotifications();
+    if (isNativePushSupported()) {
+      disableNativePush();
+    } else {
+      disableBrowserNotifications();
+    }
     refreshNotifState();
   }, [refreshNotifState]);
 
