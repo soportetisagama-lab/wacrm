@@ -2,7 +2,10 @@
   "Common": {
     "close": "Close",
     "loading": "Loading...",
-    "serverUnreachable": "Could not reach the server"
+    "serverUnreachable": "Could not reach the server",
+    "updateAvailable": "A new version is available",
+    "updateNow": "Update",
+    "dismiss": "Dismiss"
   },
   "LoginPage": {
     "titleAccept": "Sign in to accept",

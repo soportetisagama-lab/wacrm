@@ -2,7 +2,10 @@
   "Common": {
     "close": "닫기",
     "loading": "로딩 중...",
-    "serverUnreachable": "서버에 연결할 수 없습니다"
+    "serverUnreachable": "서버에 연결할 수 없습니다",
+    "updateAvailable": "새 버전이 있습니다",
+    "updateNow": "업데이트",
+    "dismiss": "닫기"
   },
   "LoginPage": {
     "titleAccept": "로그인하여 수락하기",

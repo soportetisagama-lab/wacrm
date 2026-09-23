@@ -22,6 +22,19 @@ import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { sendPushToUser } from '@/lib/notifications/push-send'
+
+// Push notification body for non-text inbound content — mirrors
+// WhatsApp's own "📷 Photo" style preview when there's no caption.
+const PUSH_MEDIA_LABEL: Record<string, string> = {
+  image: '📷 Foto',
+  video: '🎥 Video',
+  audio: '🎤 Audio',
+  document: '📄 Documento',
+  location: '📍 Ubicación',
+  template: 'Nuevo mensaje',
+  interactive: 'Nuevo mensaje',
+}
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -1392,6 +1405,24 @@ async function processMessage(
   if (msgError || !insertedMessage) {
     console.error('Error inserting message:', msgError)
     return
+  }
+
+  // Native push (FCM) for the assigned agent's phone — best-effort,
+  // never blocks the inbound flow. Unassigned conversations don't
+  // push to anyone; there's no single "right" recipient for those and
+  // paging the whole account for every unassigned inbound is not the
+  // behaviour we want (see push-send.ts for the no-op-when-unconfigured
+  // contract this relies on).
+  if (conversation.assigned_agent_id) {
+    const pushBody =
+      contentType === 'text' && contentText
+        ? contentText
+        : PUSH_MEDIA_LABEL[contentType] ?? 'Nuevo mensaje'
+    sendPushToUser(conversation.assigned_agent_id, {
+      title: contactRecord.name || contactRecord.phone || 'Nuevo mensaje',
+      body: pushBody,
+      data: { conversationId: conversation.id },
+    }).catch((err) => console.error('[webhook] sendPushToUser failed:', err))
   }
 
   // Shared by both audio-transcription call sites below (dispatchInboundToAiReply

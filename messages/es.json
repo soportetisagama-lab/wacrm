@@ -2,7 +2,10 @@
   "Common": {
     "close": "Cerrar",
     "loading": "Cargando...",
-    "serverUnreachable": "No se pudo conectar con el servidor"
+    "serverUnreachable": "No se pudo conectar con el servidor",
+    "updateAvailable": "Hay una versión nueva disponible",
+    "updateNow": "Actualizar",
+    "dismiss": "Cerrar aviso"
   },
   "LoginPage": {
     "titleAccept": "Inicia sesión para aceptar",

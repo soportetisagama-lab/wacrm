@@ -14,6 +14,7 @@ import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
 import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
+import { UpdateBanner } from "@/components/layout/update-banner";
 import { App } from "@capacitor/app";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
@@ -251,6 +252,7 @@ function EmbeddedShell({
           </div>
         </div>
       )}
+      {!isThreadOpen && <UpdateBanner />}
       <main className="min-h-0 flex-1 overflow-hidden">
         {/* Keyed by pathname only (not by thread-open state) — switching
             Bandeja/Contactos/Notificaciones is a real route change that
