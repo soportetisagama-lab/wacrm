@@ -17,12 +17,24 @@ describe("isWithinBusinessHours", () => {
     expect(isWithinBusinessHours(new Date("2024-01-01T17:00:00Z"))).toBe(true);
   });
 
-  it("Friday 4:59pm Peru — one minute before closing", () => {
-    expect(isWithinBusinessHours(new Date("2024-01-05T21:59:00Z"))).toBe(true);
+  it("Thursday 4:59pm Peru — one minute before Mon-Thu closing", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-04T21:59:00Z"))).toBe(true);
   });
 
-  it("Friday 5:00pm Peru — closing time itself is already closed (end exclusive)", () => {
-    expect(isWithinBusinessHours(new Date("2024-01-05T22:00:00Z"))).toBe(false);
+  it("Thursday 5:00pm Peru — Mon-Thu closes at 5pm, not Friday's 5:30 (end exclusive)", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-04T22:00:00Z"))).toBe(false);
+  });
+
+  it("Friday 5:00pm Peru — still open, Friday's window runs later than Mon-Thu", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-05T22:00:00Z"))).toBe(true);
+  });
+
+  it("Friday 5:29pm Peru — one minute before Friday's later closing", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-05T22:29:00Z"))).toBe(true);
+  });
+
+  it("Friday 5:30pm Peru — closing time itself is already closed (end exclusive)", () => {
+    expect(isWithinBusinessHours(new Date("2024-01-05T22:30:00Z"))).toBe(false);
   });
 
   it("Saturday 8:29am Peru — before the shorter Saturday window opens", () => {
