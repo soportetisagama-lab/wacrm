@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyTypedPhone,
+  extractTypedPhone,
   isRecipientNotAllowedError,
   isValidE164,
   normalizePhone,
@@ -160,5 +162,76 @@ describe("isRecipientNotAllowedError", () => {
       false,
     );
     expect(isRecipientNotAllowedError("")).toBe(false);
+  });
+});
+
+describe("extractTypedPhone", () => {
+  it("accepts a Peruvian mobile typed on its own, in common formats", () => {
+    expect(extractTypedPhone("974 710 551")).toBe("51974710551");
+    expect(extractTypedPhone("974710551")).toBe("51974710551");
+    expect(extractTypedPhone("974-710-551")).toBe("51974710551");
+    expect(extractTypedPhone("+51 974 710 551")).toBe("51974710551");
+    expect(extractTypedPhone("51974710551")).toBe("51974710551");
+  });
+
+  it("accepts a short lead-in around the number", () => {
+    expect(extractTypedPhone("mi número es 974 710 551")).toBe("51974710551");
+    expect(extractTypedPhone("Este es mi celular: 974710551 gracias")).toBe("51974710551");
+  });
+
+  it("accepts an explicit international number with a leading +", () => {
+    expect(extractTypedPhone("+34 612 345 678")).toBe("34612345678");
+    expect(extractTypedPhone("+1 (415) 555-1212")).toBe("14155551212");
+  });
+
+  it("rejects numbers that aren't clearly a phone", () => {
+    expect(extractTypedPhone("")).toBeNull();
+    expect(extractTypedPhone("hola")).toBeNull();
+    expect(extractTypedPhone("01 4567890")).toBeNull(); // landline, no +
+    expect(extractTypedPhone("123456789")).toBeNull(); // 9 digits not starting with 9
+    expect(extractTypedPhone("34612345678")).toBeNull(); // foreign without +
+  });
+
+  it("rejects messages where the number is buried in longer text", () => {
+    expect(
+      extractTypedPhone("mi pedido 974710551 llegó mal y quiero saber qué pasó con el envío"),
+    ).toBeNull();
+  });
+
+  it("rejects messages with more than one number", () => {
+    expect(extractTypedPhone("974710551 o 987654321")).toBeNull();
+    expect(extractTypedPhone("974710551 somos 3")).toBeNull();
+  });
+});
+
+describe("classifyTypedPhone", () => {
+  it("returns the phone for a valid number", () => {
+    expect(classifyTypedPhone("mi número es 974 710 551")).toEqual({
+      kind: "phone",
+      phone: "51974710551",
+    });
+  });
+
+  it("flags a Peruvian mobile with missing or extra digits as incomplete", () => {
+    expect(classifyTypedPhone("974 710 55")).toEqual({ kind: "incomplete" });
+    expect(classifyTypedPhone("9747105")).toEqual({ kind: "incomplete" });
+    expect(classifyTypedPhone("9747105511")).toEqual({ kind: "incomplete" });
+    expect(classifyTypedPhone("mi celular es 97471055")).toEqual({ kind: "incomplete" });
+    expect(classifyTypedPhone("+51 974 710 55")).toEqual({ kind: "incomplete" });
+  });
+
+  it("flags two or more mobile numbers as multiple", () => {
+    expect(classifyTypedPhone("974710551 o 987654321")).toEqual({ kind: "multiple" });
+    expect(classifyTypedPhone("974 710 551 / 987 654 321")).toEqual({ kind: "multiple" });
+  });
+
+  it("stays silent on things that aren't a phone attempt", () => {
+    expect(classifyTypedPhone("hola, precio?")).toEqual({ kind: "none" });
+    expect(classifyTypedPhone("mi DNI es 45678912")).toEqual({ kind: "none" });
+    expect(classifyTypedPhone("RUC 20123456789")).toEqual({ kind: "none" });
+    expect(classifyTypedPhone("quiero 2 mesas de 120x60")).toEqual({ kind: "none" });
+    expect(
+      classifyTypedPhone("mi pedido 97471055 llegó mal y quiero saber qué pasó con el envío"),
+    ).toEqual({ kind: "none" });
   });
 });
