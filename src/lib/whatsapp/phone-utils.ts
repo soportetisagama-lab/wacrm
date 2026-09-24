@@ -102,3 +102,77 @@ export function phoneVariants(sanitized: string): string[] {
 export function isRecipientNotAllowedError(message: string): boolean {
   return /131030|not in allowed list|not in the allowed list/i.test(message)
 }
+
+export type TypedPhoneResult =
+  | { kind: 'phone'; phone: string }
+  | { kind: 'incomplete' }
+  | { kind: 'multiple' }
+  | { kind: 'none' }
+
+/**
+ * Classify a customer's free-text reply to our REQUEST_CONTACT_INFO
+ * ask — the case where a username/BSUID-only lead TYPES the number
+ * ("974 710 551") instead of tapping the button, which Meta delivers
+ * as a plain `text` message with no contact card.
+ *
+ * Deliberately conservative — a wrong number stamped onto a contact is
+ * worse than asking again — so it only looks at a message that is
+ * essentially just the number, optionally with a short lead-in like
+ * "mi número es" (at most 30 letters of surrounding text):
+ *   - 'phone'      exactly one number, and it's a Peruvian mobile
+ *                  (9 digits starting with 9, with or without 51 /
+ *                  +51) or an explicit "+" international number.
+ *                  `phone` is digits-only, same shape as
+ *                  normalizePhone(message.from), e.g. "51974710551".
+ *   - 'incomplete' one number that looks like a Peruvian mobile
+ *                  attempt (starts with 9) but has the wrong digit
+ *                  count — "974 710 55".
+ *   - 'multiple'   two or more mobile-looking numbers.
+ *   - 'none'       anything else (normal chat, a DNI/RUC, a long
+ *                  message that merely contains digits).
+ * The caller uses 'incomplete' / 'multiple' only to word the re-ask
+ * so the customer understands what went wrong.
+ */
+export function classifyTypedPhone(text: string): TypedPhoneResult {
+  if (!text) return { kind: 'none' }
+  const candidates = (text.match(/\+?\d[\d\s\-().]{4,}\d/g) ?? []).filter(
+    (c) => normalizePhone(c).length >= 7
+  )
+  if (candidates.length === 0) return { kind: 'none' }
+
+  let rest = text
+  for (const c of candidates) rest = rest.replace(c, '')
+  if ((rest.match(/\p{L}/gu) ?? []).length > 30) return { kind: 'none' }
+
+  // National part of a Peruvian number: strip a leading 51 only when
+  // what follows is a mobile (starts with 9).
+  const national = (c: string) => {
+    const digits = normalizePhone(c)
+    return /^519/.test(digits) && digits.length > 9 ? digits.slice(2) : digits
+  }
+  const mobileLike = candidates.filter((c) => national(c).startsWith('9'))
+
+  if (candidates.length > 1) {
+    return mobileLike.length > 1 ? { kind: 'multiple' } : { kind: 'none' }
+  }
+  if (/\d/.test(rest)) return { kind: 'none' }
+
+  const candidate = candidates[0]
+  const digits = normalizePhone(candidate)
+  if (/^9\d{8}$/.test(digits)) return { kind: 'phone', phone: `51${digits}` }
+  if (/^519\d{8}$/.test(digits)) return { kind: 'phone', phone: digits }
+  if (candidate.trim().startsWith('+') && digits.length >= 8 && isValidE164(`+${digits}`)) {
+    // An explicit +51 that isn't a valid mobile is a mistyped Peruvian
+    // number, not a foreign one.
+    if (digits.startsWith('51')) return { kind: 'incomplete' }
+    return { kind: 'phone', phone: digits }
+  }
+  if (mobileLike.length === 1) return { kind: 'incomplete' }
+  return { kind: 'none' }
+}
+
+/** The phone from classifyTypedPhone, or null for every other outcome. */
+export function extractTypedPhone(text: string): string | null {
+  const result = classifyTypedPhone(text)
+  return result.kind === 'phone' ? result.phone : null
+}
