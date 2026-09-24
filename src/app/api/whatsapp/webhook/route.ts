@@ -2,7 +2,12 @@ import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia, sendRequestContactInfo } from '@/lib/whatsapp/meta-api'
-import { normalizePhone } from '@/lib/whatsapp/phone-utils'
+import {
+  classifyTypedPhone,
+  extractTypedPhone,
+  normalizePhone,
+  type TypedPhoneResult,
+} from '@/lib/whatsapp/phone-utils'
 import { toRecipientTarget } from '@/lib/whatsapp/recipient'
 import {
   findExistingContact,
@@ -926,6 +931,11 @@ async function saveReferralIfPresent(
  * rejects `to` holding a BSUID, every one of those call sites needs
  * the same fix, not just this one.
  *
+ * `typedAttempt` rewords the text above the button when the customer
+ * already tried to TYPE their number and it couldn't be used (missing
+ * digits, or several numbers) — so they understand why we're asking
+ * again instead of getting the exact same message back.
+ *
  * Best-effort: mirrors saveReferralIfPresent — a send failure must
  * not break the main inbound-message flow.
  */
@@ -933,7 +943,8 @@ async function sendBsuidContactInfoRequest(
   conversationId: string,
   bsuid: string,
   phoneNumberId: string,
-  accessToken: string
+  accessToken: string,
+  typedAttempt: TypedPhoneResult['kind'] = 'none'
 ) {
   try {
     const { messageId } = await sendRequestContactInfo({
@@ -947,7 +958,11 @@ async function sendBsuidContactInfoRequest(
       // TODO: not currently configurable per-account/locale. Revisit
       // if accounts need this in their own language.
       bodyText:
-        "Para poder contactarte siempre que lo necesites, ¿nos compartes tu número de teléfono?",
+        typedAttempt === 'incomplete'
+          ? 'Parece que el número está incompleto 🙏 ¿Nos lo envías de nuevo con los 9 dígitos? O presiona el botón para compartirlo.'
+          : typedAttempt === 'multiple'
+            ? '¿Cuál de esos números es tu WhatsApp? 🙏 Envíanos solo uno, o presiona el botón para compartirlo.'
+            : 'Para poder contactarte siempre que lo necesites, ¿nos compartes tu número de teléfono?',
     })
 
     const { error: msgErr } = await supabaseAdmin().from('messages').insert({
@@ -987,6 +1002,11 @@ async function sendBsuidContactInfoRequest(
  * (it could be anyone's card), and it must not touch BSUID resolution
  * at all, per product decision.
  *
+ * Also covers the customer who ignores the button and just TYPES the
+ * number as a plain text message ("974 710 551") — see
+ * extractTypedPhone for how conservative that match is. Without this
+ * the contact stayed phone-less and got asked again on every message.
+ *
  * Best-effort: mirrors saveReferralIfPresent — a failure here must
  * not break the main inbound-message flow.
  */
@@ -1006,15 +1026,18 @@ async function promoteBsuidContactPhoneIfRequested(
   accountId: string,
   contact: { id: string; phone: string | null }
 ): Promise<string | null> {
-  if (message.type !== 'contacts' || contact.phone) return null
+  if (contact.phone) return null
 
-  const shared = message.contacts?.[0]
-  if (!shared || shared.origin !== 'contact_request') return null
-
-  const rawPhone = shared.phones?.[0]?.phone
-  if (!rawPhone) return null
-
-  const sanitized = normalizePhone(rawPhone)
+  let sanitized: string | null = null
+  if (message.type === 'contacts') {
+    const shared = message.contacts?.[0]
+    if (!shared || shared.origin !== 'contact_request') return null
+    const rawPhone = shared.phones?.[0]?.phone
+    if (!rawPhone) return null
+    sanitized = normalizePhone(rawPhone)
+  } else if (message.type === 'text') {
+    sanitized = extractTypedPhone(message.text?.body ?? '')
+  }
   if (!sanitized) return null
 
   try {
@@ -1280,11 +1303,19 @@ async function processMessage(
   //      would get asked again in the same breath it was answered).
   //   2. Any inbound `contacts`-type message — if it's the reply to
   //      that exact button (origin: 'contact_request'), promote the
-  //      shared phone onto this contact.
+  //      shared phone onto this contact. Same for a plain text message
+  //      that is just the number typed out (extractTypedPhone) — and
+  //      in that case #1 is skipped too, so we don't ask again for the
+  //      number they just gave us.
+  const typedAttempt =
+    !contactRecord.phone && message.type === 'text'
+      ? classifyTypedPhone(message.text?.body ?? '')
+      : null
   if (
     !contactRecord.phone &&
     contactRecord.whatsapp_user_id &&
     requestContactInfoEnabled &&
+    typedAttempt?.kind !== 'phone' &&
     message.type !== 'reaction' &&
     message.type !== 'contacts'
   ) {
@@ -1292,7 +1323,8 @@ async function processMessage(
       conversation.id,
       contactRecord.whatsapp_user_id,
       phoneNumberId,
-      accessToken
+      accessToken,
+      typedAttempt?.kind
     )
   }
   const promotedPhone = await promoteBsuidContactPhoneIfRequested(message, accountId, contactRecord)
