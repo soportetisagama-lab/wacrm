@@ -10,6 +10,7 @@ import { Header } from "@/components/layout/header";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
+import { AssignedMessageNotifier } from "@/components/presence/assigned-message-notifier";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
 import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
@@ -126,6 +127,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           {/* Reports this tab's online/away presence once we know a user is
               signed in. Headless — renders nothing. */}
           <PresenceHeartbeat />
+          <AssignedMessageNotifier />
           <Sidebar
             open={sidebarOpen}
             onClose={closeSidebar}
