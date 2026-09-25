@@ -41,6 +41,7 @@ import {
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
+import { isRecentLineTransfer } from "@/lib/line-transfer-inbound";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -2274,6 +2275,12 @@ export async function dispatchInboundToFlows(
       input.conversationId,
     );
     if (!isConversationBotEligible(conversationGate)) {
+      return { consumed: false, outcome: "no_match" };
+    }
+    // Transferred in from another Sagama line: the customer already said
+    // what they need there, so no welcome menu — the AI assistant (which
+    // gets the handover history) or a human picks it up instead.
+    if (await isRecentLineTransfer(db, input.conversationId)) {
       return { consumed: false, outcome: "no_match" };
     }
 
