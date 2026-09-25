@@ -241,14 +241,15 @@ function InboxPageInner() {
         // `unread_count` is a single column shared by every viewer, not
         // per-agent inbox state — only clear it live when the person
         // actually looking at it right now is the conversation's own
-        // assigned agent (or nobody's assigned it yet). Otherwise a
+        // assigned agent (never for an unassigned lead — see MessageThread's
+        // unread-reset effect). Otherwise a
         // supervisor (ATC, gerencia, jefe de línea, admin/owner) just
         // glancing at someone else's conversation would silently wipe
         // the badge the actually-assigned advisor still needs to see.
         const viewerOwnsActiveConv =
           isActiveConv &&
-          (!activeConversation?.assigned_agent_id ||
-            activeConversation.assigned_agent_id === user?.id);
+          !!activeConversation?.assigned_agent_id &&
+          activeConversation.assigned_agent_id === user?.id;
 
         // Notify on inbound customer messages for any conversation that
         // isn't the one currently open — same "not looking at it right
@@ -391,7 +392,7 @@ function InboxPageInner() {
           // actually changed server-side.
           const isActive = activeConversation?.id === conv.id;
           const viewerOwnsThisConv =
-            !conv.assigned_agent_id || conv.assigned_agent_id === user?.id;
+            !!conv.assigned_agent_id && conv.assigned_agent_id === user?.id;
           setConversations((prev) =>
             prev.map((c) =>
               c.id === conv.id
@@ -524,7 +525,7 @@ function InboxPageInner() {
           // nobody is), otherwise a supervisor's own list would show a
           // stale 0 for a value that never really changed server-side.
           const viewerOwnsMatch =
-            !match.assigned_agent_id || match.assigned_agent_id === user?.id;
+            !!match.assigned_agent_id && match.assigned_agent_id === user?.id;
           if (match.unread_count > 0 && viewerOwnsMatch) {
             setConversations((prev) =>
               prev.map((c) =>
@@ -564,7 +565,7 @@ function InboxPageInner() {
       // for a badge that's still genuinely unread for the assigned
       // advisor.
       const viewerOwnsConv =
-        !conv.assigned_agent_id || conv.assigned_agent_id === user?.id;
+        !!conv.assigned_agent_id && conv.assigned_agent_id === user?.id;
       if (viewerOwnsConv) {
         setConversations((prev) =>
           prev.map((c) =>
