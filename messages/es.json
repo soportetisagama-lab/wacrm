@@ -183,7 +183,8 @@
       "confirm": "Derivar",
       "done": "Listo — {line} ya le escribió al cliente.",
       "failed": "No se pudo derivar la conversación.",
-      "historyFailed": "No se pudo enviar el historial del chat a la otra línea."
+      "historyFailed": "No se pudo enviar el historial del chat a la otra línea.",
+      "noticeFailed": "No se pudo avisar al cliente en este chat (la ventana de 24 h puede haber vencido). La otra línea sí le escribió."
     },
     "messageThread": {
       "backToConversations": "Volver a conversaciones",

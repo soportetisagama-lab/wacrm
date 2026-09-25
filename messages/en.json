@@ -183,7 +183,8 @@
       "confirm": "Transfer",
       "done": "Done — {line} has messaged the customer.",
       "failed": "Couldn't transfer the conversation.",
-      "historyFailed": "Couldn't send the chat history to the other line."
+      "historyFailed": "Couldn't send the chat history to the other line.",
+      "noticeFailed": "Couldn't notify the customer in this chat (the 24h window may have closed). The other line did message them."
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
