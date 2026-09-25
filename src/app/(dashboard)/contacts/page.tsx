@@ -139,6 +139,11 @@ export default function ContactsPage() {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
     const term = search.trim();
+    // Phones are stored digits-only ("51923323339"), so a number typed
+    // with spaces/dashes ("923 323 339") must be matched by its digits.
+    // Same rule as the inbox search (conversation-list.tsx).
+    const termDigits = term.replace(/[\s\-().+]/g, '');
+    const phoneTerm = /^\d{3,}$/.test(termDigits) ? termDigits : null;
 
     let contactRows: Contact[];
     let count: number;
@@ -150,7 +155,7 @@ export default function ContactsPage() {
       // clause. See migration 025_filter_contacts_by_tags.
       const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
         p_tag_ids: selectedTagIds,
-        p_search: term || null,
+        p_search: phoneTerm ?? (term || null),
         p_limit: PAGE_SIZE,
         p_offset: from,
       });
@@ -172,7 +177,8 @@ export default function ContactsPage() {
 
       if (term) {
         const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+        const phoneLike = phoneTerm ? `%${phoneTerm}%` : like;
+        query = query.or(`name.ilike.${like},phone.ilike.${phoneLike},email.ilike.${like}`);
       }
 
       const { data, count: exactCount, error } = await query;
