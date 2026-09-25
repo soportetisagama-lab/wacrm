@@ -519,11 +519,13 @@ export function MessageThread({
     // gerencia, jefe de línea, admin/owner auditing a conversation
     // that isn't theirs) must leave it untouched, or their glance would
     // silently wipe the badge the actually-assigned advisor still needs
-    // to see. An unassigned conversation has nobody's badge to protect,
-    // so it still clears for whoever opens it first.
+    // to see. An UNASSIGNED conversation stays unread too: it's a lead
+    // still "por derivar" (the XLR9 widget counts open + unread +
+    // unassigned), and an ATC/admin merely opening it to look must not
+    // make it vanish from that queue before anyone takes it.
     const assignedAgentId = conversation?.assigned_agent_id ?? null;
     const viewerOwnsThisConversation =
-      !assignedAgentId || assignedAgentId === user?.id;
+      !!assignedAgentId && assignedAgentId === user?.id;
 
     const tryReset = () => {
       // Also guarded on document visibility: this pane never unmounts
