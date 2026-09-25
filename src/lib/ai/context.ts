@@ -5,7 +5,7 @@ import { fetchImageBlock } from './image-block'
 
 interface DbMessage {
   sender_type: 'customer' | 'agent' | 'bot'
-  content_type: 'text' | 'audio' | 'image' | 'interactive'
+  content_type: 'text' | 'audio' | 'image' | 'interactive' | 'template'
   content_text: string | null
   transcript: string | null
   /** Only selected when `includeImages` is true (see below). */
@@ -34,7 +34,10 @@ interface DbMessage {
  * tap itself. A transcript of `''` (Whisper ran, got nothing) is
  * fetched too but then dropped by the same blank-content filter as any
  * other empty message, same as `transcript IS NULL` never being
- * selected in the first place.
+ * selected in the first place. A sent template (content_type='template')
+ * counts too when its rendered body was stored as content_text (see
+ * send-message.ts) — e.g. a line-transfer opener the customer is
+ * replying to; older template rows with no text are dropped as blank.
  *
  * `includeImages` (default false — every existing caller gets today's
  * exact behavior, unchanged) opts into also surfacing content_type=
@@ -67,8 +70,8 @@ export async function buildConversationContext(
     ? 'sender_type, content_type, content_text, transcript, media_storage_url, is_sticker'
     : 'sender_type, content_type, content_text, transcript'
   const filter = includeImages
-    ? 'content_type.eq.text,content_type.eq.interactive,and(content_type.eq.audio,transcript.not.is.null),content_type.eq.image'
-    : 'content_type.eq.text,content_type.eq.interactive,and(content_type.eq.audio,transcript.not.is.null)'
+    ? 'content_type.eq.text,content_type.eq.interactive,content_type.eq.template,and(content_type.eq.audio,transcript.not.is.null),content_type.eq.image'
+    : 'content_type.eq.text,content_type.eq.interactive,content_type.eq.template,and(content_type.eq.audio,transcript.not.is.null)'
 
   const { data, error } = await db
     .from('messages')
