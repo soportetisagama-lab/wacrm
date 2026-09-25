@@ -52,6 +52,57 @@ export function getLineTransferConfig(): LineTransferConfig | null {
   }
 }
 
+export interface TranscriptMessage {
+  sender_type: string;
+  content_type: string;
+  content_text: string | null;
+  media_url: string | null;
+  created_at: string;
+}
+
+const SENDER_LABEL: Record<string, string> = { customer: "Cliente", agent: "Asesor", bot: "Bot" };
+const MEDIA_LABEL: Record<string, string> = {
+  image: "📷 Foto",
+  video: "🎥 Video",
+  audio: "🎤 Audio",
+  document: "📄 Documento",
+  location: "📍 Ubicación",
+};
+const MAX_LINE = 500;
+
+/** "25/09 16:04" in Peru time — fixed UTC-5, no DST (see flows/business-hours.ts). */
+function limaTimestamp(iso: string): string {
+  const d = new Date(new Date(iso).getTime() - 5 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+/**
+ * The note the receiving line gets on the contact: who handed it over,
+ * the topic, and the source chat's recent messages (oldest first) so
+ * the new advisor doesn't have to ask again. Media shows as a label +
+ * its link, since the files live in the source line's storage.
+ */
+export function buildTransferNote(args: {
+  from: string;
+  topic: string;
+  agentName: string | null;
+  messages: TranscriptMessage[];
+}): string {
+  const header = `🔀 Derivado desde ${args.from}${args.agentName ? ` por ${args.agentName}` : ""} — tema: ${args.topic}`;
+  if (args.messages.length === 0) return header;
+  const lines = args.messages.map((m) => {
+    const when = limaTimestamp(m.created_at);
+    const who = SENDER_LABEL[m.sender_type] ?? m.sender_type;
+    const media = MEDIA_LABEL[m.content_type];
+    let text = m.content_text?.trim() ?? "";
+    if (media) text = [media, text, m.media_url].filter(Boolean).join(" ");
+    if (text.length > MAX_LINE) text = `${text.slice(0, MAX_LINE)}…`;
+    return `[${when}] ${who}: ${text || "(sin texto)"}`;
+  });
+  return `${header}\n\nHistorial del chat en ${args.from}:\n${lines.join("\n")}`;
+}
+
 /** First word of the contact's WhatsApp name, for the template greeting ({{1}} can't be empty). */
 export function greetingName(name: string | null | undefined): string {
   const first = name?.trim().split(/\s+/)[0]?.replace(/[^\p{L}\p{M}'-]/gu, "");
