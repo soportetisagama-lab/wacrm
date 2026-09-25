@@ -20,7 +20,7 @@ const STORAGE_KEY = "wacrm:notifications:enabled";
  *  can put something a human actually recognizes, e.g. for someone
  *  fielding more than one line from the same browser. Matches the
  *  tab-title suffix in layout.tsx's metadata (kept in sync by hand). */
-const BRAND_LABEL = "XLR9-MX";
+const BRAND_LABEL = "XLR9-IN";
 
 export function isBrowserNotificationSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
