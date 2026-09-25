@@ -279,15 +279,19 @@ export function MessageThread({
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
-    if (!messages.length) return { expired: false, remaining: '' };
+    if (!messages.length) return { expired: false, awaitingCustomer: false, remaining: '' };
 
     // Find last customer message
     const lastCustomerMsg = [...messages]
       .reverse()
       .find((m) => m.sender_type === 'customer');
 
+    // We wrote first (a template — e.g. a line transfer or a broadcast)
+    // and the customer hasn't answered yet. Same send restriction as an
+    // expired window, but a different situation for the agent: nothing
+    // lapsed, the customer just has to reply to open the 24h window.
     if (!lastCustomerMsg)
-      return { expired: true, remaining: 'No customer messages' };
+      return { expired: true, awaitingCustomer: true, remaining: tTimer('awaitingCustomer') };
 
     const hoursSince = differenceInHours(
       new Date(),
@@ -296,7 +300,7 @@ export function MessageThread({
     const expired = hoursSince >= 24;
 
     if (expired) {
-      return { expired: true, remaining: tTimer('expired') };
+      return { expired: true, awaitingCustomer: false, remaining: tTimer('expired') };
     }
 
     const hoursLeft = 24 - hoursSince;
@@ -305,7 +309,7 @@ export function MessageThread({
         ? tTimer('xhRemaining', { hours: Math.floor(hoursLeft) })
         : tTimer('xmRemaining', { minutes: Math.floor(hoursLeft * 60) });
 
-    return { expired, remaining };
+    return { expired, awaitingCustomer: false, remaining };
   }, [messages, tTimer]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
@@ -1088,7 +1092,11 @@ export function MessageThread({
             variant="outline"
             className={cn(
               'border-border ml-1 hidden gap-1 text-[10px] sm:ml-2 sm:inline-flex',
-              sessionInfo.expired ? 'text-red-400' : 'text-primary'
+              sessionInfo.awaitingCustomer
+                ? 'text-amber-500'
+                : sessionInfo.expired
+                  ? 'text-red-400'
+                  : 'text-primary'
             )}
           >
             <Clock className="h-3 w-3" />
@@ -1367,6 +1375,7 @@ export function MessageThread({
         ref={composerRef}
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
+        awaitingCustomer={sessionInfo.awaitingCustomer}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onSendInteractive={handleSendInteractive}

@@ -147,6 +147,10 @@ interface MediaDraft {
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
+  /** No customer message yet (we opened with a template) — shown
+   *  instead of the "session expired" wording; sending stays limited to
+   *  templates either way. */
+  awaitingCustomer?: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onSendInteractive: (payload: InteractiveMessagePayload, replyToId?: string) => void;
@@ -170,6 +174,7 @@ const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
 export function MessageComposer({
   conversationId,
   sessionExpired,
+  awaitingCustomer = false,
   onSend,
   onSendMedia,
   onSendInteractive,
@@ -645,7 +650,7 @@ export function MessageComposer({
       {sessionExpired && (
         <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
           <p className="text-xs text-amber-400">
-            {t("sessionExpiredHint")}
+            {awaitingCustomer ? t("awaitingCustomerHint") : t("sessionExpiredHint")}
           </p>
           <Button
             variant="ghost"
@@ -899,7 +904,9 @@ export function MessageComposer({
               readOnly
                 ? t("readOnlyPlaceholder")
                 : sessionExpired
-                  ? t("sessionExpiredPlaceholder")
+                  ? awaitingCustomer
+                    ? t("awaitingCustomerPlaceholder")
+                    : t("sessionExpiredPlaceholder")
                   : embedded
                     ? t("typeMessagePlaceholderApp")
                     : t("typeMessagePlaceholder")
