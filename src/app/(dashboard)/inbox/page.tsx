@@ -254,8 +254,14 @@ function InboxPageInner() {
         // isn't the one currently open — same "not looking at it right
         // now" condition the unread-count bump below already uses, so
         // the banner and the badge never disagree with each other.
-        if (newMsg.sender_type === "customer" && !isActiveConv) {
-          const conv = conversationsByIdRef.current.get(newMsg.conversation_id);
+        // Conversations assigned to the viewer are paged by
+        // AssignedMessageNotifier (dashboard shell) instead, which also
+        // covers other pages and a backgrounded tab — skip them here so
+        // the assignee doesn't get the same banner twice.
+        const conv = conversationsByIdRef.current.get(newMsg.conversation_id);
+        const assignedToViewer =
+          !!user?.id && conv?.assigned_agent_id === user?.id;
+        if (newMsg.sender_type === "customer" && !isActiveConv && !assignedToViewer) {
           const contactName =
             conv?.contact?.name || conv?.contact?.phone || undefined;
           showBrowserNotification(contactName ?? t("newMessageFallbackTitle"), {
