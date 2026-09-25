@@ -4,7 +4,7 @@ import type { AccountRole } from '@/lib/auth/roles'
 import {
   buildTransferNote,
   getLineTransferConfig,
-  greetingName,
+  TEMPLATE_GREETING,
   transferNoticeText,
   type TranscriptMessage,
 } from '@/lib/line-transfer'
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
       template: {
         name: target.template,
         language: target.language,
-        params: [greetingName(contact.name), topic],
+        params: [TEMPLATE_GREETING, topic],
       },
     })
     if (!sent.ok) {
@@ -147,7 +147,7 @@ export async function POST(request: Request) {
       await sendMessageToConversation(supabase, accountId, {
         conversationId: conversation.id,
         messageType: 'text',
-        contentText: transferNoticeText({ name: contact.name, topic, targetLabel: target.label }),
+        contentText: transferNoticeText({ topic, targetLabel: target.label }),
       })
       noticeSent = true
     } catch (err) {

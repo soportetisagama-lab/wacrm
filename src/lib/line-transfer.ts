@@ -106,25 +106,21 @@ export function buildTransferNote(args: {
 /**
  * Sent by the SOURCE line, in its own chat, right after the target
  * line's template went out — so the customer knows why another Sagama
- * number just wrote to them and that this chat stays open.
+ * number just wrote to them and that this chat stays open. Never uses
+ * the WhatsApp profile name — customers set things like "Te amo" there.
  */
-export function transferNoticeText(args: {
-  name: string | null | undefined;
-  topic: string;
-  targetLabel: string;
-}): string {
-  const first = greetingName(args.name);
-  const greeting = first === "estimado cliente" ? "Estimado cliente" : `Estimado(a) ${first}`;
+export function transferNoticeText(args: { topic: string; targetLabel: string }): string {
   return (
-    `${greeting}, gracias por su consulta sobre *${args.topic}*. ` +
+    `Estimado(a) cliente, gracias por su consulta sobre *${args.topic}*. ` +
     `Para brindarle una atención especializada, su caso será atendido por nuestra línea *${args.targetLabel}*, ` +
     `que ya le escribió desde su número oficial de WhatsApp. ` +
     `Quedamos a su disposición por este medio ante cualquier otra consulta.`
   );
 }
 
-/** First word of the contact's WhatsApp name, for the template greeting ({{1}} can't be empty). */
-export function greetingName(name: string | null | undefined): string {
-  const first = name?.trim().split(/\s+/)[0]?.replace(/[^\p{L}\p{M}'-]/gu, "");
-  return first || "estimado cliente";
-}
+/**
+ * {{1}} of the transfer template ("Hola {{1}} 👋 …"). A fixed courtesy
+ * form instead of the WhatsApp profile name, for the same reason as
+ * transferNoticeText; Meta rejects an empty variable.
+ */
+export const TEMPLATE_GREETING = "estimado(a) cliente";
