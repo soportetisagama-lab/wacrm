@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isWithinBusinessHours } from "./business-hours";
+import {
+  isWithinBusinessHours,
+  nextOpeningPhrase,
+  fillBusinessHoursPlaceholders,
+} from "./business-hours";
 
 // Reference week (2024-01-01 was a Monday): Mon Jan 1 .. Sun Jan 7.
 // Peru is UTC-5 year-round (no DST), so Peru local time = UTC - 5h,
@@ -73,5 +77,47 @@ describe("isWithinBusinessHours", () => {
 
   it("defaults to the current time when no argument is given", () => {
     expect(() => isWithinBusinessHours()).not.toThrow();
+  });
+});
+
+// Same reference week: Mon 2024-01-01 .. Sun 2024-01-07, UTC = Peru + 5h.
+describe("nextOpeningPhrase", () => {
+  it("Tuesday 7:00am — opens later today", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-02T12:00:00Z"))).toBe("hoy a las 8:00 am");
+  });
+
+  it("Tuesday 8:00pm — opens tomorrow", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-03T01:00:00Z"))).toBe("mañana a las 8:00 am");
+  });
+
+  it("Friday 7:00pm — names Saturday and its later opening", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-06T00:00:00Z"))).toBe("mañana sábado a las 8:30 am");
+  });
+
+  it("Saturday 7:00am — Saturday opens at 8:30", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-06T12:00:00Z"))).toBe("hoy a las 8:30 am");
+  });
+
+  it("Saturday 3:00pm — skips the closed Sunday", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-06T20:00:00Z"))).toBe("el lunes a las 8:00 am");
+  });
+
+  it("Sunday noon — names Monday", () => {
+    expect(nextOpeningPhrase(new Date("2024-01-07T17:00:00Z"))).toBe("mañana lunes a las 8:00 am");
+  });
+});
+
+describe("fillBusinessHoursPlaceholders", () => {
+  it("replaces the placeholder", () => {
+    expect(
+      fillBusinessHoursPlaceholders(
+        "Un asesor te escribe {proxima_apertura}.",
+        new Date("2024-01-02T12:00:00Z"),
+      ),
+    ).toBe("Un asesor te escribe hoy a las 8:00 am.");
+  });
+
+  it("leaves text without the placeholder untouched", () => {
+    expect(fillBusinessHoursPlaceholders("Sin cambios.")).toBe("Sin cambios.");
   });
 });
