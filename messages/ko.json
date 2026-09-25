@@ -241,6 +241,8 @@
       "draftFailedGeneric": "답장 초안을 작성하지 못했습니다.",
       "draftEmpty": "어시스턴트가 답장을 반환하지 않았습니다.",
       "aiUnreachable": "AI 어시스턴트에 연결할 수 없습니다.",
+      "unsupportedFile": "\"{name}\"을(를) 보낼 수 없습니다: 사진(JPG, PNG, WebP), 동영상(MP4, 3GP) 또는 문서(PDF, Word, Excel, PowerPoint, TXT)만 가능합니다.",
+      "dropHere": "파일을 놓아 첨부하세요",
       "uploadTooLarge": "파일이 {sizeMb}MB입니다 — {kind} 제한은 {maxMb}MB입니다.",
       "uploadFailed": "업로드에 실패했습니다.",
       "recordingTooLong": "녹음이 너무 깁니다 (16MB 초과).",
