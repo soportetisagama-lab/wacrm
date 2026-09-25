@@ -102,10 +102,21 @@ interface WhatsAppMessage {
    * to advance the per-contact run.
    */
   interactive?: {
-    type: 'button_reply' | 'list_reply'
+    type: 'button_reply' | 'list_reply' | 'call_permission_reply' | 'nfm_reply' | string
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
+    /** Customer answered a call-permission prompt (voice calling enabled on the number). */
+    call_permission_reply?: { response?: 'accept' | 'reject' | string; is_permanent?: boolean }
+    /** Customer submitted a WhatsApp Flows form. `response_json` is a JSON string. */
+    nfm_reply?: { name?: string; body?: string; response_json?: string }
   }
+  /**
+   * Present on `type: 'unsupported'` — content the Cloud API doesn't
+   * deliver (view-once media, polls, video notes, events…). Newer API
+   * versions name the kind here; older ones only send `errors`.
+   */
+  unsupported?: { type?: string }
+  errors?: Array<{ code: number; title?: string; message?: string; error_data?: { details?: string } }>
   /**
    * Set when the customer taps a QUICK-REPLY button on a template
    * message (`type: 'button'`) — structurally different from
@@ -1867,7 +1878,42 @@ async function parseMessageContent(
           interactiveReplyId: reply.id,
         }
       }
-      return { ...empty, contentText: '[Interactive reply]' }
+      const callPermission = message.interactive?.call_permission_reply
+      if (callPermission) {
+        return {
+          ...empty,
+          contentText:
+            callPermission.response === 'accept'
+              ? '📞 El cliente aceptó recibir llamadas de este número.'
+              : '📞 El cliente rechazó recibir llamadas de este número.',
+        }
+      }
+      if (message.interactive?.nfm_reply) {
+        return {
+          ...empty,
+          contentText: `📝 El cliente envió un formulario:\n${formatFlowFormReply(message.interactive.nfm_reply)}`,
+        }
+      }
+      // Any other interactive subtype: keep the raw payload in the logs
+      // so the next one can be identified and handled.
+      console.warn('[webhook] unhandled interactive reply:', JSON.stringify(message.interactive))
+      return {
+        ...empty,
+        contentText: `⚠️ El cliente respondió a un botón que el CRM no reconoce (${message.interactive?.type ?? 'desconocido'}).`,
+      }
+    }
+
+    case 'unsupported': {
+      // Meta withholds the content itself — nothing to recover, so tell
+      // the agent what it likely was and what to do about it.
+      console.warn('[webhook] unsupported message:', JSON.stringify({ unsupported: message.unsupported, errors: message.errors }))
+      const kind = UNSUPPORTED_KIND_LABEL[message.unsupported?.type ?? '']
+      return {
+        ...empty,
+        contentText: kind
+          ? `⚠️ El cliente envió ${kind}, que WhatsApp no permite ver aquí. Pídele que lo reenvíe.`
+          : '⚠️ El cliente envió un mensaje que WhatsApp no permite ver aquí (por ejemplo una foto de "ver una vez", una encuesta o un video circular). Pídele que lo reenvíe.',
+      }
     }
 
     case 'contacts': {
@@ -1891,6 +1937,29 @@ async function parseMessageContent(
         contentText: `[Unsupported message type: ${message.type}]`,
       }
   }
+}
+
+/** Spanish label for the kinds Meta names in `unsupported.type`; unknown kinds fall back to a generic text. */
+const UNSUPPORTED_KIND_LABEL: Record<string, string> = {
+  view_once: 'una foto o video de "ver una vez"',
+  poll: 'una encuesta',
+  video_note: 'un video circular',
+  event: 'una invitación a un evento',
+  edit: 'una edición de un mensaje anterior',
+}
+
+/** "campo: valor" lines from a WhatsApp Flows form submission; falls back to the raw body. */
+function formatFlowFormReply(reply: { body?: string; response_json?: string }): string {
+  try {
+    const fields = JSON.parse(reply.response_json ?? '{}') as Record<string, unknown>
+    const lines = Object.entries(fields)
+      .filter(([k]) => k !== 'flow_token')
+      .map(([k, v]) => `• ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    if (lines.length) return lines.join('\n')
+  } catch {
+    // Malformed JSON — fall through to the body.
+  }
+  return reply.body || '(sin datos)'
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
