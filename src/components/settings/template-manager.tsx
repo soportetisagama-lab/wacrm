@@ -194,6 +194,8 @@ export function TemplateManager() {
         .from('message_templates')
         .select('*')
         .eq('user_id', userId)
+        // Deleted, Meta still processing — see the sync route.
+        .neq('status', 'PENDING_DELETION')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setTemplates(data || []);
