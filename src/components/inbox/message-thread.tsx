@@ -27,6 +27,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Paperclip,
 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -47,6 +48,7 @@ import { MediaLightbox } from './media-lightbox';
 import { collectMediaGallery } from '@/lib/media/gallery';
 import {
   MessageComposer,
+  type MessageComposerHandle,
   CHAT_MEDIA_BUCKET,
   type SendMediaPayload,
 } from './message-composer';
@@ -192,6 +194,15 @@ export function MessageThread({
   const t = useTranslations('Inbox.messageThread');
   const tTimer = useTranslations('Inbox.sessionTimer');
   const tQuote = useTranslations('Inbox.replyQuote');
+  const tComposer = useTranslations('Inbox.composer');
+
+  // Drag-and-drop attach: a file dropped anywhere on the thread goes to
+  // the composer, which stages it exactly like the attach menu does.
+  // dragenter/dragleave fire for every child crossed, hence the counter.
+  const composerRef = useRef<MessageComposerHandle>(null);
+  const dragDepthRef = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
 
   const { user, canAssignConversations } = useAuth();
   const { getPresence, getRow, now } = usePresence();
@@ -1018,7 +1029,39 @@ export function MessageThread({
     // clipped and the hover toolbar overlaps the Tags panel. Letting the
     // root shrink lets the bubbles' break-words / max-w caps apply.
     // Issue #257.
-    <div className={cn('flex min-w-0 flex-1 flex-col', DOODLE_BG_CLASSES)}>
+    <div
+      className={cn('relative flex min-w-0 flex-1 flex-col', DOODLE_BG_CLASSES)}
+      onDragEnter={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        dragDepthRef.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={(e) => {
+        if (!isFileDrag(e)) return;
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (file) composerRef.current?.attachFile(file);
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-2 z-50 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-primary bg-background/85 text-primary">
+          <Paperclip className="h-8 w-8" />
+          <p className="text-sm font-medium">{tComposer('dropHere')}</p>
+        </div>
+      )}
       {/* Header — solid card surface sits on top of the doodle so the
           name/avatar/dropdowns stay legible. */}
       <div
@@ -1347,6 +1390,7 @@ export function MessageThread({
 
       {/* Composer */}
       <MessageComposer
+        ref={composerRef}
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
