@@ -241,6 +241,8 @@
       "draftFailedGeneric": "No se pudo redactar una respuesta.",
       "draftEmpty": "El asistente no devolvió ninguna respuesta.",
       "aiUnreachable": "No se pudo conectar con el asistente de IA.",
+      "unsupportedFile": "No se puede enviar \"{name}\": solo fotos (JPG, PNG, WebP), videos (MP4, 3GP) o documentos (PDF, Word, Excel, PowerPoint, TXT).",
+      "dropHere": "Suelta el archivo para adjuntarlo",
       "uploadTooLarge": "El archivo pesa {sizeMb} MB — el límite para {kind} es {maxMb} MB.",
       "uploadFailed": "Error al subir el archivo.",
       "recordingTooLong": "La grabación es demasiado larga (más de 16 MB).",
