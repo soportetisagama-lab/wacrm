@@ -3,6 +3,7 @@ import type { AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
+import { loadLineTransferContext } from '@/lib/line-transfer-inbound'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
@@ -455,6 +456,7 @@ export async function runAutoReplyNow(
       mode: 'auto_reply',
       knowledge,
       documents: config.documents,
+      lineTransferContext: await loadLineTransferContext(db, conversationId, contactId),
     })
 
     const { text, handoff, sendDocument, usage } = await generateReply({
