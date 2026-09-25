@@ -164,7 +164,8 @@ export async function setContactTags(
   accountId: string,
   auditUserId: string,
   contactId: string,
-  tagNames: string[]
+  tagNames: string[],
+  mode: 'replace' | 'add' = 'replace'
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
@@ -172,7 +173,14 @@ export async function setContactTags(
     tagNames,
     canCreateTags: true,
   });
-  const desired = new Set(tagIdByKey.values());
+  // tagIdByKey maps EVERY tag in the account (it's the lookup table),
+  // so the desired set must come from the requested names — taking all
+  // of its values stamped every existing account tag onto the contact.
+  const desired = new Set(
+    tagNames
+      .map((name) => tagIdByKey.get(name.trim().toLowerCase()))
+      .filter((id): id is string => Boolean(id))
+  );
 
   // Diff against the current joins rather than delete-all-then-insert:
   // a diff only touches tags that actually change, so a mid-operation
@@ -191,7 +199,10 @@ export async function setContactTags(
   );
 
   const toAdd = [...desired].filter((id) => !existing.has(id));
-  const toRemove = [...existing].filter((id) => !desired.has(id));
+  // 'add' (find-or-create) only ever adds — never strips tags a
+  // contact that already existed was carrying.
+  const toRemove =
+    mode === 'replace' ? [...existing].filter((id) => !desired.has(id)) : [];
 
   if (toRemove.length > 0) {
     const { error } = await db
