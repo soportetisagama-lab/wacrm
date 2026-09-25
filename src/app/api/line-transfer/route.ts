@@ -5,8 +5,10 @@ import {
   buildTransferNote,
   getLineTransferConfig,
   greetingName,
+  transferNoticeText,
   type TranscriptMessage,
 } from '@/lib/line-transfer'
+import { sendMessageToConversation } from '@/lib/whatsapp/send-message'
 
 /** How many of the source chat's latest messages travel with the transfer. */
 const TRANSFER_HISTORY_LIMIT = 40
@@ -23,8 +25,9 @@ const TRANSFER_ROLES: readonly AccountRole[] = ['atc', 'admin', 'owner']
  *        or for roles outside TRANSFER_ROLES — which hides the button.
  * POST { conversationId, targetId, topic } → on the target line:
  *        find-or-create the contact (tagged "Derivado de <from>"), then
- *        send its transfer template. On success, leaves a note on the
- *        contact here so the source line knows it was handed over.
+ *        send its transfer template. On success, tells the customer in
+ *        this chat (transferNoticeText), sends the target the handover
+ *        note + history, and leaves a note on the contact here.
  */
 
 export async function GET() {
@@ -135,6 +138,22 @@ export async function POST(request: Request) {
       )
     }
 
+    // Tell the customer, in THIS chat, why another Sagama number just
+    // wrote to them. Only after the target's template succeeded, so we
+    // never announce a transfer that didn't happen. Free-form text, so it
+    // fails outside the 24h window — reported, never fatal.
+    let noticeSent = false
+    try {
+      await sendMessageToConversation(supabase, accountId, {
+        conversationId: conversation.id,
+        messageType: 'text',
+        contentText: transferNoticeText({ name: contact.name, topic, targetLabel: target.label }),
+      })
+      noticeSent = true
+    } catch (err) {
+      console.error('[line-transfer] customer notice failed:', err instanceof Error ? err.message : err)
+    }
+
     // Hand the receiving line the context + this chat's recent history as
     // a note on its contact. Best-effort: the customer already got the
     // template, so a failure here only costs the history, not the transfer.
@@ -171,7 +190,7 @@ export async function POST(request: Request) {
     })
     if (noteError) console.error('[line-transfer] note insert failed:', noteError.message)
 
-    return NextResponse.json({ ok: true, target: target.label, historySent })
+    return NextResponse.json({ ok: true, target: target.label, historySent, noticeSent })
   } catch (err) {
     return toErrorResponse(err)
   }
