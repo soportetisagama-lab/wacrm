@@ -119,6 +119,24 @@ async function handleStatusUpdate(
 
   const status = normalizeStatus(value.event)
 
+  // A deletion Meta is still processing: the template is gone for the
+  // user, so remove the local row rather than listing it as
+  // "Pending Deletion" (same rule as the sync route).
+  if (status === 'PENDING_DELETION') {
+    const { error } = await supabase
+      .from('message_templates')
+      .delete()
+      .eq('meta_template_id', metaTemplateId)
+    if (error) {
+      console.error(
+        '[template-webhook] delete on PENDING_DELETION failed for meta_template_id',
+        metaTemplateId,
+        error.message,
+      )
+    }
+    return
+  }
+
   // Persist the rejection reason on REJECTED — that's the only event
   // where Meta sends a human-readable explanation. Clear it on any
   // other status flip so the UI doesn't show a stale REJECTED banner
