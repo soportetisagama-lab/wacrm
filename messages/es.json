@@ -171,6 +171,19 @@
       "noMessagesYet": "Todavía no hay mensajes",
       "unknown": "Desconocido"
     },
+    "lineTransfer": {
+      "button": "Derivar a otra línea",
+      "title": "Derivar a otra línea de Sagama",
+      "explanation": "La otra línea le escribirá al cliente desde su propio número de WhatsApp con un mensaje de presentación. Este chat queda como está.",
+      "targetLabel": "Línea de destino",
+      "topicLabel": "¿Qué busca el cliente?",
+      "topicPlaceholder": "Ej: cocinas industriales",
+      "topicHint": "Aparece en el mensaje que recibe el cliente: \"…nos compartió tu consulta sobre ___\".",
+      "cancel": "Cancelar",
+      "confirm": "Derivar",
+      "done": "Listo — {line} ya le escribió al cliente.",
+      "failed": "No se pudo derivar la conversación."
+    },
     "messageThread": {
       "backToConversations": "Volver a conversaciones",
       "hideContactPanel": "Ocultar panel de contacto",
