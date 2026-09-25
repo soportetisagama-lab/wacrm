@@ -217,6 +217,7 @@
     },
     "sessionTimer": {
       "expired": "Expirada",
+      "awaitingCustomer": "Esperando respuesta",
       "xhRemaining": "quedan {hours}h",
       "xmRemaining": "quedan {minutes}m",
       "noCustomerMessages": "Sin mensajes del cliente"
@@ -224,6 +225,8 @@
     "composer": {
       "draftHint": "Tocá el ✨ para redactar una respuesta con IA — podés editarla antes de enviarla",
       "sessionExpiredHint": "La sesión de 24 horas expiró. Usa una plantilla para volver a contactar.",
+      "awaitingCustomerHint": "Esperando que el cliente responda. Cuando conteste podrás escribirle libremente; mientras tanto solo se puede enviar una plantilla.",
+      "awaitingCustomerPlaceholder": "Esperando respuesta del cliente — solo plantillas",
       "templates": "Plantillas",
       "readOnlyPlaceholder": "Solo lectura — los visores pueden ver pero no responder",
       "sessionExpiredPlaceholder": "Sesión expirada - usa una plantilla",

@@ -130,7 +130,9 @@ export async function POST(request: Request) {
         ctx.accountId,
         auditUserId,
         id,
-        body.tags.filter((t): t is string => typeof t === 'string')
+        body.tags.filter((t): t is string => typeof t === 'string'),
+        // Find-or-create: a contact that already existed keeps its tags.
+        created ? 'replace' : 'add'
       );
     }
 
