@@ -250,7 +250,9 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
-      <ScrollArea className="flex-1">
+      {/* min-h-0: without it the flex child grows to fit its content, so
+          a long note pushed the panel past the screen with no scrollbar. */}
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
@@ -524,17 +526,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
 
               <div className="mt-2 space-y-2">
                 {notes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="rounded-lg bg-muted px-3 py-2"
-                  >
-                    <p className="whitespace-pre-wrap text-xs text-muted-foreground">
-                      {note.note_text}
-                    </p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
-                    </p>
-                  </div>
+                  <NoteItem key={note.id} note={note} />
                 ))}
               </div>
             </div>
@@ -542,5 +534,45 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+/**
+ * One contact note. Multi-line notes (e.g. a line transfer's handover
+ * with the whole chat history) start collapsed to their first line —
+ * "🔀 Derivado desde … — tema: …" — and expand on click.
+ */
+function NoteItem({ note }: { note: ContactNote }) {
+  const [expanded, setExpanded] = useState(false);
+  const [firstLine, ...rest] = note.note_text.split("\n");
+  const collapsible = rest.some((line) => line.trim());
+  const body = (
+    <>
+      <p className="whitespace-pre-wrap text-xs text-muted-foreground">
+        {collapsible && !expanded ? firstLine : note.note_text}
+      </p>
+      <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+        {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
+        {collapsible && (
+          <span className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary">
+            {expanded ? "Ocultar" : "Ver historial"}
+            <ChevronDown className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")} />
+          </span>
+        )}
+      </p>
+    </>
+  );
+  if (!collapsible) {
+    return <div className="rounded-lg bg-muted px-3 py-2">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      aria-expanded={expanded}
+      className="block w-full rounded-lg bg-muted px-3 py-2 text-left transition-colors hover:bg-muted/70"
+    >
+      {body}
+    </button>
   );
 }

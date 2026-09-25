@@ -66,6 +66,7 @@ export function LineTransferButton({ conversationId }: { conversationId: string 
         error?: string;
         target?: string;
         historySent?: boolean;
+        noticeSent?: boolean;
       };
       if (!res.ok) {
         toast.error(data.error || t("failed"));
@@ -73,6 +74,7 @@ export function LineTransferButton({ conversationId }: { conversationId: string 
       }
       toast.success(t("done", { line: data.target ?? "" }));
       if (data.historySent === false) toast.warning(t("historyFailed"));
+      if (data.noticeSent === false) toast.warning(t("noticeFailed"));
       // The handover note was written server-side — refresh the panel.
       announceContactDataChanged();
       setOpen(false);
