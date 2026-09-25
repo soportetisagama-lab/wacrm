@@ -183,7 +183,8 @@
       "confirm": "이관",
       "done": "완료 — {line}이(가) 고객에게 메시지를 보냈습니다.",
       "failed": "대화를 이관할 수 없습니다.",
-      "historyFailed": "채팅 기록을 다른 라인으로 보내지 못했습니다."
+      "historyFailed": "채팅 기록을 다른 라인으로 보내지 못했습니다.",
+      "noticeFailed": "이 채팅에서 고객에게 알리지 못했습니다(24시간 창이 만료되었을 수 있음). 다른 라인은 메시지를 보냈습니다."
     },
     "messageThread": {
       "backToConversations": "대화 목록으로 돌아가기",
