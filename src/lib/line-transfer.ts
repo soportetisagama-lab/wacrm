@@ -103,6 +103,26 @@ export function buildTransferNote(args: {
   return `${header}\n\nHistorial del chat en ${args.from}:\n${lines.join("\n")}`;
 }
 
+/**
+ * Sent by the SOURCE line, in its own chat, right after the target
+ * line's template went out — so the customer knows why another Sagama
+ * number just wrote to them and that this chat stays open.
+ */
+export function transferNoticeText(args: {
+  name: string | null | undefined;
+  topic: string;
+  targetLabel: string;
+}): string {
+  const first = greetingName(args.name);
+  const greeting = first === "estimado cliente" ? "Estimado cliente" : `Estimado(a) ${first}`;
+  return (
+    `${greeting}, gracias por su consulta sobre *${args.topic}*. ` +
+    `Para brindarle una atención especializada, su caso será atendido por nuestra línea *${args.targetLabel}*, ` +
+    `que ya le escribió desde su número oficial de WhatsApp. ` +
+    `Quedamos a su disposición por este medio ante cualquier otra consulta.`
+  );
+}
+
 /** First word of the contact's WhatsApp name, for the template greeting ({{1}} can't be empty). */
 export function greetingName(name: string | null | undefined): string {
   const first = name?.trim().split(/\s+/)[0]?.replace(/[^\p{L}\p{M}'-]/gu, "");
