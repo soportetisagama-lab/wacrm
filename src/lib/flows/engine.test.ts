@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from "vitest";
 
 // Mocked BEFORE importing ./engine so its module-level import binds to
 // these mocks — engine.ts calls extractWithReply/loadAiConfig/
@@ -1279,6 +1279,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
   });
 
   it("redirects to all_selected_node_key instead of sending anything once every option is gone — and the handoff node itself still sends a real, visible message the first time", async () => {
+    atPeruTime(TUESDAY_10AM_PERU);
     const humanHandoffNode: Partial<FlowNodeRow> = {
       node_key: "human_handoff",
       node_type: "handoff",
@@ -1302,7 +1303,36 @@ describe("send_list — flow_contact_state option exclusion (never show the same
     // total silence. No recent handoff logged yet, so this is not a
     // duplicate.
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Gracias, un asesor va a continuar tu consulta en breve." }),
+      expect.objectContaining({ text: HANDOFF_TEXT_IN_HOURS }),
+    );
+  });
+
+  it("same exhausted-menu handoff after hours sends the after-hours message instead", async () => {
+    atPeruTime(TUESDAY_10PM_PERU);
+    const humanHandoffNode: Partial<FlowNodeRow> = {
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: {},
+    };
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW_WITH_TOPICS],
+      flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
+      priorRunCount: 1,
+      contactState: { selected_options: { topics: ["catalog", "location"] } },
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveList).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("handed_off");
+    // The customer never saw the exhausted menu, but must still get a
+    // real, visible acknowledgment from the handoff node itself — not
+    // total silence. No recent handoff logged yet, so this is not a
+    // duplicate.
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: HANDOFF_TEXT_AFTER_HOURS }),
     );
   });
 
@@ -2742,6 +2772,7 @@ describe("handleReplyForActiveRun — collect_input validation", () => {
   });
 
   it("repeated invalid phone replies exhaust fallback_policy's max_reprompts and hand off, same as any other node", async () => {
+    atPeruTime(TUESDAY_10AM_PERU);
     const { db } = makeFakeDb();
     // DEFAULT_FALLBACK_POLICY.max_reprompts is 2 — reprompt_count
     // already at 2 means this invalid reply is the 3rd, exhausting it.
@@ -2761,7 +2792,32 @@ describe("handleReplyForActiveRun — collect_input validation", () => {
 
     expect(result.outcome).toBe("handed_off");
     expect(engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "Gracias, un asesor va a continuar tu consulta en breve." }),
+      expect.objectContaining({ text: HANDOFF_TEXT_IN_HOURS }),
+    );
+  });
+
+  it("repeated invalid phone replies after hours hand off with the after-hours message", async () => {
+    atPeruTime(TUESDAY_10PM_PERU);
+    const { db } = makeFakeDb();
+    // DEFAULT_FALLBACK_POLICY.max_reprompts is 2 — reprompt_count
+    // already at 2 means this invalid reply is the 3rd, exhausting it.
+    const run = makeRun({ current_node_key: "ask_phone", reprompt_count: 2 });
+    const node = makeNode({
+      node_key: "ask_phone",
+      node_type: "collect_input",
+      config: PHONE_NODE_CONFIG,
+    });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "abc", meta_message_id: "wamid.badphone-exhaust-night" },
+      new Map([["ask_phone", node]]),
+    );
+
+    expect(result.outcome).toBe("handed_off");
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: HANDOFF_TEXT_AFTER_HOURS }),
     );
   });
 });
@@ -3338,3 +3394,20 @@ describe("handleReplyForActiveRun — text_routes", () => {
   });
 });
 
+// The handoff node's customer message depends on business hours
+// (isWithinBusinessHours), so tests asserting its text must pin the
+// clock — otherwise they pass by day and fail after closing time.
+// Peru is UTC-5: Tue 2024-01-02 10:00 / 22:00 Peru.
+const TUESDAY_10AM_PERU = new Date("2024-01-02T15:00:00Z");
+const TUESDAY_10PM_PERU = new Date("2024-01-03T03:00:00Z");
+const HANDOFF_TEXT_IN_HOURS = "Gracias, un asesor va a continuar tu consulta en breve.";
+const HANDOFF_TEXT_AFTER_HOURS =
+  "Gracias por escribirnos. En este momento estamos fuera de nuestro horario de atención — un asesor se pondrá en contacto contigo apenas estemos disponibles nuevamente.";
+
+function atPeruTime(date: Date): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(date);
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
