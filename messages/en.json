@@ -217,6 +217,7 @@
     },
     "sessionTimer": {
       "expired": "Expired",
+      "awaitingCustomer": "Awaiting reply",
       "xhRemaining": "{hours}h remaining",
       "xmRemaining": "{minutes}m remaining",
       "noCustomerMessages": "No customer messages"
@@ -224,6 +225,8 @@
     "composer": {
       "draftHint": "Tap the ✨ to draft a reply with AI — you can edit it before sending",
       "sessionExpiredHint": "24-hour session expired. Use a template to re-engage.",
+      "awaitingCustomerHint": "Waiting for the customer to reply. Once they do you can message freely; until then only a template can be sent.",
+      "awaitingCustomerPlaceholder": "Awaiting customer reply — templates only",
       "templates": "Templates",
       "readOnlyPlaceholder": "Read-only — viewers can browse but not reply",
       "sessionExpiredPlaceholder": "Session expired - use a template",

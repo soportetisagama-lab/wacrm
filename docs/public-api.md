@@ -190,8 +190,9 @@ Create a contact. Scope: `contacts:write`. `phone` (E.164) is required;
 `name`, `email`, `company`, and `tags` (an array of tag names, created
 if missing) are optional. **Find-or-create by phone:** an existing
 match returns `200` with the existing contact; a new contact returns
-`201`. The response body is the serialized contact (same shape as the
-list rows above).
+`201`. On an existing match, `tags` are only **added** (tags it already
+has are kept); use `PATCH` to replace them. The response body is the
+serialized contact (same shape as the list rows above).
 
 ### `GET` / `PATCH /api/v1/contacts/{id}`
 
