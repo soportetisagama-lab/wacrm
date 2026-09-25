@@ -103,6 +103,10 @@ export function buildTransferNote(args: {
   return `${header}\n\nHistorial del chat en ${args.from}:\n${lines.join("\n")}`;
 }
 
+/** Start of transferNoticeText — how line-transfer-outbound.ts recognizes,
+ *  in the source chat, that this conversation was just transferred out. */
+export const TRANSFER_NOTICE_PREFIX = "Estimado(a) cliente, gracias por su consulta sobre";
+
 /**
  * Sent by the SOURCE line, in its own chat, right after the target
  * line's template went out — so the customer knows why another Sagama
@@ -111,7 +115,7 @@ export function buildTransferNote(args: {
  */
 export function transferNoticeText(args: { topic: string; targetLabel: string }): string {
   return (
-    `Estimado(a) cliente, gracias por su consulta sobre *${args.topic}*. ` +
+    `${TRANSFER_NOTICE_PREFIX} *${args.topic}*. ` +
     `Para brindarle una atención especializada, su caso será atendido por nuestra línea *${args.targetLabel}*, ` +
     `que ya le escribió desde su número oficial de WhatsApp. ` +
     `Quedamos a su disposición por este medio ante cualquier otra consulta.`

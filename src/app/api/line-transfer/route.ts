@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     // RLS-scoped: the caller can only transfer a conversation they can see.
     const { data: conversation } = await supabase
       .from('conversations')
-      .select('id, contact_id, contacts ( id, name, phone )')
+      .select('id, contact_id, assigned_agent_id, contacts ( id, name, phone )')
       .eq('id', body.conversationId)
       .maybeSingle()
     const contactRow = conversation?.contacts as
@@ -150,6 +150,17 @@ export async function POST(request: Request) {
         contentText: transferNoticeText({ topic, targetLabel: target.label }),
       })
       noticeSent = true
+      // With no human owning this chat, whatever the customer sends next
+      // is handled by lib/line-transfer-outbound.ts: a capped farewell for
+      // thanks, the AI (with the transfer note) for anything else — so
+      // lift a pause left by an earlier bot handoff.
+      if (!conversation.assigned_agent_id) {
+        const { error: aiErr } = await supabase
+          .from('conversations')
+          .update({ ai_autoreply_disabled: false })
+          .eq('id', conversation.id)
+        if (aiErr) console.error('[line-transfer] AI resume failed:', aiErr.message)
+      }
     } catch (err) {
       console.error('[line-transfer] customer notice failed:', err instanceof Error ? err.message : err)
     }

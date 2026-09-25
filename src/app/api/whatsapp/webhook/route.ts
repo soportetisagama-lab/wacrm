@@ -25,6 +25,7 @@ import {
 } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { sendPushToUser } from '@/lib/notifications/push-send'
@@ -1573,9 +1574,31 @@ async function processMessage(
         )
       : false
 
+  // A chat this line just transferred out to another Sagama line: no
+  // welcome menu — thanks/stickers get a capped farewell, anything else
+  // goes to the AI (see lib/line-transfer-outbound.ts). Taps, template
+  // buttons and reactions keep their normal handling.
+  const outboundTransferRoute =
+    !templateButtonConsumed &&
+    !interactiveReplyId &&
+    message.type !== 'button' &&
+    message.type !== 'reaction'
+      ? await routeInboundAfterOutboundTransfer({
+          db: supabaseAdmin(),
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contactRecord.id,
+          text: contentText ?? message.text?.body ?? '',
+          isSticker: message.type === 'sticker',
+        })
+      : null
+
   const flowResult = templateButtonConsumed
     ? { consumed: true as const }
-    : await dispatchInboundToFlows({
+    : outboundTransferRoute
+      ? { consumed: outboundTransferRoute === 'acknowledged' }
+      : await dispatchInboundToFlows({
         accountId,
         userId: configOwnerUserId,
         contactId: contactRecord.id,

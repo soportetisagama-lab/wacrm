@@ -4,6 +4,7 @@ import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { loadLineTransferContext } from '@/lib/line-transfer-inbound'
+import { loadOutboundTransferContext } from '@/lib/line-transfer-outbound'
 import { isWithinBusinessHours, nextOpeningPhrase } from '@/lib/flows/business-hours'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
@@ -464,6 +465,7 @@ export async function runAutoReplyNow(
       knowledge,
       documents: config.documents,
       lineTransferContext: await loadLineTransferContext(db, conversationId, contactId),
+      outboundTransferNote: await loadOutboundTransferContext(db, conversationId, contactId),
     })
 
     const { text, handoff, sendDocument, usage } = await generateReply({
