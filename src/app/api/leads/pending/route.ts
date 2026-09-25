@@ -9,11 +9,15 @@ import { supabaseAdmin } from '@/lib/flows/admin-client'
  * ("XLR9") deployed alongside this CRM. It has its own MySQL database
  * and no visibility into this account's WhatsApp inbox, so it can't
  * tell which contacts still need a lead created from a fresh
- * conversation. This returns that list: open conversations with at
- * least one unread inbound message AND no agent assigned yet, for the
+ * conversation. This returns that list: open or pending conversations
+ * with at least one unread inbound message AND no agent assigned yet, for the
  * one account this deployment serves — once someone in the CRM claims
  * the conversation (assigned_agent_id set), it's "derivado" already
  * and drops off this list even if it's still unread.
+ *
+ * 'pending' is included on purpose: it's the status a bot handoff
+ * leaves behind ("waiting for an advisor"), i.e. exactly the
+ * conversations that most need deriving.
  *
  * "Pending" here means "conversation still open, unread, and
  * unassigned" — it does NOT check whether a lead already exists in
@@ -51,7 +55,7 @@ export async function GET(request: Request) {
     .from('conversations')
     .select('id, unread_count, last_message_at, contacts ( phone, name )')
     .eq('account_id', accountId)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .gt('unread_count', 0)
     .is('assigned_agent_id', null)
     .order('last_message_at', { ascending: false })
@@ -64,23 +68,23 @@ export async function GET(request: Request) {
     id: string
     unread_count: number
     last_message_at: string | null
-    contacts: { phone: string | null; name: string | null } | { phone: string | null; name: string | null }[] | null
+    contacts: Contact | Contact[] | null
   }
+  type Contact = { phone: string | null; name: string | null }
 
-  const leads = (data as Row[])
-    .map((r) => {
-      const contact = Array.isArray(r.contacts) ? r.contacts[0] : r.contacts
-      return {
-        conversation_id: r.id,
-        phone: contact?.phone ?? null,
-        name: contact?.name ?? null,
-        unread_count: r.unread_count,
-        last_message_at: r.last_message_at,
-      }
-    })
-    // A conversation with no phone on file can't seed a lead form —
-    // nothing for the PHP side to do with it.
-    .filter((l) => l.phone)
+  // Phone-less contacts (WhatsApp usernames that hide the number) are
+  // kept, with phone null: the PHP side lists them as "sin número" so
+  // the ATC knows to ask for it in the chat instead of never seeing them.
+  const leads = (data as Row[]).map((r) => {
+    const contact = Array.isArray(r.contacts) ? r.contacts[0] : r.contacts
+    return {
+      conversation_id: r.id,
+      phone: contact?.phone ?? null,
+      name: contact?.name ?? null,
+      unread_count: r.unread_count,
+      last_message_at: r.last_message_at,
+    }
+  })
 
   return NextResponse.json({ leads })
 }
