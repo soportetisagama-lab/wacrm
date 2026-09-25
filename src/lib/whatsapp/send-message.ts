@@ -505,7 +505,7 @@ export async function sendMessageToConversation(
   const lastMessageText =
     messageType === 'interactive'
       ? interactivePayloadPreviewText(interactivePayload!)
-      : contentText || `[${messageType}]`;
+      : contentText || templateBody || `[${messageType}]`;
 
   // Reopen on send — an agent (or a template/API call sent as the
   // account) replying is "we're no longer waiting to respond", the
