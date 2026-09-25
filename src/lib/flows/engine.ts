@@ -40,7 +40,7 @@ import {
   engineSendText,
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
-import { isWithinBusinessHours } from "./business-hours";
+import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -1326,7 +1326,7 @@ async function handOffFromCollectAi(
   const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
   const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
   const outgoingText = useAfterHoursText
-    ? afterHoursText!
+    ? fillBusinessHoursPlaceholders(afterHoursText!)
     : message?.trim() || cfg.handoff_fallback_text?.trim();
   // True only when `outgoingText` actually ended up being the model's
   // own courtesy line (`message`, model_handoff only) — the static
@@ -1544,7 +1544,9 @@ async function handleCollectAiOutcome(
     // means this is skipped and behavior is identical to before.
     const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
     const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
-    const outgoingText = useAfterHoursText ? afterHoursText! : decision.message;
+    const outgoingText = useAfterHoursText
+      ? fillBusinessHoursPlaceholders(afterHoursText!)
+      : decision.message;
     // Tracked so the node we advance into below (often a handoff node)
     // knows a closing message already went out for this exact
     // transition and doesn't send its own on top of it — see
@@ -1827,7 +1829,9 @@ async function executeHandoff(
   // time-sensitive wording.
   const outOfHours = !isWithinBusinessHours();
   const outgoingMessage = outOfHours
-    ? cfg.customer_message_after_hours?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS
+    ? fillBusinessHoursPlaceholders(
+        cfg.customer_message_after_hours?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
+      )
     : cfg.customer_message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE;
   // Sent BEFORE the DB-side handoff writes — best-effort, mirrors every
   // other closing-message send in this file (a failure here is logged
@@ -2758,7 +2762,9 @@ export async function handleReplyForActiveRun(
         | SendButtonsNodeConfig
         | SendListNodeConfig;
       const hintText = !isWithinBusinessHours()
-        ? cfg.reprompt_hint_text_after_hours?.trim() || cfg.reprompt_hint_text
+        ? fillBusinessHoursPlaceholders(
+            cfg.reprompt_hint_text_after_hours?.trim() || cfg.reprompt_hint_text || "",
+          )
         : cfg.reprompt_hint_text;
       if (hintText) {
         try {
