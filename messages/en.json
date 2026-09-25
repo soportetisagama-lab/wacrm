@@ -171,6 +171,19 @@
       "noMessagesYet": "No messages yet",
       "unknown": "Unknown"
     },
+    "lineTransfer": {
+      "button": "Transfer to another line",
+      "title": "Transfer to another Sagama line",
+      "explanation": "The other line will message the customer from its own WhatsApp number with an introduction. This chat stays as it is.",
+      "targetLabel": "Target line",
+      "topicLabel": "What is the customer looking for?",
+      "topicPlaceholder": "e.g. industrial kitchens",
+      "topicHint": "Shown in the message the customer receives: \"…shared your inquiry about ___\".",
+      "cancel": "Cancel",
+      "confirm": "Transfer",
+      "done": "Done — {line} has messaged the customer.",
+      "failed": "Couldn't transfer the conversation."
+    },
     "messageThread": {
       "backToConversations": "Back to conversations",
       "hideContactPanel": "Hide contact panel",

@@ -55,6 +55,7 @@ import {
 import { deleteAccountMedia } from '@/lib/storage/upload-media';
 import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
+import { LineTransferButton } from './line-transfer-button';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
 
@@ -1144,6 +1145,9 @@ export function MessageThread({
               />
             </button>
           )}
+
+          {/* Cross-line transfer — hidden unless LINE_TRANSFER_CONFIG is set. */}
+          <LineTransferButton conversationId={conversation.id} />
 
           {/* Status dropdown */}
           <DropdownMenu>
