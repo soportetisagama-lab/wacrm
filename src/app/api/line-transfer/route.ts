@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { ForbiddenError, requireRole, toErrorResponse } from '@/lib/auth/account'
+import type { AccountRole } from '@/lib/auth/roles'
 import { getLineTransferConfig, greetingName } from '@/lib/line-transfer'
+
+/** Only ATC and admins route customers between lines — advisors never see it. */
+const TRANSFER_ROLES: readonly AccountRole[] = ['atc', 'admin', 'owner']
 
 /**
  * "Derivar a otra línea" — see src/lib/line-transfer.ts for the config
  * and why a transfer is a template sent BY the target line.
  *
  * GET  → the lines this deployment can transfer to ({ id, label } only;
- *        URLs and API keys never leave the server). Empty when unset.
+ *        URLs and API keys never leave the server). Empty when unset,
+ *        or for roles outside TRANSFER_ROLES — which hides the button.
  * POST { conversationId, targetId, topic } → on the target line:
  *        find-or-create the contact (tagged "Derivado de <from>"), then
  *        send its transfer template. On success, leaves a note on the
@@ -16,8 +21,8 @@ import { getLineTransferConfig, greetingName } from '@/lib/line-transfer'
 
 export async function GET() {
   try {
-    await requireRole('agent')
-    const config = getLineTransferConfig()
+    const { role } = await requireRole('agent')
+    const config = TRANSFER_ROLES.includes(role) ? getLineTransferConfig() : null
     return NextResponse.json({
       targets: config?.targets.map(({ id, label }) => ({ id, label })) ?? [],
     })
@@ -51,7 +56,10 @@ async function callTarget(url: string, apiKey: string, path: string, body: unkno
 
 export async function POST(request: Request) {
   try {
-    const { supabase, userId, accountId } = await requireRole('agent')
+    const { supabase, userId, accountId, role } = await requireRole('agent')
+    if (!TRANSFER_ROLES.includes(role)) {
+      throw new ForbiddenError('Solo ATC y administradores pueden derivar a otra línea.')
+    }
     const config = getLineTransferConfig()
     const body = (await request.json().catch(() => ({}))) as {
       conversationId?: string
