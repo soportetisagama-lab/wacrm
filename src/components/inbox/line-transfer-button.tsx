@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowRightLeft, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { announceContactDataChanged } from "@/lib/contact-events";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -61,12 +62,19 @@ export function LineTransferButton({ conversationId }: { conversationId: string 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversationId, targetId, topic }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; target?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        target?: string;
+        historySent?: boolean;
+      };
       if (!res.ok) {
         toast.error(data.error || t("failed"));
         return;
       }
       toast.success(t("done", { line: data.target ?? "" }));
+      if (data.historySent === false) toast.warning(t("historyFailed"));
+      // The handover note was written server-side — refresh the panel.
+      announceContactDataChanged();
       setOpen(false);
     } catch {
       toast.error(t("failed"));

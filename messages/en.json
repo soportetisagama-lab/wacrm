@@ -182,7 +182,8 @@
       "cancel": "Cancel",
       "confirm": "Transfer",
       "done": "Done — {line} has messaged the customer.",
-      "failed": "Couldn't transfer the conversation."
+      "failed": "Couldn't transfer the conversation.",
+      "historyFailed": "Couldn't send the chat history to the other line."
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
