@@ -4,6 +4,7 @@ import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { loadLineTransferContext } from '@/lib/line-transfer-inbound'
+import { isWithinBusinessHours, nextOpeningPhrase } from '@/lib/flows/business-hours'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
@@ -59,8 +60,14 @@ interface DispatchArgs {
  *  a human — whether the model decided on its own ([[HANDOFF]]) or the
  *  per-conversation reply cap was reached. Same text either way: from
  *  the customer's side, the underlying situation is identical ("a
- *  human takes it from here"). */
-const AUTO_REPLY_HANDOFF_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+ *  human takes it from here"). After hours it says when an advisor will
+ *  actually write (same next-opening phrase as the Flows' after-hours
+ *  texts) instead of promising "en breve". */
+export function handoffClosingText(now: Date = new Date()): string {
+  return isWithinBusinessHours(now)
+    ? '¡Claro! Te comunico con un asesor especializado, que continuará contigo por este chat en breve 🙌'
+    : `¡Claro! Te comunico con un asesor especializado 🙌 En este momento estamos fuera de nuestro horario de atención; un asesor te escribirá por este chat ${nextOpeningPhrase(now)}.`
+}
 
 /**
  * Appended, deterministically (never model-generated), to the assistant's
@@ -197,7 +204,7 @@ async function sendHandoffClosingMessage(args: {
       userId: args.configOwnerUserId,
       conversationId: args.conversationId,
       contactId: args.contactId,
-      text: AUTO_REPLY_HANDOFF_CLOSING_TEXT,
+      text: handoffClosingText(),
     })
   } catch (err) {
     console.error('[ai auto-reply] handoff closing message send failed:', err)
