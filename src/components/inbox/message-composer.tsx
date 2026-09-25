@@ -5,7 +5,10 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   KeyboardEvent,
+  type ClipboardEvent,
+  type Ref,
 } from "react";
 import {
   Send,
@@ -101,6 +104,37 @@ const PICKER_ACCEPT: Record<"image" | "video" | "document", string> = {
     "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain",
 };
 
+// Extension fallback for dropped/pasted files whose MIME type the OS
+// left blank (common for Office files on some Windows setups).
+const DOCUMENT_MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  txt: "text/plain",
+};
+
+/** Map a dropped/pasted file onto a composer media kind, or null when
+ *  the chat-media bucket wouldn't accept it. */
+function kindForFile(file: File): "image" | "video" | "document" | null {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const type = file.type || DOCUMENT_MIME_BY_EXT[ext] || "";
+  if (!type) return null;
+  for (const kind of ["image", "video", "document"] as const) {
+    if (PICKER_ACCEPT[kind].split(",").includes(type)) return kind;
+  }
+  return null;
+}
+
+/** Imperative handle so the thread can hand the composer a file dropped
+ *  anywhere on the conversation, not just on the composer itself. */
+export interface MessageComposerHandle {
+  attachFile: (file: File) => void;
+}
+
 interface MediaDraft {
   kind: ComposerMediaKind;
   mediaUrl: string;
@@ -119,6 +153,7 @@ interface MessageComposerProps {
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  ref?: Ref<MessageComposerHandle>;
 }
 
 function formatDuration(seconds: number): string {
@@ -141,6 +176,7 @@ export function MessageComposer({
   onOpenTemplates,
   replyTo,
   onClearReply,
+  ref,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
 
@@ -436,6 +472,35 @@ export function MessageComposer({
       if (file) void stageUpload(kind, file);
     },
     [stageUpload],
+  );
+
+  // Drag-and-drop / paste entry point: same checks as the picker, but the
+  // kind is inferred from the file instead of the menu item clicked.
+  const attachFile = useCallback(
+    (file: File) => {
+      if (inputsDisabled || busy || recording) return;
+      const kind = kindForFile(file);
+      if (!kind) {
+        toast.error(t("unsupportedFile", { name: file.name }));
+        return;
+      }
+      void stageUpload(kind, file);
+    },
+    [inputsDisabled, busy, recording, stageUpload, t],
+  );
+
+  useImperativeHandle(ref, () => ({ attachFile }), [attachFile]);
+
+  // Ctrl+V of a screenshot or a copied file attaches it; plain-text
+  // pastes fall through to the textarea untouched.
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const file = e.clipboardData.files[0];
+      if (!file) return;
+      e.preventDefault();
+      attachFile(file);
+    },
+    [attachFile],
   );
 
   // ---- Voice recording (client-side Ogg/Opus, no server transcode) ---
@@ -829,6 +894,7 @@ export function MessageComposer({
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               readOnly
                 ? t("readOnlyPlaceholder")
