@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
 import { ForbiddenError, requireRole, toErrorResponse } from '@/lib/auth/account'
 import type { AccountRole } from '@/lib/auth/roles'
-import { getLineTransferConfig, greetingName } from '@/lib/line-transfer'
+import {
+  buildTransferNote,
+  getLineTransferConfig,
+  greetingName,
+  type TranscriptMessage,
+} from '@/lib/line-transfer'
+
+/** How many of the source chat's latest messages travel with the transfer. */
+const TRANSFER_HISTORY_LIMIT = 40
 
 /** Only ATC and admins route customers between lines — advisors never see it. */
 const TRANSFER_ROLES: readonly AccountRole[] = ['atc', 'admin', 'owner']
@@ -127,6 +135,33 @@ export async function POST(request: Request) {
       )
     }
 
+    // Hand the receiving line the context + this chat's recent history as
+    // a note on its contact. Best-effort: the customer already got the
+    // template, so a failure here only costs the history, not the transfer.
+    const targetContactId = created.data.id
+    let historySent = false
+    if (typeof targetContactId === 'string') {
+      const [{ data: recent }, { data: profile }] = await Promise.all([
+        supabase
+          .from('messages')
+          .select('sender_type, content_type, content_text, media_url, created_at')
+          .eq('conversation_id', conversation.id)
+          .order('created_at', { ascending: false })
+          .limit(TRANSFER_HISTORY_LIMIT),
+        supabase.from('profiles').select('full_name').eq('user_id', userId).maybeSingle(),
+      ])
+      const noteSent = await callTarget(target.url, target.apiKey, `/api/v1/contacts/${targetContactId}/notes`, {
+        text: buildTransferNote({
+          from: config.from,
+          topic,
+          agentName: (profile?.full_name as string | undefined) ?? null,
+          messages: ((recent ?? []) as TranscriptMessage[]).reverse(),
+        }),
+      })
+      historySent = noteSent.ok
+      if (!noteSent.ok) console.error('[line-transfer] history note failed:', noteSent.message)
+    }
+
     // Best-effort breadcrumb on this side; the transfer already happened.
     const { error: noteError } = await supabase.from('contact_notes').insert({
       contact_id: contact.id,
@@ -136,7 +171,7 @@ export async function POST(request: Request) {
     })
     if (noteError) console.error('[line-transfer] note insert failed:', noteError.message)
 
-    return NextResponse.json({ ok: true, target: target.label })
+    return NextResponse.json({ ok: true, target: target.label, historySent })
   } catch (err) {
     return toErrorResponse(err)
   }

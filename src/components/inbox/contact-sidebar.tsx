@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { CONTACT_DATA_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Contact, Deal, ContactNote, Tag, ConversationReferral } from "@/types";
 import {
   Phone,
@@ -111,6 +112,15 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContactData();
+  }, [fetchContactData]);
+
+  // Actions elsewhere in the thread that write contact data server-side
+  // (e.g. "Derivar a otra línea" leaving a note) announce it so the
+  // panel refreshes without a page reload.
+  useEffect(() => {
+    const refresh = () => void fetchContactData();
+    window.addEventListener(CONTACT_DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(CONTACT_DATA_CHANGED_EVENT, refresh);
   }, [fetchContactData]);
 
   // Ad attribution is keyed by conversation, not contact — separate

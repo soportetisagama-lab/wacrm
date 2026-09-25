@@ -464,6 +464,16 @@ export async function sendMessageToConversation(
   // payload so the thread can re-render the buttons / rows.
   const interactiveBody =
     messageType === 'interactive' ? interactivePayload!.body : null;
+  // A template sent without display text (public API, cross-line
+  // transfer) would otherwise render as an empty bubble / "[template]".
+  // Fill the stored body's {{n}} with the positional params instead.
+  const templateBody =
+    messageType === 'template' && !contentText && templateRow?.body_text
+      ? templateRow.body_text.replace(
+          /\{\{(\d+)\}\}/g,
+          (match, n: string) => templateParams?.[Number(n) - 1] ?? match
+        )
+      : null;
 
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
@@ -471,7 +481,7 @@ export async function sendMessageToConversation(
       conversation_id: conversationId,
       sender_type: 'agent',
       content_type: messageType,
-      content_text: interactiveBody ?? contentText ?? null,
+      content_text: interactiveBody ?? contentText ?? templateBody ?? null,
       media_url: mediaUrl || null,
       template_name: templateName || null,
       interactive_payload:

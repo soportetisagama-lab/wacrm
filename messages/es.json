@@ -182,7 +182,8 @@
       "cancel": "Cancelar",
       "confirm": "Derivar",
       "done": "Listo — {line} ya le escribió al cliente.",
-      "failed": "No se pudo derivar la conversación."
+      "failed": "No se pudo derivar la conversación.",
+      "historyFailed": "No se pudo enviar el historial del chat a la otra línea."
     },
     "messageThread": {
       "backToConversations": "Volver a conversaciones",
