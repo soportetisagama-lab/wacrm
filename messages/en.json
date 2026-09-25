@@ -241,6 +241,8 @@
       "draftFailedGeneric": "Couldn't draft a reply.",
       "draftEmpty": "The assistant didn't return a reply.",
       "aiUnreachable": "Couldn't reach the AI assistant.",
+      "unsupportedFile": "Can't send \"{name}\": only photos (JPG, PNG, WebP), videos (MP4, 3GP) or documents (PDF, Word, Excel, PowerPoint, TXT).",
+      "dropHere": "Drop the file to attach it",
       "uploadTooLarge": "File is {sizeMb} MB — {kind} limit is {maxMb} MB.",
       "uploadFailed": "Upload failed.",
       "recordingTooLong": "Recording is too long (over 16 MB).",
