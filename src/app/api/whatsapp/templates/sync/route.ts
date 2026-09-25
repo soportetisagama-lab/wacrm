@@ -200,6 +200,22 @@ export async function POST() {
     const errors: { name: string; language: string; message: string }[] = []
 
     for (const t of metaTemplates) {
+      // Meta keeps a deleted template listed as PENDING_DELETION for
+      // ~30 days. It's already gone for the user (and unsendable), so
+      // drop any local row instead of resurrecting it on every sync.
+      if (normalizeStatus(t.status) === 'PENDING_DELETION') {
+        const { error: delErr } = await supabase
+          .from('message_templates')
+          .delete()
+          .eq('account_id', accountId)
+          .eq('name', t.name)
+          .eq('language', t.language)
+        if (delErr) {
+          errors.push({ name: t.name, language: t.language, message: delErr.message })
+        }
+        continue
+      }
+
       const body = (t.components ?? []).find((c) => c.type === 'BODY')
       const header = (t.components ?? []).find((c) => c.type === 'HEADER')
       const footer = (t.components ?? []).find((c) => c.type === 'FOOTER')
