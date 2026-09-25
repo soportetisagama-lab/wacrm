@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildTransferNote, getLineTransferConfig, greetingName, transferNoticeText } from "./line-transfer";
+import { buildTransferNote, getLineTransferConfig, transferNoticeText } from "./line-transfer";
 
 const target = {
   id: "inox",
@@ -38,21 +38,6 @@ describe("getLineTransferConfig", () => {
   });
 });
 
-describe("greetingName", () => {
-  it("uses the first word of the name", () => {
-    expect(greetingName("Marisol Quispe")).toBe("Marisol");
-  });
-
-  it("strips emoji and symbols", () => {
-    expect(greetingName("NAYARA👧🏻 EIRLYS")).toBe("NAYARA");
-  });
-
-  it("falls back when nothing usable is left", () => {
-    expect(greetingName("💗")).toBe("estimado cliente");
-    expect(greetingName(null)).toBe("estimado cliente");
-  });
-});
-
 describe("buildTransferNote", () => {
   const base = { from: "Sagama Retail", topic: "cocinas inox", agentName: "Jimmy" };
 
@@ -80,13 +65,9 @@ describe("buildTransferNote", () => {
 });
 
 describe("transferNoticeText", () => {
-  it("addresses the customer formally and names the target line", () => {
-    expect(transferNoticeText({ name: "Jim Pérez", topic: "cocinas inox", targetLabel: "Sagama Inox" })).toBe(
-      "Estimado(a) Jim, gracias por su consulta sobre *cocinas inox*. Para brindarle una atención especializada, su caso será atendido por nuestra línea *Sagama Inox*, que ya le escribió desde su número oficial de WhatsApp. Quedamos a su disposición por este medio ante cualquier otra consulta.",
+  it("is formal and never uses the WhatsApp profile name", () => {
+    expect(transferNoticeText({ topic: "cocinas inox", targetLabel: "Sagama Inox" })).toBe(
+      "Estimado(a) cliente, gracias por su consulta sobre *cocinas inox*. Para brindarle una atención especializada, su caso será atendido por nuestra línea *Sagama Inox*, que ya le escribió desde su número oficial de WhatsApp. Quedamos a su disposición por este medio ante cualquier otra consulta.",
     );
-  });
-
-  it("falls back to a generic greeting without a usable name", () => {
-    expect(transferNoticeText({ name: "💗", topic: "x", targetLabel: "Sagama Maxi" })).toMatch(/^Estimado cliente, /);
   });
 });
