@@ -2990,6 +2990,7 @@ async function insertAndAdvanceRun(
   conversationId: string,
   nodes: Map<string, FlowNodeRow>,
   startedVia: Record<string, unknown>,
+  isReentryOverride?: boolean,
 ): Promise<DispatchInboundResult> {
   // Has THIS flow ever run for this contact before? Checked BEFORE the
   // insert below (a fresh row for this exact run would otherwise always
@@ -3004,7 +3005,7 @@ async function insertAndAdvanceRun(
     .select("id", { count: "exact", head: true })
     .eq("contact_id", contactId)
     .eq("flow_id", flow.id);
-  const isReentry = (priorRunCount ?? 0) > 0;
+  const isReentry = isReentryOverride ?? (priorRunCount ?? 0) > 0;
 
   // Seed this run's vars with whatever this contact has already told
   // ANY prior run (see flow_contact_state, migration 061) — so
@@ -3133,6 +3134,11 @@ export async function startFlowRunAtNode(args: {
   /** Logged on the 'started' flow_run_events row for audit context —
    *  e.g. `{ reason: 'template_button_reply', button_text: '...' }`. */
   startedVia: Record<string, unknown>;
+  /** Overrides the prior-run count behind `vars.is_reentry` — e.g. the
+   *  welcome restarted once a BSUID contact's phone is known: the prior
+   *  run ended at the phone gate without showing anything, so this is
+   *  still the customer's first real welcome. */
+  isReentry?: boolean;
 }): Promise<DispatchInboundResult> {
   const db = supabaseAdmin();
   const flow = await loadFlow(db, args.flowId);
@@ -3154,5 +3160,6 @@ export async function startFlowRunAtNode(args: {
     args.conversationId,
     nodes,
     args.startedVia,
+    args.isReentry,
   );
 }
