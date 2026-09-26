@@ -270,7 +270,13 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
             .order("position"),
         ])
       if (cancelled) return
-      setTags((tagsRes.data as TagRecord[] | null) ?? [])
+      // Team tags only — an automation keyed on an advisor's personal tag
+      // (migration 069) would silently stop matching once they delete it.
+      setTags(
+        ((tagsRes.data as (TagRecord & { is_shared?: boolean })[] | null) ?? []).filter(
+          (tag) => tag.is_shared !== false,
+        ),
+      )
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
       setPipelines((pipelinesRes.data as PipelineOption[] | null) ?? [])

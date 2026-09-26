@@ -159,6 +159,16 @@ export function canDeleteContacts(role: AccountRole): boolean {
   return hasMinRole(role, 'gerencia');
 }
 
+/**
+ * Owner / admin: tags they create are shared with the whole account.
+ * Everyone else's tags are personal — visible only to their author
+ * (and admins). Keep in sync with the tags RLS policies
+ * (supabase/migrations/069_tags_personal.sql).
+ */
+export function canCreateSharedTags(role: AccountRole): boolean {
+  return hasMinRole(role, 'admin');
+}
+
 /** Owner only: irreversible destructive operations. */
 export function canDeleteAccount(role: AccountRole): boolean {
   return role === 'owner';
