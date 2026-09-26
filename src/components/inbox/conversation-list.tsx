@@ -8,6 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
+import { TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Conversation, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X, Pin, MailOpen, Mail } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -282,17 +283,30 @@ export function ConversationList({
     // up on any events sent while the WS was disconnected or throttled.
   }, [resyncToken]);
 
-  // Tag definitions for the filter picker — loaded once so labels/colours
-  // stay stable regardless of which conversations happen to be loaded.
+  // Tag definitions for the filter picker — loaded up front so labels/
+  // colours stay stable regardless of which conversations happen to be
+  // loaded, and reloaded whenever a tag is created/deleted elsewhere on
+  // the page (TAGS_CHANGED_EVENT — e.g. an advisor's new personal tag
+  // from the contact panel), so it shows up here without a reload.
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
-      if (!cancelled && data) setTags(data as Tag[]);
-    })();
+      if (cancelled || !data) return;
+      const loaded = data as Tag[];
+      setTags(loaded);
+      // Drop a deleted tag from an active filter.
+      const ids = new Set(loaded.map((t) => t.id));
+      setSelectedTagIds((prev) =>
+        prev.every((id) => ids.has(id)) ? prev : prev.filter((id) => ids.has(id)),
+      );
+    };
+    void load();
+    window.addEventListener(TAGS_CHANGED_EVENT, load);
     return () => {
       cancelled = true;
+      window.removeEventListener(TAGS_CHANGED_EVENT, load);
     };
   }, []);
 
