@@ -1108,7 +1108,7 @@ async function dispatchWelcomeAfterPhoneKnown(
   accountId: string,
   contactId: string,
   conversationId: string
-): Promise<void> {
+): Promise<boolean> {
   const db = supabaseAdmin()
   const { data: flow, error } = await db
     .from('flows')
@@ -1129,7 +1129,7 @@ async function dispatchWelcomeAfterPhoneKnown(
       `[webhook] dispatchWelcomeAfterPhoneKnown: no active first_inbound_message flow for account ${accountId} (contact ${contactId}, conversation ${conversationId})`,
       error
     )
-    return
+    return false
   }
 
   const result = await startFlowRunAtNode({
@@ -1139,6 +1139,10 @@ async function dispatchWelcomeAfterPhoneKnown(
     contactId,
     conversationId,
     startedVia: { reason: 'bsuid_phone_promoted' },
+    // The earlier run ended at the phone gate without sending anything,
+    // so this is still the first real welcome — full text, not the
+    // "Sigue explorando…" reentry_text.
+    isReentry: false,
   })
 
   if (!result.consumed) {
@@ -1147,6 +1151,7 @@ async function dispatchWelcomeAfterPhoneKnown(
       result
     )
   }
+  return result.consumed
 }
 
 /**
@@ -1348,9 +1353,14 @@ async function processMessage(
   // Bienvenida flow now so its phone gate can route correctly. See
   // dispatchWelcomeAfterPhoneKnown's doc comment for why this can't
   // just happen on its own.
-  if (contactOutcome.phoneJustPromoted || promotedPhone) {
-    await dispatchWelcomeAfterPhoneKnown(accountId, contactRecord.id, conversation.id)
-  }
+  // True when this inbound was just the phone number and it (re)started
+  // the welcome — the flow dispatch below must then skip it, or the
+  // number itself would be read as an unmatched reply to the menu just
+  // sent and get released to the AI assistant.
+  const welcomeStartedFromPhone =
+    contactOutcome.phoneJustPromoted || promotedPhone
+      ? await dispatchWelcomeAfterPhoneKnown(accountId, contactRecord.id, conversation.id)
+      : false
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
@@ -1594,7 +1604,7 @@ async function processMessage(
         })
       : null
 
-  const flowResult = templateButtonConsumed
+  const flowResult = templateButtonConsumed || welcomeStartedFromPhone
     ? { consumed: true as const }
     : outboundTransferRoute
       ? { consumed: outboundTransferRoute === 'acknowledged' }
