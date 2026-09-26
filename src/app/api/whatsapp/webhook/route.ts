@@ -27,6 +27,7 @@ import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
+import { persistInboundMedia } from '@/lib/whatsapp/inbound-media'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { sendPushToUser } from '@/lib/notifications/push-send'
 
@@ -1509,6 +1510,25 @@ async function processMessage(
         mimeType: message.image.mime_type,
         messageDbId: insertedMessage.id,
       },
+    })
+  }
+
+  // Same for audio, video and documents (migration 070): Meta stops
+  // serving a media id after a while, and the inbox would then show the
+  // file broken. Private bucket — see lib/whatsapp/inbound-media.ts.
+  // Awaited for the same `after()` reason as the photo copy above.
+  const otherMedia =
+    message.type === 'audio' ? message.audio
+    : message.type === 'video' ? message.video
+    : message.type === 'document' ? message.document
+    : undefined
+  if (otherMedia?.id) {
+    await persistInboundMedia(supabaseAdmin(), {
+      accountId,
+      messageDbId: insertedMessage.id,
+      mediaId: otherMedia.id,
+      mimeType: otherMedia.mime_type,
+      filename: message.type === 'document' ? message.document?.filename : null,
     })
   }
 
