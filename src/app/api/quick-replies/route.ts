@@ -2,22 +2,52 @@ import { NextResponse } from 'next/server'
 import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
+import { canSeeQuickReply, isQuickReplyAdmin } from '@/lib/quick-replies'
 
 // Quick replies — reusable snippets (plain text or a saved interactive
-// message) shared across the account. GET lists; POST creates. Mirrors
-// the automations route: RLS-scoped read via the user client, service-
-// role write after an explicit role check.
+// message). Admin-created ones are shared with the whole account;
+// everyone else's are personal (migration 067). GET lists; POST
+// creates. Mirrors the automations route: RLS-scoped read via the user
+// client, service-role write after an explicit role check.
 
 export async function GET() {
   try {
-    const { supabase } = await getCurrentAccount()
-    // RLS (quick_replies_select) scopes to the caller's account.
+    const { supabase, userId, role, accountId } = await getCurrentAccount()
+    const isAdmin = isQuickReplyAdmin(role)
+    // RLS (quick_replies_select) scopes to the caller's account and to
+    // shared + own rows (admins: all). Filtered again here so a
+    // database still missing migration 067 never leaks personal rows.
     const { data, error } = await supabase
       .from('quick_replies')
       .select('*')
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ quick_replies: data ?? [] })
+    const rows = ((data ?? []) as { user_id: string; is_shared?: boolean | null }[]).filter(
+      (r) => canSeeQuickReply({ userId, role }, r),
+    )
+
+    // Admins see advisors' personal replies — label whose they are.
+    const otherAuthors = isAdmin
+      ? [...new Set(rows.filter((r) => r.is_shared === false && r.user_id !== userId).map((r) => r.user_id))]
+      : []
+    const names = new Map<string, string>()
+    if (otherAuthors.length > 0) {
+      const { data: profiles } = await supabaseAdmin()
+        .from('profiles')
+        .select('user_id, full_name')
+        .eq('account_id', accountId)
+        .in('user_id', otherAuthors)
+      for (const p of profiles ?? []) names.set(p.user_id, p.full_name)
+    }
+
+    return NextResponse.json({
+      quick_replies: rows.map((r) => ({
+        ...r,
+        is_shared: r.is_shared !== false,
+        author_name: names.get(r.user_id) ?? null,
+      })),
+      viewer: { user_id: userId, is_admin: isAdmin },
+    })
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -65,6 +95,8 @@ export async function POST(request: Request) {
     .insert({
       account_id: ctx.accountId,
       user_id: ctx.userId,
+      // Admin-created → whole account; anyone else's → only their own.
+      is_shared: isQuickReplyAdmin(ctx.role),
       title,
       kind,
       content_text,

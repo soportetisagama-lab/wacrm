@@ -4,6 +4,7 @@ import {
   type AccountRole,
   canAssignConversations,
   canDeleteAccount,
+  canDeleteContacts,
   canEditSettings,
   canManageMembers,
   canSendMessages,
@@ -170,6 +171,16 @@ describe('capability predicates', () => {
     expect(canDeleteAccount('gerencia')).toBe(false);
     expect(canDeleteAccount('agent')).toBe(false);
     expect(canDeleteAccount('viewer')).toBe(false);
+  });
+
+  it('canDeleteContacts: gerencia and above; jefe_linea / atc / agent can only edit', () => {
+    expect(canDeleteContacts('owner')).toBe(true);
+    expect(canDeleteContacts('admin')).toBe(true);
+    expect(canDeleteContacts('gerencia')).toBe(true);
+    expect(canDeleteContacts('jefe_linea')).toBe(false);
+    expect(canDeleteContacts('atc')).toBe(false);
+    expect(canDeleteContacts('agent')).toBe(false);
+    expect(canDeleteContacts('viewer')).toBe(false);
   });
 
   it('canTransferOwnership: owner only', () => {
