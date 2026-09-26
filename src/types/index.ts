@@ -689,10 +689,16 @@ export type QuickReplyKind = 'text' | 'interactive';
 
 export interface QuickReply {
   id: string;
-  /** Account tenancy key — shared across all members of the account. */
+  /** Account tenancy key. */
   account_id: string;
-  /** Author / audit only. */
+  /** Author. Personal replies (`is_shared: false`) are visible only to
+   *  this user and to admins — see migration 067. */
   user_id: string;
+  /** true = whole account (admin-created); false = author's own. */
+  is_shared: boolean;
+  /** Author's name — filled by GET /api/quick-replies for admins
+   *  looking at someone else's personal reply. */
+  author_name?: string | null;
   title: string;
   kind: QuickReplyKind;
   /** Set when `kind === 'text'`. */
