@@ -159,7 +159,20 @@ export function QuickRepliesManager() {
                 <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{qr.title}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-sm font-medium text-foreground">{qr.title}</p>
+                  <span
+                    className={
+                      qr.is_shared
+                        ? "shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                        : "shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    }
+                  >
+                    {qr.is_shared
+                      ? t("team")
+                      : t("personalOf", { name: qr.author_name ?? "—" })}
+                  </span>
+                </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {qr.kind === "interactive" && qr.interactive_payload
                     ? interactivePayloadPreviewText(qr.interactive_payload)

@@ -2,11 +2,32 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
+import { canManageQuickReply } from '@/lib/quick-replies'
+import type { AccountContext } from '@/lib/auth/account'
 
-// Update / delete a single quick reply. Quick replies are account-
-// shared, so every mutation is scoped by `account_id` (the service-role
-// client bypasses the agent-gated RLS, so both the role check and the
-// account scope are enforced here).
+// Update / delete a single quick reply. Every mutation is scoped by
+// `account_id` (the service-role client bypasses RLS, so the role
+// check, the account scope and the ownership rule are enforced here):
+// admins manage any reply; everyone else only their own personal ones.
+
+/** 404 when the row isn't in the caller's account (or doesn't exist),
+ *  403 when it is but the caller may not change it. */
+async function guardQuickReply(ctx: AccountContext, id: string): Promise<NextResponse | null> {
+  const { data } = await supabaseAdmin()
+    .from('quick_replies')
+    .select('user_id, is_shared')
+    .eq('id', id)
+    .eq('account_id', ctx.accountId)
+    .maybeSingle()
+  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!canManageQuickReply({ userId: ctx.userId, role: ctx.role }, data)) {
+    return NextResponse.json(
+      { error: 'Solo podés modificar tus propias respuestas rápidas.' },
+      { status: 403 },
+    )
+  }
+  return null
+}
 
 export async function PATCH(
   request: Request,
@@ -19,6 +40,8 @@ export async function PATCH(
   } catch (err) {
     return toErrorResponse(err)
   }
+  const denied = await guardQuickReply(ctx, id)
+  if (denied) return denied
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -92,6 +115,8 @@ export async function DELETE(
   } catch (err) {
     return toErrorResponse(err)
   }
+  const denied = await guardQuickReply(ctx, id)
+  if (denied) return denied
 
   const { error } = await supabaseAdmin()
     .from('quick_replies')

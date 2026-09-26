@@ -149,6 +149,16 @@ export function canUseQuickActions(role: AccountRole): boolean {
   return hasMinRole(role, 'atc');
 }
 
+/**
+ * Owner / admin / gerencia: delete contacts. Jefe de Línea, ATC and
+ * Asesor can still create and edit them (canSendMessages) but not
+ * delete. Keep in sync with the `contacts_delete` RLS policy
+ * (supabase/migrations/068_contacts_delete_gerencia.sql).
+ */
+export function canDeleteContacts(role: AccountRole): boolean {
+  return hasMinRole(role, 'gerencia');
+}
+
 /** Owner only: irreversible destructive operations. */
 export function canDeleteAccount(role: AccountRole): boolean {
   return role === 'owner';
