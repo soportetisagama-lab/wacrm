@@ -100,7 +100,8 @@ export function Step2SelectAudience({
       try {
         const supabase = createClient();
         const { data } = await supabase.from('tags').select('*').order('name');
-        setTags(data ?? []);
+        // Team tags only — see migration 069 (personal tags are per advisor).
+        setTags((data ?? []).filter((tag) => tag.is_shared !== false));
       } finally {
         setLoadingTags(false);
       }

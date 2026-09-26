@@ -22,13 +22,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
+import { ContactTagPicker } from "./contact-tag-picker";
 import { useTranslations } from "next-intl";
 
 interface ContactSidebarProps {
@@ -396,34 +391,21 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                 <TagIcon className="h-3 w-3" />
                 {tSidebar("tags")}
               </div>
-              {allTags.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
-                    <Plus className="h-3.5 w-3.5" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="max-h-64 w-56 border-border bg-popover"
-                  >
-                    {allTags.map((tag) => (
-                      <DropdownMenuCheckboxItem
-                        key={tag.id}
-                        checked={tags.some((t) => t.id === tag.id)}
-                        onCheckedChange={() => handleToggleTag(tag)}
-                        className="text-sm text-popover-foreground"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span
-                            className="h-2 w-2 shrink-0 rounded-full"
-                            style={{ backgroundColor: tag.color }}
-                          />
-                          <span className="truncate">{tag.name}</span>
-                        </span>
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              <ContactTagPicker
+                allTags={allTags}
+                selectedIds={new Set(tags.map((t) => t.id))}
+                onToggle={handleToggleTag}
+                onCreated={(tag) => {
+                  setAllTags((prev) =>
+                    [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)),
+                  );
+                  void handleToggleTag(tag);
+                }}
+                onDeleted={(tagId) => {
+                  setAllTags((prev) => prev.filter((t) => t.id !== tagId));
+                  setTags((prev) => prev.filter((t) => t.id !== tagId));
+                }}
+              />
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {tags.length === 0 ? (
