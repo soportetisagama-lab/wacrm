@@ -148,6 +148,23 @@ const RETURNING_MESSAGE_SKIP_KEYWORDS = [
   "no era nada",
 ];
 
+/** A free-text message containing any of these (whole-word match,
+ *  accent/case-insensitive) is an explicit request for a person — see
+ *  handOffOnHumanRequest. Checked before any flow logic, so typing
+ *  "humano" never restarts the welcome menu (or the "solo atendemos
+ *  Perú" notice) on a customer who is just asking for an advisor. */
+const HUMAN_REQUEST_KEYWORDS = [
+  "humano",
+  "asesor",
+  "asesora",
+  "agente",
+  "operador",
+  "operadora",
+  "una persona",
+  "persona real",
+  "hablar con alguien",
+];
+
 export function matchesKeywordTrigger(
   text: string,
   cfg: KeywordTriggerConfig,
@@ -938,6 +955,12 @@ async function sendButtonsAndSuspend(
   if (visibleButtons.length === 0) {
     if (cfg.all_selected_node_key) {
       return { outcome: "redirect", node_key: cfg.all_selected_node_key };
+    }
+    // A single-button node is a confirmation ("Sí, estoy en Perú") —
+    // once the contact confirmed it, re-asking on every return is just
+    // noise. Follow that button as if tapped again.
+    if (cfg.buttons.length === 1 && cfg.buttons[0].next_node_key) {
+      return { outcome: "redirect", node_key: cfg.buttons[0].next_node_key };
     }
     visibleButtons.push(...cfg.buttons);
   }
@@ -1976,6 +1999,61 @@ async function markConversationPendingHandoff(
   await db.from("conversations").update(update).eq("id", conversationId);
 }
 
+/** True when a free-text inbound explicitly asks for a person — see
+ *  HUMAN_REQUEST_KEYWORDS. */
+function isHumanRequest(message: ParsedInbound): boolean {
+  return (
+    message.kind === "text" &&
+    matchesKeywordTrigger(message.text, {
+      keywords: HUMAN_REQUEST_KEYWORDS,
+      match_type: "word",
+    })
+  );
+}
+
+/** The customer typed "humano"/"asesor"/etc. — skip the flow entirely
+ *  (ending the active run, if any), acknowledge once, and queue the
+ *  conversation for a human, same as a handoff node would. */
+async function handOffOnHumanRequest(
+  db: AdminClient,
+  input: DispatchInboundInput,
+  activeRun: FlowRunRow | null,
+): Promise<DispatchInboundResult> {
+  const isDuplicate = await wasHandedOffRecently(db, input.conversationId);
+  if (!isDuplicate) {
+    try {
+      await engineSendText({
+        accountId: input.accountId,
+        userId: input.userId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        text: isWithinBusinessHours()
+          ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+          : fillBusinessHoursPlaceholders(DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS),
+        aiGenerated: false,
+      });
+    } catch (err) {
+      console.error(
+        "[flows] human-request ack send failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  if (activeRun) {
+    await logEvent(db, activeRun.id, "handoff", activeRun.current_node_key, {
+      reason: "customer_requested_human",
+    });
+    await endRun(db, activeRun.id, "handed_off", "customer_requested_human");
+  }
+  const text = input.message.kind === "text" ? input.message.text.trim() : "";
+  await markConversationPendingHandoff(
+    db,
+    input.conversationId,
+    `🙋 El cliente pidió hablar con un asesor ("${text.slice(0, 80)}").`,
+  );
+  return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
+}
+
 async function endRun(
   db: AdminClient,
   runId: string,
@@ -2364,6 +2442,9 @@ export async function dispatchInboundToFlows(
           outcome: "duplicate_inbound_ignored",
         };
       }
+      if (isHumanRequest(input.message)) {
+        return handOffOnHumanRequest(db, input, activeRun);
+      }
       // One SELECT for the whole flow's nodes — advance loop is now
       // in-memory. See loadAllNodes.
       const nodes = await loadAllNodes(db, activeRun.flow_id);
@@ -2382,6 +2463,9 @@ export async function dispatchInboundToFlows(
     );
     if (!isConversationBotEligible(conversationGate)) {
       return { consumed: false, outcome: "no_match" };
+    }
+    if (isHumanRequest(input.message)) {
+      return handOffOnHumanRequest(db, input, null);
     }
     // Transferred in from another Sagama line: the customer already said
     // what they need there, so no welcome menu — the AI assistant (which
