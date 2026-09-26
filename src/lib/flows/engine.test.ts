@@ -3327,3 +3327,156 @@ function atPeruTime(date: Date): void {
     vi.useRealTimers();
   });
 }
+
+describe("dispatchInboundToFlows — customer asks for a human ('humano', 'asesor', …)", () => {
+  beforeEach(() => {
+    vi.mocked(engineSendText).mockClear();
+    vi.mocked(engineSendText).mockResolvedValue({ whatsapp_message_id: "wamid.ack" } as never);
+  });
+
+  it("'Humano' hands off straight away instead of restarting the menu", async () => {
+    const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [{ ...FAQ_FLOW_ENDING_IMMEDIATELY, trigger_type: "returning_message", trigger_config: {} }],
+      flowNodes: [END_NODE],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("Humano"));
+
+    expect(result).toEqual({ consumed: true, flow_run_id: undefined, outcome: "handed_off" });
+    expect(flowRunInserts).toHaveLength(0);
+    expect(engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("asesor") }),
+    );
+    expect(
+      conversationUpdates.some((u) => u.status === "pending" && u.ai_autoreply_disabled === true),
+    ).toBe(true);
+  });
+
+  it("matches inside a sentence, accent/case-insensitive", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("Quiero hablar con un ASESOR por favor"));
+
+    expect(result.outcome).toBe("handed_off");
+  });
+
+  it("does not match a longer word like 'asesoría'", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("necesito asesoría para mi cocina"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(conversationUpdates).toHaveLength(0);
+    expect(engineSendText).not.toHaveBeenCalled();
+  });
+
+  it("leaves an agent-owned conversation alone", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: "agent-1" },
+      flows: [],
+      flowNodes: [],
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("humano"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(conversationUpdates).toHaveLength(0);
+    expect(engineSendText).not.toHaveBeenCalled();
+  });
+
+  it("doesn't repeat the acknowledgment within the handoff cooldown", async () => {
+    const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [],
+      flowNodes: [],
+      recentHandoffExists: true,
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("humano"));
+
+    expect(result.outcome).toBe("handed_off");
+    expect(engineSendText).not.toHaveBeenCalled();
+    expect(conversationUpdates.some((u) => u.status === "pending")).toBe(true);
+  });
+});
+
+describe("send_buttons — single-button confirmation already given ('Sí, estoy en Perú')", () => {
+  const FLOW: Partial<FlowRow> = {
+    id: "flow-faq",
+    account_id: "acct-1",
+    status: "active",
+    trigger_type: "first_inbound_message",
+    trigger_config: { reentry_keywords: ["menu", "menú"] },
+    entry_node_id: "aviso_solo_peru",
+  };
+  const AVISO: Partial<FlowNodeRow> = {
+    node_key: "aviso_solo_peru",
+    node_type: "send_buttons",
+    config: {
+      text: "Solo atendemos Perú. ¿Dónde se encuentra usted?",
+      buttons: [{ reply_id: "si_peru", title: "Sí, estoy en Perú", next_node_key: "topics" }],
+    },
+  };
+  const TOPICS: Partial<FlowNodeRow> = {
+    node_key: "topics",
+    node_type: "send_list",
+    config: {
+      text: "Menú",
+      button_label: "Ver opciones",
+      sections: [{ rows: [{ reply_id: "a", title: "A" }] }],
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveButtons).mockClear();
+    vi.mocked(engineSendInteractiveList).mockClear();
+    vi.mocked(engineSendInteractiveButtons).mockResolvedValue({ whatsapp_message_id: "wamid.btn" } as never);
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({ whatsapp_message_id: "wamid.list" } as never);
+  });
+
+  it("skips the notice and goes straight to the menu once the contact already confirmed", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW],
+      flowNodes: [AVISO, TOPICS],
+      priorRunCount: 1,
+      contactState: { selected_options: { aviso_solo_peru: ["si_peru"] } },
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveButtons).not.toHaveBeenCalled();
+    expect(engineSendInteractiveList).toHaveBeenCalledTimes(1);
+  });
+
+  it("still shows the notice to a contact who never confirmed", async () => {
+    const { db } = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW],
+      flowNodes: [AVISO, TOPICS],
+      priorRunCount: 1,
+      contactState: { selected_options: {} },
+    });
+    adminDbHolder.current = db;
+
+    await dispatchInboundToFlows(reentryInput("menú"));
+
+    expect(engineSendInteractiveButtons).toHaveBeenCalledTimes(1);
+    expect(engineSendInteractiveList).not.toHaveBeenCalled();
+  });
+});
