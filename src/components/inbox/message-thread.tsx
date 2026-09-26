@@ -116,6 +116,10 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /** Below `lg` (phones, and the Android app) there is no side panel —
+   *  this opens the contact panel as a slide-over instead, so tags and
+   *  notes are reachable there too. */
+  onOpenContactMobile?: () => void;
 }
 
 function formatDateSeparator(
@@ -191,6 +195,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onOpenContactMobile,
 }: MessageThreadProps) {
   const t = useTranslations('Inbox.messageThread');
   const tTimer = useTranslations('Inbox.sessionTimer');
@@ -1112,6 +1117,17 @@ export function MessageThread({
               smaller laptops; this lets agents reclaim it when they just
               want to read and reply. Hidden on mobile, where the sidebar
               never renders as a permanent panel anyway. Issue #258. */}
+          {onOpenContactMobile && (
+            <button
+              type="button"
+              onClick={onOpenContactMobile}
+              aria-label={t('showContact')}
+              title={t('showContact')}
+              className="hover:bg-muted hover:text-foreground text-muted-foreground inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors lg:hidden"
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </button>
+          )}
           {onToggleContactPanel && (
             <button
               type="button"

@@ -156,7 +156,11 @@ export interface ConversationReferral {
 
 export interface Tag {
   id: string;
+  /** Author. A personal tag (`is_shared: false`) is visible only to
+   *  this user and to admins — see migration 069. */
   user_id: string;
+  /** true (or absent, pre-069) = whole account; false = author's own. */
+  is_shared?: boolean;
   name: string;
   color: string;
   created_at: string;

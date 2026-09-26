@@ -3,6 +3,7 @@ import {
   ACCOUNT_ROLES,
   type AccountRole,
   canAssignConversations,
+  canCreateSharedTags,
   canDeleteAccount,
   canDeleteContacts,
   canEditSettings,
@@ -181,6 +182,15 @@ describe('capability predicates', () => {
     expect(canDeleteContacts('atc')).toBe(false);
     expect(canDeleteContacts('agent')).toBe(false);
     expect(canDeleteContacts('viewer')).toBe(false);
+  });
+
+  it('canCreateSharedTags: owner/admin; atc, agent and the rest get personal tags', () => {
+    expect(canCreateSharedTags('owner')).toBe(true);
+    expect(canCreateSharedTags('admin')).toBe(true);
+    expect(canCreateSharedTags('gerencia')).toBe(false);
+    expect(canCreateSharedTags('jefe_linea')).toBe(false);
+    expect(canCreateSharedTags('atc')).toBe(false);
+    expect(canCreateSharedTags('agent')).toBe(false);
   });
 
   it('canTransferOwnership: owner only', () => {

@@ -13,6 +13,7 @@ import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -79,6 +80,8 @@ function InboxPageInner() {
    * below reconciles to the stored value right after mount instead.
    */
   const [contactPanelOpen, setContactPanelOpen] = useState(true);
+  // Phones / Android app: the contact panel as a slide-over (see below).
+  const [mobileContactOpen, setMobileContactOpen] = useState(false);
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
@@ -775,6 +778,7 @@ function InboxPageInner() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onOpenContactMobile={() => setMobileContactOpen(true)}
           />
         </div>
 
@@ -787,6 +791,18 @@ function InboxPageInner() {
             <ContactSidebar contact={activeContact} conversationId={activeConversation?.id ?? null} />
           </div>
         )}
+
+        {/* Below lg (phones, the Android app) the side panel never shows —
+            the thread header's contact button opens it here instead, so
+            advisors can tag contacts and add notes from the phone too. */}
+        <Sheet open={mobileContactOpen} onOpenChange={setMobileContactOpen}>
+          <SheetContent side="right" className="w-auto max-w-[90vw] gap-0 p-0 lg:hidden">
+            <SheetTitle className="sr-only">
+              {activeContact?.name || activeContact?.phone || ""}
+            </SheetTitle>
+            <ContactSidebar contact={activeContact} conversationId={activeConversation?.id ?? null} />
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );
