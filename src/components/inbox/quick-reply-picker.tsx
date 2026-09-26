@@ -30,6 +30,10 @@ interface QuickReplyPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPick: (qr: QuickReply) => void;
+  /** Open straight into the create form with this name — the "/"
+   *  shortcut's "Crear «…»" option. Read on mount; the composer
+   *  remounts the picker (key) each time it opens it this way. */
+  initialCreateTitle?: string | null;
 }
 
 interface Viewer {
@@ -57,13 +61,16 @@ export function QuickReplyPicker({
   open,
   onOpenChange,
   onPick,
+  initialCreateTitle = null,
 }: QuickReplyPickerProps) {
   const t = useTranslations("Inbox.composer");
   const [items, setItems] = useState<QuickReply[]>([]);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(
+    initialCreateTitle != null ? { title: initialCreateTitle, content_text: "" } : null,
+  );
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -176,7 +183,7 @@ export function QuickReplyPicker({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {draft && (
@@ -198,7 +205,7 @@ export function QuickReplyPicker({
         </DialogHeader>
 
         {draft ? (
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <Input
               value={draft.title}
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
@@ -226,7 +233,7 @@ export function QuickReplyPicker({
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -265,7 +272,7 @@ export function QuickReplyPicker({
                       <button
                         type="button"
                         onClick={() => pick(qr)}
-                        className="flex min-w-0 flex-1 items-start gap-2 p-2.5 text-left"
+                        className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden p-2.5 text-left"
                       >
                         {qr.kind === "interactive" ? (
                           <Zap className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -273,7 +280,7 @@ export function QuickReplyPicker({
                           <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                         )}
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
+                          <span className="flex min-w-0 items-center gap-1.5">
                             <span className="truncate text-sm font-medium text-foreground">
                               {qr.title}
                             </span>
@@ -287,7 +294,7 @@ export function QuickReplyPicker({
                               {badge(qr)}
                             </span>
                           </span>
-                          <span className="block truncate text-xs text-muted-foreground">
+                          <span className="line-clamp-2 break-words text-xs text-muted-foreground">
                             {qr.kind === "interactive" && qr.interactive_payload
                               ? interactivePayloadPreviewText(qr.interactive_payload)
                               : qr.content_text}

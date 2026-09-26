@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   KeyboardEvent,
   type ClipboardEvent,
   type Ref,
@@ -24,6 +25,7 @@ import {
   Sparkles,
   Plus,
   MessageSquareDashed,
+  MessageSquare,
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -55,7 +57,16 @@ import {
   InteractiveBuilder,
   blankButtonsPayload,
 } from "@/components/interactive/interactive-builder";
-import { validateInteractivePayload } from "@/lib/whatsapp/interactive";
+import {
+  interactivePayloadPreviewText,
+  validateInteractivePayload,
+} from "@/lib/whatsapp/interactive";
+import {
+  findSlashToken,
+  matchSlashQuickReplies,
+  replaceSlashToken,
+  type SlashToken,
+} from "@/lib/inbox/slash-quick-replies";
 import type { InteractiveMessagePayload, QuickReply } from "@/types";
 import { QuickReplyPicker } from "./quick-reply-picker";
 import { isEmbeddedApp } from "@/lib/mobile-app";
@@ -208,6 +219,19 @@ export function MessageComposer({
     useState<InteractiveMessagePayload>(blankButtonsPayload);
   const [savingQuickReply, setSavingQuickReply] = useState(false);
   const [quickReplyOpen, setQuickReplyOpen] = useState(false);
+  // Remounts the picker on each open so `initialCreateTitle` (the "/"
+  // shortcut's "Crear «…»") is read fresh.
+  const [pickerKey, setPickerKey] = useState(0);
+  const [pickerCreateTitle, setPickerCreateTitle] = useState<string | null>(null);
+
+  // "/" shortcut — "/nombre" at the caret lists matching quick replies
+  // right above the composer (see lib/inbox/slash-quick-replies).
+  // Replies are fetched on the first "/" and refetched after the
+  // picker closes, since it may have created or edited some.
+  const [slashToken, setSlashToken] = useState<SlashToken | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashReplies, setSlashReplies] = useState<QuickReply[] | null>(null);
+  const slashLoadingRef = useRef(false);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -300,12 +324,52 @@ export function MessageComposer({
     [handleSend]
   );
 
+  const loadSlashReplies = useCallback(async () => {
+    if (slashLoadingRef.current) return;
+    slashLoadingRef.current = true;
+    try {
+      const res = await fetch("/api/quick-replies", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      setSlashReplies(res.ok ? ((data.quick_replies as QuickReply[]) ?? []) : []);
+    } catch {
+      setSlashReplies([]);
+    } finally {
+      slashLoadingRef.current = false;
+    }
+  }, []);
+
+  // Re-derive the "/…" token from the text + caret. Keeps the same
+  // object when nothing changed so the highlighted row stays put.
+  const syncSlashToken = useCallback(
+    (value: string, caret: number) => {
+      const token = findSlashToken(value, caret);
+      setSlashToken((prev) =>
+        prev && token && prev.start === token.start && prev.end === token.end
+          ? prev
+          : token,
+      );
+      if (token && slashReplies === null) void loadSlashReplies();
+    },
+    [slashReplies, loadSlashReplies],
+  );
+
+  const slashMatches = useMemo(
+    () =>
+      slashToken && slashReplies
+        ? matchSlashQuickReplies(slashReplies, slashToken.query)
+        : [],
+    [slashToken, slashReplies],
+  );
+  const slashOpen = slashToken !== null && !readOnly && !sessionExpired;
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setText(e.target.value);
       adjustHeight();
+      setSlashIndex(0);
+      syncSlashToken(e.target.value, e.target.selectionStart ?? e.target.value.length);
     },
-    [adjustHeight]
+    [adjustHeight, syncSlashToken]
   );
 
   // Ask the AI assistant for a suggested reply and drop it into the
@@ -413,6 +477,7 @@ export function MessageComposer({
   const handlePickQuickReply = useCallback(
     (qr: QuickReply) => {
       setQuickReplyOpen(false);
+      setSlashReplies(null);
       if (qr.kind === "interactive" && qr.interactive_payload) {
         openInteractiveBuilder(qr.interactive_payload);
         return;
@@ -433,6 +498,85 @@ export function MessageComposer({
       });
     },
     [openInteractiveBuilder, adjustHeight],
+  );
+
+  const openQuickReplyPicker = useCallback((createTitle: string | null = null) => {
+    setPickerCreateTitle(createTitle);
+    setPickerKey((k) => k + 1);
+    setQuickReplyOpen(true);
+  }, []);
+
+  const handleQuickReplyOpenChange = useCallback((open: boolean) => {
+    setQuickReplyOpen(open);
+    if (!open) setSlashReplies(null);
+  }, []);
+
+  // "/nombre" + Enter (or a click): swap the token for the reply's
+  // text; an interactive reply opens the builder instead.
+  const applySlashPick = useCallback(
+    (qr: QuickReply) => {
+      const token = slashToken;
+      if (!token) return;
+      setSlashToken(null);
+      if (qr.kind === "interactive" && qr.interactive_payload) {
+        setText((prev) => replaceSlashToken(prev, token, "").text);
+        openInteractiveBuilder(qr.interactive_payload);
+        return;
+      }
+      const next = replaceSlashToken(text, token, qr.content_text ?? "");
+      setText(next.text);
+      requestAnimationFrame(() => {
+        adjustHeight();
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(next.caret, next.caret);
+        }
+      });
+    },
+    [slashToken, text, openInteractiveBuilder, adjustHeight],
+  );
+
+  // "Crear «nombre»" — the typed name wasn't found; open the picker's
+  // create form with it prefilled and drop the "/…" from the draft.
+  const openSlashCreate = useCallback(() => {
+    const token = slashToken;
+    setSlashToken(null);
+    if (token) setText((prev) => replaceSlashToken(prev, token, "").text);
+    openQuickReplyPicker(token?.query ?? "");
+  }, [slashToken, openQuickReplyPicker]);
+
+  const handleComposerKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (slashOpen) {
+        // Matches plus the trailing "Crear…" row.
+        const count = slashMatches.length + 1;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashIndex((i) => (i + 1) % count);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashIndex((i) => (i - 1 + count) % count);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSlashToken(null);
+          return;
+        }
+        if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+          e.preventDefault();
+          if (slashReplies === null) return; // still loading
+          if (slashIndex < slashMatches.length) applySlashPick(slashMatches[slashIndex]);
+          else openSlashCreate();
+          return;
+        }
+      }
+      handleKeyDown(e);
+    },
+    [slashOpen, slashMatches, slashReplies, slashIndex, applySlashPick, openSlashCreate, handleKeyDown],
   );
 
   // Upload a captured file to chat-media and stage it as a draft.
@@ -798,7 +942,7 @@ export function MessageComposer({
                   <MessageSquareDashed className="mr-2 h-4 w-4" />
                   {t("interactiveMessage")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setQuickReplyOpen(true)}>
+                <DropdownMenuItem onClick={() => openQuickReplyPicker()}>
                   <Zap className="mr-2 h-4 w-4" />
                   {t("quickReplies")}
                 </DropdownMenuItem>
@@ -875,7 +1019,7 @@ export function MessageComposer({
                 <MessageSquareDashed className="mr-2 h-4 w-4" />
                 {t("interactiveMessage")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setQuickReplyOpen(true)}>
+              <DropdownMenuItem onClick={() => openQuickReplyPicker()}>
                 <Zap className="mr-2 h-4 w-4" />
                 {t("quickReplies")}
               </DropdownMenuItem>
@@ -894,11 +1038,86 @@ export function MessageComposer({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <div className="relative flex min-w-0 flex-1">
+          {slashOpen && (
+            <div className="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-lg">
+              <div className="border-b border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+                {t("slashHeader")}
+              </div>
+              {slashReplies === null ? (
+                <div className="flex justify-center py-3">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <ul className="max-h-64 overflow-y-auto py-1">
+                  {slashMatches.map((qr, i) => (
+                    <li key={qr.id}>
+                      <button
+                        type="button"
+                        // Keep focus in the textarea so the caret/token survive the click.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setSlashIndex(i)}
+                        onClick={() => applySlashPick(qr)}
+                        className={cn(
+                          "flex w-full min-w-0 items-start gap-2 px-3 py-1.5 text-left",
+                          i === slashIndex && "bg-muted",
+                        )}
+                      >
+                        {qr.kind === "interactive" ? (
+                          <Zap className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        ) : (
+                          <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            /{qr.title}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {qr.kind === "interactive" && qr.interactive_payload
+                              ? interactivePayloadPreviewText(qr.interactive_payload)
+                              : qr.content_text}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                  {slashMatches.length === 0 && (
+                    <li className="px-3 py-1.5 text-xs text-muted-foreground">
+                      {t("slashNoMatch")}
+                    </li>
+                  )}
+                  <li>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setSlashIndex(slashMatches.length)}
+                      onClick={openSlashCreate}
+                      className={cn(
+                        "flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-sm text-primary",
+                        slashIndex === slashMatches.length && "bg-muted",
+                      )}
+                    >
+                      <Plus className="h-4 w-4 shrink-0" />
+                      <span className="truncate">
+                        {slashToken?.query
+                          ? t("slashCreateNamed", { title: slashToken.query })
+                          : t("slashCreate")}
+                      </span>
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
             onChange={handleChange}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleComposerKeyDown}
+            onSelect={(e) =>
+              syncSlashToken(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+            }
+            onBlur={() => setSlashToken(null)}
             onPaste={handlePaste}
             placeholder={
               readOnly
@@ -918,10 +1137,11 @@ export function MessageComposer({
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
+              "w-full resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
               (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
+          </div>
 
           <GatedButton
             size="sm"
@@ -989,9 +1209,11 @@ export function MessageComposer({
 
       {/* Quick-reply picker. */}
       <QuickReplyPicker
+        key={pickerKey}
         open={quickReplyOpen}
-        onOpenChange={setQuickReplyOpen}
+        onOpenChange={handleQuickReplyOpenChange}
         onPick={handlePickQuickReply}
+        initialCreateTitle={pickerCreateTitle}
       />
     </div>
   );
