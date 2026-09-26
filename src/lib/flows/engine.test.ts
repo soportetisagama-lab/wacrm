@@ -47,6 +47,7 @@ import {
   resolveTemplateButtonAction,
   findEntryFlow,
   dispatchInboundToFlows,
+  startFlowRunAtNode,
 } from "./engine";
 import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -3478,5 +3479,85 @@ describe("send_buttons — single-button confirmation already given ('Sí, estoy
 
     expect(engineSendInteractiveButtons).toHaveBeenCalledTimes(1);
     expect(engineSendInteractiveList).not.toHaveBeenCalled();
+  });
+});
+
+describe("startFlowRunAtNode — welcome restarted once a BSUID contact's phone is known", () => {
+  const FLOW: Partial<FlowRow> = {
+    id: "flow-faq",
+    account_id: "acct-1",
+    user_id: "user-1",
+    status: "active",
+    trigger_type: "returning_message",
+    trigger_config: {},
+    entry_node_id: "topics",
+  };
+  const TOPICS: Partial<FlowNodeRow> = {
+    node_key: "topics",
+    node_type: "send_list",
+    config: {
+      text: "👋 ¡Bienvenido a Sagama Maxi!",
+      reentry_text: "Sigue explorando nuestro menú interactivo 👇",
+      button_label: "Ver opciones",
+      sections: [{ rows: [{ reply_id: "a", title: "A" }] }],
+    },
+  };
+
+  function fakeDbWithFlow(priorRunCount: number) {
+    const fake = makeReentryOverrideFakeDb({
+      conversationGate: { assigned_agent_id: null },
+      flows: [FLOW],
+      flowNodes: [TOPICS],
+      priorRunCount,
+    });
+    // loadFlow reads a single row by id — the shared fake returns the list.
+    const baseFrom = fake.db.from;
+    fake.db.from = (table: string) =>
+      table === "flows"
+        ? reentryChain(() => Promise.resolve({ data: FLOW, error: null }))
+        : baseFrom(table);
+    return fake;
+  }
+
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockClear();
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({ whatsapp_message_id: "wamid.list" } as never);
+  });
+
+  it("isReentry:false sends the full welcome even though the phone-gate run already exists", async () => {
+    const { db } = fakeDbWithFlow(1);
+    adminDbHolder.current = db;
+
+    await startFlowRunAtNode({
+      accountId: "acct-1",
+      flowId: "flow-faq",
+      nodeKey: "topics",
+      contactId: "contact-1",
+      conversationId: "conv-1",
+      startedVia: { reason: "bsuid_phone_promoted" },
+      isReentry: false,
+    });
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyText: "👋 ¡Bienvenido a Sagama Maxi!" }),
+    );
+  });
+
+  it("without the override a prior run still means reentry_text", async () => {
+    const { db } = fakeDbWithFlow(1);
+    adminDbHolder.current = db;
+
+    await startFlowRunAtNode({
+      accountId: "acct-1",
+      flowId: "flow-faq",
+      nodeKey: "topics",
+      contactId: "contact-1",
+      conversationId: "conv-1",
+      startedVia: { reason: "test" },
+    });
+
+    expect(engineSendInteractiveList).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyText: "Sigue explorando nuestro menú interactivo 👇" }),
+    );
   });
 });
