@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { canCreateSharedTags } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
+import { announceTagsChanged } from "@/lib/contact-events";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Tag } from "@/types";
 
@@ -103,6 +104,7 @@ export function ContactTagPicker({
       }
       setQuery("");
       onCreated(data as Tag);
+      announceTagsChanged();
     } finally {
       setCreating(false);
     }
@@ -116,6 +118,7 @@ export function ContactTagPicker({
       return;
     }
     onDeleted(tag.id);
+    announceTagsChanged();
   };
 
   return (
