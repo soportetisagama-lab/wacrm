@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import { CONTACT_DATA_CHANGED_EVENT } from "@/lib/contact-events";
+import { CONTACT_DATA_CHANGED_EVENT, TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Contact, Deal, ContactNote, Tag, ConversationReferral } from "@/types";
 import {
   Phone,
@@ -54,15 +54,20 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   // Every tag defined for the account — powers the "add tag" picker below
   // (issue: agents previously had to leave the conversation and go to
   // Contacts to tag someone). Loaded once; doesn't depend on `contact`.
+  // Reloaded on TAGS_CHANGED_EVENT so a tag created/deleted in another
+  // open panel (e.g. the phone slide-over) shows up here too.
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
       if (!cancelled && data) setAllTags(data as Tag[]);
-    })();
+    };
+    void load();
+    window.addEventListener(TAGS_CHANGED_EVENT, load);
     return () => {
       cancelled = true;
+      window.removeEventListener(TAGS_CHANGED_EVENT, load);
     };
   }, []);
 
