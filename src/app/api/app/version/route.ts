@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 // client side of this, and public/downloads/ for the file this
 // points at (named after the brand, not "app-debug" — that's just
 // this file's local build output name before it gets copied here).
-const LATEST_VERSION_CODE = 5;
+const LATEST_VERSION_CODE = 6;
 const APK_URL = "/downloads/SagamaIndustrial.apk";
 
 export async function GET() {
