@@ -267,6 +267,9 @@ export function MessageComposer({
   // every capability — so the disabled branch is a no-op there.
   const canSend = useCan("send-messages");
   const readOnly = !canSend;
+  // Templates (the only way back in after the 24h window) are ATC and
+  // above — an agent (asesor) never sees the template buttons.
+  const canTemplates = useCan("send-templates");
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
 
@@ -794,17 +797,25 @@ export function MessageComposer({
       {sessionExpired && (
         <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
           <p className="text-xs text-amber-400">
-            {awaitingCustomer ? t("awaitingCustomerHint") : t("sessionExpiredHint")}
+            {awaitingCustomer
+              ? canTemplates
+                ? t("awaitingCustomerHint")
+                : t("awaitingCustomerHintNoTemplates")
+              : canTemplates
+                ? t("sessionExpiredHint")
+                : t("sessionExpiredHintNoTemplates")}
           </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs text-amber-400 hover:text-amber-300"
-            onClick={onOpenTemplates}
-          >
-            <LayoutTemplate className="mr-1 h-3 w-3" />
-            {t("templates")}
-          </Button>
+          {canTemplates && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-amber-400 hover:text-amber-300"
+              onClick={onOpenTemplates}
+            >
+              <LayoutTemplate className="mr-1 h-3 w-3" />
+              {t("templates")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -949,17 +960,19 @@ export function MessageComposer({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <GatedButton
-              variant="ghost"
-              size="sm"
-              canAct={!readOnly}
-              gateReason="send messages"
-              title={readOnly ? undefined : t("sendTemplate")}
-              className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-              onClick={onOpenTemplates}
-            >
-              <LayoutTemplate className="h-4 w-4" />
-            </GatedButton>
+            {canTemplates && (
+              <GatedButton
+                variant="ghost"
+                size="sm"
+                canAct={!readOnly}
+                gateReason="send messages"
+                title={readOnly ? undefined : t("sendTemplate")}
+                className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                onClick={onOpenTemplates}
+              >
+                <LayoutTemplate className="h-4 w-4" />
+              </GatedButton>
+            )}
 
             <GatedButton
               variant="ghost"
@@ -1023,10 +1036,12 @@ export function MessageComposer({
                 <Zap className="mr-2 h-4 w-4" />
                 {t("quickReplies")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onOpenTemplates}>
-                <LayoutTemplate className="mr-2 h-4 w-4" />
-                {t("sendTemplate")}
-              </DropdownMenuItem>
+              {canTemplates && (
+                <DropdownMenuItem onClick={onOpenTemplates}>
+                  <LayoutTemplate className="mr-2 h-4 w-4" />
+                  {t("sendTemplate")}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => void handleDraft()} disabled={drafting}>
                 {drafting ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1124,8 +1139,12 @@ export function MessageComposer({
                 ? t("readOnlyPlaceholder")
                 : sessionExpired
                   ? awaitingCustomer
-                    ? t("awaitingCustomerPlaceholder")
-                    : t("sessionExpiredPlaceholder")
+                    ? canTemplates
+                      ? t("awaitingCustomerPlaceholder")
+                      : t("awaitingCustomerPlaceholderNoTemplates")
+                    : canTemplates
+                      ? t("sessionExpiredPlaceholder")
+                      : t("sessionExpiredPlaceholderNoTemplates")
                   : embedded
                     ? t("typeMessagePlaceholderApp")
                     : t("typeMessagePlaceholder")
