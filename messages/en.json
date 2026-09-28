@@ -194,6 +194,7 @@
       "showContact": "Show contact",
       "refresh": "Refresh",
       "refreshConversation": "Refresh conversation",
+      "moreOptions": "More options",
       "status": "Status",
       "statusOpen": "Open",
       "statusPending": "Pending",
@@ -297,7 +298,12 @@
       "micBlocked": "Microphone permission is blocked. Click the lock next to the page address, allow the microphone and reload.",
       "micNotFound": "No microphone found. Connect one (or a headset with a mic) and try again.",
       "micBusy": "The microphone is being used by another app. Close it and try again.",
-      "micDenied": "Microphone access denied or unavailable."
+      "micDenied": "Microphone access denied or unavailable.",
+      "recordVoiceNote": "Record voice note",
+      "sendVoiceNote": "Send voice note",
+      "holdToRecord": "Hold to record, release to send",
+      "slideToCancel": "Slide to cancel",
+      "cancelRecording": "Cancel recording"
     },
     "bubble": {
       "photo": "Photo",
@@ -316,6 +322,10 @@
       "downloadFailed": "Couldn't download the attachment",
       "viewImage": "View image",
       "expandVideo": "Expand video",
+      "playAudio": "Play",
+      "pauseAudio": "Pause",
+      "playbackSpeed": "Playback speed",
+      "audioUnavailable": "Unavailable",
       "imageAlt": "Shared image"
     },
     "mediaViewer": {

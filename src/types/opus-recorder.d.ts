@@ -23,6 +23,10 @@ declare module "opus-recorder" {
     constructor(config?: RecorderConfig);
     /** Fired with the encoded audio bytes (full Ogg/Opus file when streamPages is false). */
     ondataavailable: ((data: Uint8Array) => void) | null;
+    /** The live mic graph — set once start() resolves. Used to tap an
+     *  AnalyserNode for the recording level meter. */
+    audioContext?: AudioContext;
+    sourceNode?: MediaStreamAudioSourceNode;
     start(): Promise<void>;
     stop(): Promise<void>;
     /** Browser support probe exposed as a static on the class. */
