@@ -29,6 +29,8 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Paperclip,
+  MoreVertical,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -203,6 +205,11 @@ export function MessageThread({
   const tQuote = useTranslations('Inbox.replyQuote');
   const tComposer = useTranslations('Inbox.composer');
   const canTemplates = useCan('send-templates');
+  const tTransfer = useTranslations('Inbox.lineTransfer');
+  // On phones the contact / refresh / transfer icons collapse into one
+  // "⋮" menu; the transfer dialog is opened from there via this state.
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [canTransfer, setCanTransfer] = useState(false);
 
   // Drag-and-drop attach: a file dropped anywhere on the thread goes to
   // the composer, which stages it exactly like the attach menu does.
@@ -1125,7 +1132,7 @@ export function MessageThread({
               onClick={onOpenContactMobile}
               aria-label={t('showContact')}
               title={t('showContact')}
-              className="hover:bg-muted hover:text-foreground text-muted-foreground inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors lg:hidden"
+              className="hover:bg-muted hover:text-foreground text-muted-foreground hidden h-7 w-7 items-center justify-center rounded-md transition-colors sm:inline-flex lg:hidden"
             >
               <PanelRightOpen className="h-4 w-4" />
             </button>
@@ -1165,7 +1172,7 @@ export function MessageThread({
               aria-label={t('refreshConversation')}
               title={t('refresh')}
               className={cn(
-                'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors disabled:opacity-60'
+                'text-muted-foreground hover:bg-muted hover:text-foreground hidden h-7 w-7 items-center justify-center rounded-md transition-colors disabled:opacity-60 sm:inline-flex'
               )}
             >
               <RefreshCw
@@ -1174,8 +1181,50 @@ export function MessageThread({
             </button>
           )}
 
-          {/* Cross-line transfer — hidden unless LINE_TRANSFER_CONFIG is set. */}
-          <LineTransferButton conversationId={conversation.id} />
+          {/* Cross-line transfer — hidden unless LINE_TRANSFER_CONFIG is set.
+              Its icon hides on phones (it lives in the "⋮" menu there), but
+              the component stays mounted since it owns the dialog. */}
+          <LineTransferButton
+            conversationId={conversation.id}
+            open={transferOpen}
+            onOpenChange={setTransferOpen}
+            onAvailableChange={setCanTransfer}
+            triggerClassName="hidden sm:inline-flex"
+          />
+
+          {/* Phones: contact / refresh / transfer behind one "⋮" button,
+              so the name and the status/assign dropdowns keep their room. */}
+          {(onOpenContactMobile || onRefresh || canTransfer) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={t('moreOptions')}
+                title={t('moreOptions')}
+                className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors sm:hidden"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="border-border bg-popover">
+                {onOpenContactMobile && (
+                  <DropdownMenuItem onClick={onOpenContactMobile}>
+                    <PanelRightOpen className="mr-2 h-4 w-4" />
+                    {t('showContact')}
+                  </DropdownMenuItem>
+                )}
+                {onRefresh && (
+                  <DropdownMenuItem onClick={handleRefreshClick} disabled={isRefreshing}>
+                    <RefreshCw className={cn('mr-2 h-4 w-4', isRefreshing && 'animate-spin')} />
+                    {t('refresh')}
+                  </DropdownMenuItem>
+                )}
+                {canTransfer && (
+                  <DropdownMenuItem onClick={() => setTransferOpen(true)}>
+                    <ArrowRightLeft className="mr-2 h-4 w-4" />
+                    {tTransfer('button')}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           {/* Status dropdown */}
           <DropdownMenu>

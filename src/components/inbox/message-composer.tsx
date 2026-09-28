@@ -9,6 +9,7 @@ import {
   useMemo,
   KeyboardEvent,
   type ClipboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
 import {
@@ -19,7 +20,8 @@ import {
   Video,
   FileText,
   Mic,
-  Square,
+  Trash2,
+  ChevronLeft,
   X,
   Loader2,
   Sparkles,
@@ -83,6 +85,18 @@ export const MEDIA_CAPTION_MAX = 1024;
 /** Hard cap on a single voice recording so it can't blow the upload/
  *  transcode limits — auto-stops the recorder when reached. */
 const MAX_RECORDING_SECONDS = 5 * 60;
+
+/** Press-and-hold (touch): how far left the finger slides to cancel. */
+const CANCEL_SLIDE_PX = 110;
+
+/** Press-and-hold (touch): a tap shorter than this isn't a voice note —
+ *  it's discarded with a "hold to record" hint, like WhatsApp. */
+const MIN_HOLD_MS = 600;
+
+/** How the current recording was started. `toggle` = mouse (click to
+ *  start, click the send button to finish); `hold` = touch (record while
+ *  pressed, release to send, slide left to cancel). */
+type RecordMode = "toggle" | "hold";
 
 export interface SendMediaPayload {
   kind: ComposerMediaKind;
@@ -261,6 +275,18 @@ export function MessageComposer({
   const recorderRef = useRef<import("opus-recorder").default | null>(null);
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // WhatsApp-style mic button: see RecordMode. The ref mirrors are read
+  // from pointer handlers that can fire before React re-renders.
+  const [recordMode, setRecordMode] = useState<RecordMode | null>(null);
+  const recordModeRef = useRef<RecordMode | null>(null);
+  const recordingRef = useRef(false);
+  const recordStartedAtRef = useRef(0);
+  // Finger lifted while the mic was still starting (permission prompt,
+  // encoder load) — the start is aborted as soon as it resolves.
+  const releasedEarlyRef = useRef(false);
+  const holdStartXRef = useRef(0);
+  const [slideX, setSlideX] = useState(0);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
   // Viewers (read-only role) can browse the inbox but never send.
   // For solo users this is always true — single-owner accounts pass
@@ -657,8 +683,19 @@ export function MessageComposer({
 
   // ---- Voice recording (client-side Ogg/Opus, no server transcode) ---
 
-  // The encoded Ogg/Opus file from opus-recorder → upload as an audio
-  // draft. WhatsApp renders Ogg/Opus as a playable voice note.
+  // The encoded Ogg/Opus file from opus-recorder → upload and send it
+  // straight away as a voice note, like WhatsApp (no preview step).
+  // Latest props via refs: the recorder's callback outlives the render
+  // that started it.
+  const onSendMediaRef = useRef(onSendMedia);
+  const replyToRef = useRef(replyTo);
+  const onClearReplyRef = useRef(onClearReply);
+  useEffect(() => {
+    onSendMediaRef.current = onSendMedia;
+    replyToRef.current = replyTo;
+    onClearReplyRef.current = onClearReply;
+  });
+
   const finalizeRecording = useCallback(
     async (bytes: Uint8Array) => {
       // Uint8Array is a valid BlobPart at runtime; the cast sidesteps the
@@ -674,82 +711,181 @@ export function MessageComposer({
       setBusy(true);
       try {
         const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
-        removeStaged(draftRef.current?.path);
-        setDraft({ kind: "audio", mediaUrl: publicUrl, path, filename: file.name, caption: "" });
+        onSendMediaRef.current({
+          kind: "audio",
+          mediaUrl: publicUrl,
+          path,
+          replyToId: replyToRef.current?.id,
+        });
+        onClearReplyRef.current?.();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : t("uploadFailed"));
       } finally {
         setBusy(false);
       }
     },
-    [removeStaged, t],
+    [t],
   );
 
-  const startRecording = useCallback(async () => {
-    if (inputsDisabled || busy || recording) return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
-      toast.error(t("voiceNotSupported"));
+  const endRecording = useCallback(
+    (send: boolean) => {
+      if (!send) cancelledRef.current = true;
+      clearTimer();
+      recordingRef.current = false;
+      recordModeRef.current = null;
+      setRecording(false);
+      setRecordMode(null);
+      setSlideX(0);
+      setAnalyser(null);
+      void recorderRef.current?.stop().catch(() => {});
+    },
+    [clearTimer],
+  );
+
+  const stopRecording = useCallback(() => endRecording(true), [endRecording]);
+  const cancelRecording = useCallback(() => endRecording(false), [endRecording]);
+
+  const startRecording = useCallback(
+    async (mode: RecordMode) => {
+      if (inputsDisabled || busy || recordingRef.current) return;
+      if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
+        toast.error(t("voiceNotSupported"));
+        return;
+      }
+      recordModeRef.current = mode;
+      releasedEarlyRef.current = false;
+      try {
+        // Lazy-load the encoder (≈400 KB worker) only when the user records,
+        // keeping it out of the main bundle.
+        const { default: Recorder } = await import("opus-recorder");
+        const recorder = new Recorder({
+          encoderPath: OPUS_ENCODER_PATH,
+          numberOfChannels: 1,
+          encoderApplication: 2048, // VOIP — tuned for speech
+          encoderSampleRate: 48000,
+          streamPages: false, // one callback with the complete file on stop
+        });
+        cancelledRef.current = false;
+        recorder.ondataavailable = (bytes) => {
+          if (cancelledRef.current) return;
+          void finalizeRecording(bytes);
+        };
+        recorderRef.current = recorder;
+        await recorder.start();
+        if (releasedEarlyRef.current || recordModeRef.current !== mode) {
+          // Let go (or cancelled) before the mic was even live.
+          cancelledRef.current = true;
+          recordModeRef.current = null;
+          void recorder.stop().catch(() => {});
+          return;
+        }
+        // Level meter: tap the recorder's own mic graph (read-only).
+        if (recorder.audioContext && recorder.sourceNode) {
+          const node = recorder.audioContext.createAnalyser();
+          node.fftSize = 256;
+          recorder.sourceNode.connect(node);
+          setAnalyser(node);
+        }
+        recordingRef.current = true;
+        recordStartedAtRef.current = Date.now();
+        setRecordMode(mode);
+        setRecording(true);
+        setRecordSeconds(0);
+        let elapsed = 0;
+        timerRef.current = setInterval(() => {
+          elapsed += 1;
+          setRecordSeconds(elapsed);
+          // Auto-stop at the cap so a forgotten recording can't blow the
+          // upload size limit — sends what was recorded.
+          if (elapsed >= MAX_RECORDING_SECONDS) stopRecording();
+        }, 1000);
+      } catch (err) {
+        recordModeRef.current = null;
+        void recorderRef.current?.stop().catch(() => {});
+        recorderRef.current = null;
+        // getUserMedia's DOMException name says why — tell the agent how
+        // to fix it instead of one generic "denied or unavailable".
+        const name = err instanceof DOMException ? err.name : "";
+        if (name === "NotAllowedError" || name === "SecurityError") {
+          toast.error(t("micBlocked"));
+        } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+          toast.error(t("micNotFound"));
+        } else if (name === "NotReadableError" || name === "AbortError") {
+          toast.error(t("micBusy"));
+        } else {
+          toast.error(t("micDenied"));
+        }
+      }
+    },
+    [inputsDisabled, busy, finalizeRecording, stopRecording, t],
+  );
+
+  // ---- Mic button (WhatsApp-style) -----------------------------------
+  // Mouse: click to start, click again (now a send button) to send.
+  // Touch: hold to record, release to send, slide left to cancel.
+
+  const handleMicPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      if (e.button !== 0) return;
+      if (recordingRef.current) {
+        if (recordModeRef.current === "toggle") {
+          e.preventDefault();
+          stopRecording();
+        }
+        return;
+      }
+      if (recordModeRef.current) return; // a start is already pending
+      e.preventDefault();
+      if (e.pointerType === "mouse") {
+        void startRecording("toggle");
+      } else {
+        // Keep receiving move/up even when the finger leaves the button.
+        e.currentTarget.setPointerCapture(e.pointerId);
+        holdStartXRef.current = e.clientX;
+        setSlideX(0);
+        void startRecording("hold");
+      }
+    },
+    [startRecording, stopRecording],
+  );
+
+  const handleMicPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      if (recordModeRef.current !== "hold" || !recordingRef.current) return;
+      const dx = Math.max(0, holdStartXRef.current - e.clientX);
+      if (dx >= CANCEL_SLIDE_PX) {
+        cancelRecording();
+      } else {
+        setSlideX(dx);
+      }
+    },
+    [cancelRecording],
+  );
+
+  const handleMicPointerUp = useCallback(() => {
+    if (recordModeRef.current !== "hold") return;
+    if (!recordingRef.current) {
+      // Still starting — abort it once it resolves.
+      releasedEarlyRef.current = true;
       return;
     }
-    try {
-      // Lazy-load the encoder (≈400 KB worker) only when the user records,
-      // keeping it out of the main bundle.
-      const { default: Recorder } = await import("opus-recorder");
-      const recorder = new Recorder({
-        encoderPath: OPUS_ENCODER_PATH,
-        numberOfChannels: 1,
-        encoderApplication: 2048, // VOIP — tuned for speech
-        encoderSampleRate: 48000,
-        streamPages: false, // one callback with the complete file on stop
-      });
-      cancelledRef.current = false;
-      recorder.ondataavailable = (bytes) => {
-        if (cancelledRef.current) return;
-        void finalizeRecording(bytes);
-      };
-      recorderRef.current = recorder;
-      await recorder.start();
-      setRecording(true);
-      setRecordSeconds(0);
-      timerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
-    } catch (err) {
-      void recorderRef.current?.stop().catch(() => {});
-      recorderRef.current = null;
-      // getUserMedia's DOMException name says why — tell the agent how
-      // to fix it instead of one generic "denied or unavailable".
-      const name = err instanceof DOMException ? err.name : "";
-      if (name === "NotAllowedError" || name === "SecurityError") {
-        toast.error(t("micBlocked"));
-      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
-        toast.error(t("micNotFound"));
-      } else if (name === "NotReadableError" || name === "AbortError") {
-        toast.error(t("micBusy"));
-      } else {
-        toast.error(t("micDenied"));
-      }
+    if (Date.now() - recordStartedAtRef.current < MIN_HOLD_MS) {
+      cancelRecording();
+      toast(t("holdToRecord"));
+      return;
     }
-  }, [inputsDisabled, busy, recording, finalizeRecording, t]);
+    stopRecording();
+  }, [cancelRecording, stopRecording, t]);
 
-  const stopRecording = useCallback(() => {
-    clearTimer();
-    setRecording(false);
-    void recorderRef.current?.stop().catch(() => {});
-  }, [clearTimer]);
-
-  const cancelRecording = useCallback(() => {
-    cancelledRef.current = true;
-    clearTimer();
-    setRecording(false);
-    void recorderRef.current?.stop().catch(() => {});
-  }, [clearTimer]);
-
-  // Auto-stop at the cap so a forgotten recording can't blow the
-  // upload size limit.
+  // Escape cancels a click-started recording on desktop.
   useEffect(() => {
-    if (recording && recordSeconds >= MAX_RECORDING_SECONDS) {
-      stopRecording();
-    }
-  }, [recording, recordSeconds, stopRecording]);
+    if (!recording) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") cancelRecording();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recording, cancelRecording]);
 
   // ---- Draft send / discard -----------------------------------------
 
@@ -872,31 +1008,19 @@ export function MessageComposer({
           onSend={sendDraft}
           t={t}
         />
-      ) : recording ? (
-        // Recording bar — replaces the composer while the mic is live.
-        <div className="flex items-center gap-3 rounded-xl border border-border bg-muted px-4 py-2.5">
-          <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
-          <span className="flex-1 text-sm text-foreground">
-            {t("recording", { current: formatDuration(recordSeconds), max: formatDuration(MAX_RECORDING_SECONDS) })}
-          </span>
-          <button
-            type="button"
-            onClick={cancelRecording}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-card hover:text-foreground"
-          >
-            {t("cancel")}
-          </button>
-          <Button
-            size="sm"
-            onClick={stopRecording}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90"
-            title={t("stopAndAttach")}
-          >
-            <Square className="h-4 w-4" />
-          </Button>
-        </div>
       ) : (
         <div className="flex items-end gap-2">
+          {recording ? (
+            <RecordingStrip
+              mode={recordMode ?? "toggle"}
+              seconds={recordSeconds}
+              slideX={slideX}
+              analyser={analyser}
+              onCancel={cancelRecording}
+              t={t}
+            />
+          ) : (
+          <>
           {/* Everywhere except our own Android wrapper: four separate
               action buttons, exactly as before this existed — including
               a real phone's own mobile browser. Only inside the wrapper
@@ -935,10 +1059,6 @@ export function MessageComposer({
                 <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
                   <FileText className="mr-2 h-4 w-4" />
                   {t("document")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void startRecording()}>
-                  <Mic className="mr-2 h-4 w-4" />
-                  {t("voiceNote")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1034,10 +1154,6 @@ export function MessageComposer({
               <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
                 <FileText className="mr-2 h-4 w-4" />
                 {t("document")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => void startRecording()}>
-                <Mic className="mr-2 h-4 w-4" />
-                {t("voiceNote")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openInteractiveBuilder()}>
                 <MessageSquareDashed className="mr-2 h-4 w-4" />
@@ -1172,17 +1288,56 @@ export function MessageComposer({
             )}
           />
           </div>
+          </>
+          )}
 
-          <GatedButton
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            disabled={!text.trim() || sessionExpired || sending}
-            onClick={handleSend}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </GatedButton>
+          {/* WhatsApp-style: empty composer → mic, typed text → send. */}
+          {readOnly || text.trim() ? (
+            <GatedButton
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              disabled={!text.trim() || sessionExpired || sending}
+              onClick={handleSend}
+              aria-label={t("send")}
+              className="h-10 w-10 shrink-0 rounded-full bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </GatedButton>
+          ) : (
+            <button
+              type="button"
+              disabled={inputsDisabled || (busy && !recording)}
+              onPointerDown={handleMicPointerDown}
+              onPointerMove={handleMicPointerMove}
+              onPointerUp={handleMicPointerUp}
+              onPointerCancel={handleMicPointerUp}
+              // Long-press would otherwise pop the WebView's context menu.
+              onContextMenu={(e) => e.preventDefault()}
+              aria-label={
+                recording && recordMode === "toggle" ? t("sendVoiceNote") : t("recordVoiceNote")
+              }
+              title={
+                recording && recordMode === "toggle"
+                  ? t("sendVoiceNote")
+                  : embedded
+                    ? t("holdToRecord")
+                    : t("recordVoiceNote")
+              }
+              className={cn(
+                "inline-flex h-10 w-10 shrink-0 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40",
+                recording && recordMode === "hold" && "scale-[1.35] shadow-lg"
+              )}
+            >
+              {busy && !recording ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : recording && recordMode === "toggle" ? (
+                <Send className="h-4 w-4" />
+              ) : (
+                <Mic className="h-5 w-5" />
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -1337,6 +1492,106 @@ function MediaDraftPreview({
           <Send className="h-4 w-4" />
         </GatedButton>
       </div>
+    </div>
+  );
+}
+
+/** Replaces the attach buttons + textarea while the mic is live. The mic
+ *  button itself stays mounted next to it (it owns the pointer capture of
+ *  a press-and-hold), so this only covers the left side of the row. */
+function RecordingStrip({
+  mode,
+  seconds,
+  slideX,
+  analyser,
+  onCancel,
+  t,
+}: {
+  mode: RecordMode;
+  seconds: number;
+  slideX: number;
+  analyser: AnalyserNode | null;
+  onCancel: () => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  return (
+    <div className="flex h-10 min-w-0 flex-1 items-center gap-3 rounded-full border border-border bg-muted px-3">
+      {mode === "toggle" && (
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label={t("cancelRecording")}
+          title={t("cancelRecording")}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-red-500"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
+      <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+      <span className="shrink-0 text-sm tabular-nums text-foreground">
+        {formatDuration(seconds)}
+      </span>
+      {mode === "hold" ? (
+        <span
+          className="ml-auto flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground"
+          style={{
+            transform: `translateX(${-slideX}px)`,
+            opacity: Math.max(0.25, 1 - slideX / CANCEL_SLIDE_PX),
+          }}
+        >
+          <ChevronLeft className="h-4 w-4 shrink-0" />
+          {t("slideToCancel")}
+        </span>
+      ) : (
+        <VoiceLevelBars analyser={analyser} />
+      )}
+    </div>
+  );
+}
+
+/** Scrolling mic-level bars, WhatsApp-style. Falls back to a gentle
+ *  pulse when the recorder exposed no audio graph to tap. */
+function VoiceLevelBars({ analyser }: { analyser: AnalyserNode | null }) {
+  const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0.08));
+
+  useEffect(() => {
+    if (!analyser) return;
+    const data = new Uint8Array(analyser.fftSize);
+    let raf = 0;
+    let last = 0;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (now - last < 90) return;
+      last = now;
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (const v of data) {
+        const x = (v - 128) / 128;
+        sum += x * x;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const level = Math.min(1, Math.max(0.08, rms * 4));
+      setLevels((prev) => [...prev.slice(1), level]);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [analyser]);
+
+  return (
+    <div
+      className={cn(
+        "flex h-6 min-w-0 flex-1 items-center justify-end gap-[2px] overflow-hidden",
+        !analyser && "animate-pulse"
+      )}
+      aria-hidden
+    >
+      {levels.map((level, i) => (
+        <span
+          key={i}
+          className="w-[3px] shrink-0 rounded-full bg-primary/70"
+          style={{ height: `${Math.round(level * 100)}%` }}
+        />
+      ))}
     </div>
   );
 }
