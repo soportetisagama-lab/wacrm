@@ -712,10 +712,21 @@ export function MessageComposer({
       setRecording(true);
       setRecordSeconds(0);
       timerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
-    } catch {
+    } catch (err) {
       void recorderRef.current?.stop().catch(() => {});
       recorderRef.current = null;
-      toast.error(t("micDenied"));
+      // getUserMedia's DOMException name says why — tell the agent how
+      // to fix it instead of one generic "denied or unavailable".
+      const name = err instanceof DOMException ? err.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        toast.error(t("micBlocked"));
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        toast.error(t("micNotFound"));
+      } else if (name === "NotReadableError" || name === "AbortError") {
+        toast.error(t("micBusy"));
+      } else {
+        toast.error(t("micDenied"));
+      }
     }
   }, [inputsDisabled, busy, recording, finalizeRecording, t]);
 
