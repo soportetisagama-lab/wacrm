@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { canSendTemplates } from '@/lib/auth/roles'
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
     // still delivered a real WhatsApp message to the customer and merely
     // failed to record it (surfacing as "sent to Meta but failed to save
     // to DB"). RLS can't un-send that, so the role check belongs here.
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, userId, role } = await requireRole('agent')
 
     // Per-user rate limit. Bucket key is scoped to this route so
     // `/broadcast` has an independent budget.
@@ -59,6 +60,16 @@ export async function POST(request: Request) {
       interactive_payload,
       reply_to_message_id,
     } = body
+
+    // Templates reopen a conversation outside the 24h window — ATC and
+    // above only; an agent (asesor) just answers inside the window. The UI
+    // hides the template buttons for agents, this is the real gate.
+    if (message_type === 'template' && !canSendTemplates(role)) {
+      return NextResponse.json(
+        { error: 'Your role cannot send template messages' },
+        { status: 403 }
+      )
+    }
 
     if ((!conversationIdInput && !contact_id) || !message_type) {
       return NextResponse.json(

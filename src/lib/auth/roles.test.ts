@@ -9,6 +9,7 @@ import {
   canEditSettings,
   canManageMembers,
   canSendMessages,
+  canSendTemplates,
   canTransferOwnership,
   canViewOnly,
   canViewTeamMembers,
@@ -219,5 +220,19 @@ describe('capability predicates', () => {
     expect(canAssignConversations('atc')).toBe(true);
     expect(canAssignConversations('agent')).toBe(false);
     expect(canAssignConversations('viewer')).toBe(false);
+  });
+});
+
+describe('canSendTemplates', () => {
+  it.each<[AccountRole, boolean]>([
+    ['owner', true],
+    ['admin', true],
+    ['gerencia', true],
+    ['jefe_linea', true],
+    ['atc', true],
+    ['agent', false],
+    ['viewer', false],
+  ])('%s -> %s', (role, expected) => {
+    expect(canSendTemplates(role)).toBe(expected);
   });
 });
