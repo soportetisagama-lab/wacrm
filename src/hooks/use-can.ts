@@ -8,6 +8,7 @@ import {
   canEditSettings,
   canManageMembers,
   canSendMessages,
+  canSendTemplates,
   canTransferOwnership,
   canViewOnly,
   canViewTeamMembers,
@@ -23,6 +24,7 @@ export type CanAction =
   | 'manage-members'
   | 'edit-settings'
   | 'send-messages'
+  | 'send-templates'
   | 'view-only'
   | 'delete-account'
   | 'delete-contacts'
@@ -54,6 +56,8 @@ export function useCan(action: CanAction): boolean {
       return canEditSettings(accountRole);
     case 'send-messages':
       return canSendMessages(accountRole);
+    case 'send-templates':
+      return canSendTemplates(accountRole);
     case 'view-only':
       return canViewOnly(accountRole);
     case 'delete-account':

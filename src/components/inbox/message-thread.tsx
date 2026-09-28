@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
 import { usePresence } from '@/hooks/use-presence';
 import { PresenceDot } from '@/components/presence/presence-dot';
 import { presenceLabel } from '@/lib/presence';
@@ -201,6 +202,7 @@ export function MessageThread({
   const tTimer = useTranslations('Inbox.sessionTimer');
   const tQuote = useTranslations('Inbox.replyQuote');
   const tComposer = useTranslations('Inbox.composer');
+  const canTemplates = useCan('send-templates');
 
   // Drag-and-drop attach: a file dropped anywhere on the thread goes to
   // the composer, which stages it exactly like the attach menu does.
@@ -1302,7 +1304,9 @@ export function MessageThread({
               {t('noMessagesYet')}
             </p>
             <p className="text-muted-foreground text-xs">
-              {t('sendTemplateHint')}
+              {canTemplates
+                ? t('sendTemplateHint')
+                : t('sendTemplateHintNoTemplates')}
             </p>
           </div>
         ) : (
