@@ -294,6 +294,9 @@
       "uploadFailed": "Error al subir el archivo.",
       "recordingTooLong": "La grabación es demasiado larga (más de 16 MB).",
       "voiceNotSupported": "La grabación de voz no es compatible con este navegador.",
+      "micBlocked": "El permiso del micrófono está bloqueado. Haz clic en el candado junto a la dirección de la página, permite el micrófono y recarga.",
+      "micNotFound": "No se encontró ningún micrófono. Conecta uno (o unos audífonos con micrófono) e inténtalo de nuevo.",
+      "micBusy": "El micrófono está siendo usado por otra aplicación. Ciérrala e inténtalo de nuevo.",
       "micDenied": "Acceso al micrófono denegado o no disponible."
     },
     "bubble": {
