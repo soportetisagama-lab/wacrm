@@ -150,6 +150,16 @@ export function canUseQuickActions(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin / gerencia / jefe_linea / atc: send WhatsApp template
+ * messages — the only way to (re)open a conversation outside the 24h
+ * window. A plain agent (asesor) only answers inside the window; once
+ * it expires, ATC reopens the conversation with a template.
+ */
+export function canSendTemplates(role: AccountRole): boolean {
+  return hasMinRole(role, 'atc');
+}
+
+/**
  * Owner / admin / gerencia: delete contacts. Jefe de Línea, ATC and
  * Asesor can still create and edit them (canSendMessages) but not
  * delete. Keep in sync with the `contacts_delete` RLS policy
