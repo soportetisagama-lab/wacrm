@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   FileText,
   ImageOff,
   Loader2,
   Maximize2,
+  Pause,
+  Play,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -223,6 +225,39 @@ export function MediaVideoBubble({
   );
 }
 
+/** Only one voice note plays at a time, like WhatsApp. */
+let activeVoiceNote: HTMLAudioElement | null = null;
+
+const WAVE_BARS = 36;
+const PLAYBACK_RATES = [1, 1.5, 2] as const;
+
+/** Stable pseudo-waveform per message — we don't decode the audio just
+ *  to draw it; seeding from the id keeps each note's shape consistent. */
+function waveformFor(seed: string): number[] {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const bars: number[] = [];
+  for (let i = 0; i < WAVE_BARS; i++) {
+    h ^= h << 13;
+    h ^= h >>> 17;
+    h ^= h << 5;
+    const r = ((h >>> 0) % 1000) / 1000;
+    // Softer at the edges, like speech trailing in and out.
+    const envelope = Math.sin((Math.PI * (i + 0.5)) / WAVE_BARS) * 0.5 + 0.5;
+    bars.push(Math.max(0.15, Math.min(1, r * envelope + 0.12)));
+  }
+  return bars;
+}
+
+function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const s = Math.floor(seconds);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
 export function MediaAudioBubble({
   message,
   t,
@@ -231,10 +266,203 @@ export function MediaAudioBubble({
   t: Translator;
 }) {
   const { downloading, download } = useMediaDownload(message, t);
+  const outbound = message.sender_type !== "customer";
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [current, setCurrent] = useState(0);
+  const [rateIndex, setRateIndex] = useState(0);
+  const [failed, setFailed] = useState(false);
+  // Chrome reports `Infinity` for Ogg/Opus files without a duration
+  // header (our own recordings) until it has seeked to the end once.
+  const probingRef = useRef(false);
+  const bars = useMemo(() => waveformFor(message.id), [message.id]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    return () => {
+      if (audio && activeVoiceNote === audio) activeVoiceNote = null;
+    };
+  }, []);
+
+  const onLoadedMetadata = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (Number.isFinite(audio.duration)) {
+      setDuration(audio.duration);
+    } else {
+      probingRef.current = true;
+      audio.currentTime = 1e101;
+    }
+  };
+
+  const onTimeUpdate = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (probingRef.current) {
+      if (Number.isFinite(audio.duration)) {
+        probingRef.current = false;
+        setDuration(audio.duration);
+        audio.currentTime = 0;
+      }
+      return;
+    }
+    setCurrent(audio.currentTime);
+  };
+
+  const togglePlay = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+    if (activeVoiceNote && activeVoiceNote !== audio) activeVoiceNote.pause();
+    activeVoiceNote = audio;
+    try {
+      await audio.play();
+    } catch {
+      setFailed(true);
+    }
+  };
+
+  const cycleRate = () => {
+    const next = (rateIndex + 1) % PLAYBACK_RATES.length;
+    setRateIndex(next);
+    if (audioRef.current) audioRef.current.playbackRate = PLAYBACK_RATES[next];
+  };
+
+  const seekTo = (clientX: number) => {
+    const audio = audioRef.current;
+    const track = trackRef.current;
+    if (!audio || !track || !duration) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * duration;
+    setCurrent(audio.currentTime);
+  };
+
+  const progress = duration ? Math.min(1, current / duration) : 0;
+  const shown = playing || current > 0 ? current : duration;
 
   return (
-    <div className="flex items-center gap-2">
-      <audio src={message.media_url} controls className="max-w-60" />
+    <div className="flex w-64 max-w-full items-center gap-2.5 py-0.5">
+      {/* Plain URL, not a blob: stream instead of waiting for the file. */}
+      <audio
+        ref={audioRef}
+        src={message.media_url ?? undefined}
+        preload="metadata"
+        onLoadedMetadata={onLoadedMetadata}
+        onDurationChange={() => {
+          const d = audioRef.current?.duration;
+          if (d && Number.isFinite(d) && !probingRef.current) setDuration(d);
+        }}
+        onTimeUpdate={onTimeUpdate}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrent(0);
+          if (audioRef.current) audioRef.current.currentTime = 0;
+        }}
+        onError={() => setFailed(true)}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={() => void togglePlay()}
+        disabled={failed}
+        aria-label={playing ? t("pauseAudio") : t("playAudio")}
+        className={cn(
+          "flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-sm transition-transform active:scale-95 disabled:opacity-50",
+          outbound
+            ? "bg-primary-foreground text-primary"
+            : "bg-primary text-primary-foreground"
+        )}
+      >
+        {playing ? (
+          <Pause className="h-4 w-4 fill-current" />
+        ) : (
+          <Play className="ml-0.5 h-4 w-4 fill-current" />
+        )}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        <div
+          ref={trackRef}
+          role="slider"
+          tabIndex={0}
+          aria-label={t("audio")}
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.round(current)}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            seekTo(e.clientX);
+          }}
+          onPointerMove={(e) => {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) seekTo(e.clientX);
+          }}
+          onKeyDown={(e) => {
+            const audio = audioRef.current;
+            if (!audio || !duration) return;
+            if (e.key === "ArrowRight") audio.currentTime = Math.min(duration, audio.currentTime + 5);
+            if (e.key === "ArrowLeft") audio.currentTime = Math.max(0, audio.currentTime - 5);
+          }}
+          className="relative flex h-7 cursor-pointer touch-none items-center gap-[2px]"
+        >
+          {bars.map((height, i) => {
+            const played = (i + 0.5) / bars.length <= progress;
+            return (
+              <span
+                key={i}
+                className={cn(
+                  "w-[3px] flex-1 rounded-full transition-colors",
+                  outbound
+                    ? played
+                      ? "bg-primary-foreground"
+                      : "bg-primary-foreground/40"
+                    : played
+                      ? "bg-primary"
+                      : "bg-muted-foreground/35"
+                )}
+                style={{ height: `${Math.round(height * 100)}%` }}
+              />
+            );
+          })}
+          {/* Scrub knob */}
+          <span
+            className={cn(
+              "pointer-events-none absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full shadow",
+              outbound ? "bg-primary-foreground" : "bg-primary"
+            )}
+            style={{ left: `${progress * 100}%` }}
+          />
+        </div>
+        <div
+          className={cn(
+            "mt-0.5 flex items-center justify-between text-[11px] tabular-nums",
+            outbound ? "text-primary-foreground/80" : "text-muted-foreground"
+          )}
+        >
+          <span>{failed ? t("audioUnavailable") : formatClock(shown)}</span>
+          <button
+            type="button"
+            onClick={cycleRate}
+            aria-label={t("playbackSpeed")}
+            className={cn(
+              "rounded-full px-1.5 py-px text-[10px] font-semibold",
+              outbound
+                ? "bg-primary-foreground/20 hover:bg-primary-foreground/30"
+                : "bg-muted hover:bg-muted-foreground/20"
+            )}
+          >
+            {PLAYBACK_RATES[rateIndex]}x
+          </button>
+        </div>
+      </div>
+
       <MediaActionButton
         icon={Download}
         label={t("download")}
