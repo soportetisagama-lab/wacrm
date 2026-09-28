@@ -41,6 +41,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useCan } from '@/hooks/use-can';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -56,6 +57,8 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const t = useTranslations('Contacts.detailView');
+  // Templates are ATC and above — hidden for an agent (asesor).
+  const canTemplates = useCan('send-templates');
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
 
@@ -451,21 +454,23 @@ export function ContactDetailView({
                   </div>
                 </div>
               </div>
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  onClick={() => setTemplatePickerOpen(true)}
-                  disabled={sendingTemplate}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {sendingTemplate ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <LayoutTemplate className="size-4" />
-                  )}
-                  {t('sendTemplateBtn')}
-                </Button>
-              </div>
+              {canTemplates && (
+                <div className="mt-3">
+                  <Button
+                    size="sm"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    disabled={sendingTemplate}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  >
+                    {sendingTemplate ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <LayoutTemplate className="size-4" />
+                    )}
+                    {t('sendTemplateBtn')}
+                  </Button>
+                </div>
+              )}
             </SheetHeader>
 
             {/* Tabs */}

@@ -305,8 +305,21 @@ describe('POST /api/whatsapp/send — role enforcement', () => {
     expect(messageInserts).toHaveLength(0)
   })
 
-  it('allows an agent through', async () => {
+  it('refuses an agent (asesor) sending a template with 403', async () => {
+    // Templates reopen a conversation outside the 24h window — ATC and
+    // above only (`canSendTemplates`).
     callerRole = 'agent'
+
+    const res = await postContactTemplate()
+
+    expect(res.status).toBe(403)
+    expect(sendTemplateMessage).not.toHaveBeenCalled()
+    expect(messageInserts).toHaveLength(0)
+    expect(conversationInserts).toHaveLength(0)
+  })
+
+  it('allows ATC to send a template', async () => {
+    callerRole = 'atc'
 
     const res = await postContactTemplate()
 
