@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
@@ -61,6 +61,12 @@ import { AiThreadBanner } from './ai-thread-banner';
 import { LineTransferButton } from './line-transfer-button';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
+import {
+  CALLS_START,
+  CallLogChip,
+  anchorCalls,
+  useConversationCalls,
+} from '@/components/calls/call-log';
 
 interface ReplyDraft {
   id: string;
@@ -881,6 +887,13 @@ export function MessageThread({
     return map;
   }, [messages]);
 
+  // WhatsApp calls (migration 071), shown in time order between messages.
+  const threadCalls = useConversationCalls(conversationId, resyncToken);
+  const callsByAnchor = useMemo(
+    () => anchorCalls(messages, threadCalls),
+    [messages, threadCalls],
+  );
+
   // Images + videos in the thread, in order — the set the media viewer
   // pages through with ← / →.
   const mediaGallery = useMemo(() => collectMediaGallery(messages), [messages]);
@@ -1390,6 +1403,9 @@ export function MessageThread({
           </div>
         ) : (
           <div className="space-y-4">
+            {callsByAnchor.get(CALLS_START)?.map((c) => (
+              <CallLogChip key={c.id} call={c} />
+            ))}
             {messageGroups.map((group) => (
               <div key={group.date}>
                 {/* Date separator */}
@@ -1429,8 +1445,8 @@ export function MessageThread({
                       void postReaction(msg.id, next);
                     };
                     return (
+                      <Fragment key={msg.id}>
                       <MessageActions
-                        key={msg.id}
                         message={msg}
                         onReply={() => handleStartReply(msg)}
                         onReact={(emoji) => {
@@ -1446,6 +1462,10 @@ export function MessageThread({
                           onOpenMedia={handleMediaChange}
                         />
                       </MessageActions>
+                      {callsByAnchor.get(msg.id)?.map((c) => (
+                        <CallLogChip key={c.id} call={c} />
+                      ))}
+                      </Fragment>
                     );
                   })}
                 </div>
