@@ -281,13 +281,20 @@ export function IncomingCallManager() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error);
       setPhaseBoth("active");
     } catch (err) {
+      // getUserMedia's DOMException name says why the mic failed — tell
+      // the agent how to fix it instead of the browser's raw English text.
+      // The call keeps ringing for teammates (we never claimed it).
       const name = err instanceof DOMException ? err.name : "";
       toast.error(
         name === "NotAllowedError" || name === "SecurityError"
           ? t("micBlocked")
-          : err instanceof Error && err.message
-            ? err.message
-            : t("failed"),
+          : name === "NotFoundError" || name === "OverconstrainedError"
+            ? t("micNotFound")
+            : name === "NotReadableError" || name === "AbortError"
+              ? t("micBusy")
+              : err instanceof Error && err.message
+                ? err.message
+                : t("failed"),
       );
       cleanup();
     }
