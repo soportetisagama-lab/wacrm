@@ -221,7 +221,9 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
+          // max-w-full: never wider than the row's width cap, even when
+          // the content (e.g. a long file name) would like to be.
+          "relative max-w-full rounded-2xl px-3 py-2",
           isAgent
             ? "rounded-br-md bg-primary text-primary-foreground"
             : "rounded-bl-md bg-muted text-foreground",
