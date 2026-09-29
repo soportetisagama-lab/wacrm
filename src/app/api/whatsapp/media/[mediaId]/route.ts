@@ -37,24 +37,40 @@ function fileResponse(body: ArrayBuffer | Uint8Array, contentType: string): Resp
 }
 
 /** Our stored copy of this message's file, or null if there's none or
- *  it can't be read (then the caller falls back to Meta). */
+ *  it can't be read (then the caller falls back to Meta). A dropped
+ *  connection mid-download (UND_ERR_SOCKET "other side closed") is
+ *  usually transient, so one failed read is retried before giving up —
+ *  Meta may no longer serve an old media id at all. */
 async function readStoredCopy(row: MediaMessageRow): Promise<Response | null> {
-  const stored = row.media_storage_url
-  if (!stored) return null
   try {
-    const path = parseInboundMediaRef(stored)
-    if (path) {
-      const { data, error } = await supabaseAdmin().storage.from(INBOUND_MEDIA_BUCKET).download(path)
-      if (error || !data) return null
-      return fileResponse(await data.arrayBuffer(), data.type)
-    }
-    if (/^https?:\/\//.test(stored)) {
-      const res = await fetch(stored)
-      if (!res.ok) return null
-      return fileResponse(await res.arrayBuffer(), res.headers.get('content-type') ?? '')
-    }
+    return await readStoredCopyOnce(row)
+  } catch (err) {
+    console.warn('[media] stored copy read failed, retrying once:', err)
+  }
+  try {
+    return await readStoredCopyOnce(row)
   } catch (err) {
     console.error('[media] stored copy unreadable, falling back to Meta:', err)
+  }
+  return null
+}
+
+async function readStoredCopyOnce(row: MediaMessageRow): Promise<Response | null> {
+  const stored = row.media_storage_url
+  if (!stored) return null
+  const path = parseInboundMediaRef(stored)
+  if (path) {
+    const { data, error } = await supabaseAdmin().storage.from(INBOUND_MEDIA_BUCKET).download(path)
+    // storage-js reports network failures as `error` instead of throwing —
+    // throw so readStoredCopy gets its retry.
+    if (error) throw error
+    if (!data) return null
+    return fileResponse(await data.arrayBuffer(), data.type)
+  }
+  if (/^https?:\/\//.test(stored)) {
+    const res = await fetch(stored)
+    if (!res.ok) return null
+    return fileResponse(await res.arrayBuffer(), res.headers.get('content-type') ?? '')
   }
   return null
 }
