@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils";
  * wrapper alike).
  *
  * Who rings: the conversation's Asesor (whatsapp_calls.ring_user_id).
- * Unassigned calls ring the broad-visibility roles (ATC, admins…) right
- * away; an assigned call nobody picks up escalates to them after
- * ESCALATE_AFTER_MS. RLS already hides other Asesores' calls.
+ * Unassigned calls ring ATC right away; an assigned call its Asesor
+ * doesn't pick up escalates to ATC after ESCALATE_AFTER_MS. Admins /
+ * gerencia never ring. RLS already hides other Asesores' calls.
  *
  * Answering: the customer's SDP offer came in on the webhook; we answer
  * it with a local RTCPeerConnection and hand the SDP answer to
@@ -41,13 +41,14 @@ interface CallRow {
 
 /** Meta gives ~30–60 s to answer; older "ringing" rows are stale. */
 const RING_WINDOW_MS = 60_000;
-/** Assigned Asesor didn't pick up → supervisors start ringing too. */
+/** Assigned Asesor didn't pick up → ATC starts ringing too. */
 const ESCALATE_AFTER_MS = 15_000;
 
 type Phase = "ringing" | "connecting" | "active";
 
 export function IncomingCallManager() {
-  const { user, isAgent } = useAuth();
+  const { user, accountRole } = useAuth();
+  const isAtc = accountRole === "atc";
   const userId = user?.id;
   const canAct = useCan("send-messages");
   const router = useRouter();
@@ -114,11 +115,11 @@ export function IncomingCallManager() {
   const consider = useCallback(
     (row: CallRow) => {
       if (!userId || !canAct || row.status !== "ringing" || !row.offer_sdp) return;
-      if (row.ring_user_id === userId || (!row.ring_user_id && !isAgent)) {
+      if (row.ring_user_id === userId || (!row.ring_user_id && isAtc)) {
         void ring(row);
         return;
       }
-      if (isAgent || escalationTimers.current.has(row.id)) return;
+      if (!isAtc || escalationTimers.current.has(row.id)) return;
       const age = Date.now() - new Date(row.created_at).getTime();
       const timer = setTimeout(async () => {
         escalationTimers.current.delete(row.id);
@@ -131,7 +132,7 @@ export function IncomingCallManager() {
       }, Math.max(0, ESCALATE_AFTER_MS - age));
       escalationTimers.current.set(row.id, timer);
     },
-    [userId, canAct, isAgent, ring],
+    [userId, canAct, isAtc, ring],
   );
 
   useEffect(() => {
