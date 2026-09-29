@@ -26,6 +26,7 @@ import {
 import { engineSendText } from '@/lib/flows/meta-send'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
+import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
 import { persistInboundMedia } from '@/lib/whatsapp/inbound-media'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
@@ -1789,11 +1790,34 @@ async function processMessage(
         })
       : null
 
+  // Any other chat the bot owns: a plain "gracias" / "ok" / sticker gets
+  // a short farewell (at most twice a day), never the welcome menu again
+  // (lib/conversations/acknowledgement.ts).
+  const acknowledgementRoute =
+    !outboundTransferRoute &&
+    !templateButtonConsumed &&
+    !welcomeStartedFromPhone &&
+    !interactiveReplyId &&
+    message.type !== 'button' &&
+    message.type !== 'reaction'
+      ? await routeAcknowledgement({
+          db: supabaseAdmin(),
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contactRecord.id,
+          text: contentText ?? message.text?.body ?? '',
+          isSticker: message.type === 'sticker',
+        })
+      : null
+
   const flowResult = templateButtonConsumed || welcomeStartedFromPhone
     ? { consumed: true as const }
     : outboundTransferRoute
       ? { consumed: outboundTransferRoute === 'acknowledged' }
-      : await dispatchInboundToFlows({
+      : acknowledgementRoute
+        ? { consumed: true as const }
+        : await dispatchInboundToFlows({
         accountId,
         userId: configOwnerUserId,
         contactId: contactRecord.id,
