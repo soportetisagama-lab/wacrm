@@ -169,6 +169,19 @@ interface WhatsAppMessage {
   }>
 }
 
+interface WhatsAppCallEvent {
+  id: string
+  from?: string
+  from_user_id?: string
+  to?: string
+  event: 'connect' | 'terminate' | string
+  direction?: 'USER_INITIATED' | 'BUSINESS_INITIATED' | string
+  timestamp?: string
+  status?: string
+  duration?: number
+  session?: { sdp_type: string; sdp: string }
+}
+
 interface WhatsAppWebhookEntry {
   id: string
   changes: Array<{
@@ -192,6 +205,8 @@ interface WhatsAppWebhookEntry {
         user_id?: string
       }>
       messages?: WhatsAppMessage[]
+      /** field === 'calls' — Calling API events (see handleCallsChange). */
+      calls?: WhatsAppCallEvent[]
       statuses?: Array<{
         id: string
         status: string
@@ -358,6 +373,11 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const value = change.value
 
+      if (change.field === 'calls') {
+        await handleCallsChange(value)
+        continue
+      }
+
       // Handle status updates
       if (value.statuses) {
         for (const status of value.statuses) {
@@ -431,6 +451,108 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           config.bsuid_request_contact_info_enabled ?? false
         )
       }
+    }
+  }
+}
+
+// ---- Calling API ---------------------------------------------------
+// `connect` = a customer is calling: record the call (with Meta's SDP
+// offer) so the inbox rings — the conversation's Asesor, or the
+// broad-visibility roles when it's unassigned (whatsapp_calls.ring_user_id,
+// migration 071). The agent's browser answers over WebRTC through
+// /api/whatsapp/calls/[id]. `terminate` = it's over, answered or not.
+
+async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number]['value']) {
+  const calls = value.calls ?? []
+  if (calls.length === 0) return
+  const phoneNumberId = value.metadata.phone_number_id
+  const admin = supabaseAdmin()
+
+  for (const call of calls) {
+    if (call.event === 'terminate') {
+      const { data: row } = await admin
+        .from('whatsapp_calls')
+        .select('id, status')
+        .eq('wa_call_id', call.id)
+        .maybeSingle()
+      if (!row) continue
+      // Our own hang-up / reject already wrote the final status; Meta's
+      // terminate then only adds the authoritative duration.
+      const answered =
+        row.status === 'accepted' || row.status === 'ended' || (call.duration ?? 0) > 0
+      const status = answered
+        ? 'ended'
+        : row.status === 'ringing'
+          ? 'missed'
+          : row.status
+      await admin
+        .from('whatsapp_calls')
+        .update({
+          status,
+          ended_at: new Date().toISOString(),
+          ...(call.duration != null ? { duration_seconds: call.duration } : {}),
+        })
+        .eq('id', row.id)
+      continue
+    }
+
+    if (call.event !== 'connect' || call.direction === 'BUSINESS_INITIATED') continue
+
+    const { data: configRows } = await admin
+      .from('whatsapp_config')
+      .select('account_id, user_id')
+      .eq('phone_number_id', phoneNumberId)
+    if (!configRows || configRows.length !== 1) {
+      console.error('[webhook] call: no unique config for phone_number_id:', phoneNumberId)
+      continue
+    }
+    const config = configRows[0]
+
+    const profile = value.contacts?.[0]
+    const outcome = await findOrCreateContact(
+      config.account_id,
+      config.user_id,
+      normalizePhone(call.from ?? profile?.wa_id ?? ''),
+      call.from_user_id ?? profile?.user_id ?? null,
+      profile?.profile?.name ?? '',
+    )
+    if (!outcome) continue
+    const convResult = await findOrCreateConversation(
+      config.account_id,
+      config.user_id,
+      outcome.contact.id,
+    )
+    const conversation = convResult?.conversation
+    const ringUserId: string | null = conversation?.assigned_agent_id ?? null
+
+    const { error } = await admin.from('whatsapp_calls').upsert(
+      {
+        account_id: config.account_id,
+        conversation_id: conversation?.id ?? null,
+        contact_id: outcome.contact.id,
+        wa_call_id: call.id,
+        phone_number_id: phoneNumberId,
+        direction: 'inbound',
+        status: 'ringing',
+        offer_sdp: call.session?.sdp ?? null,
+        ring_user_id: ringUserId,
+      },
+      { onConflict: 'wa_call_id', ignoreDuplicates: true },
+    )
+    if (error) {
+      console.error('[webhook] call: failed to record incoming call:', error)
+      continue
+    }
+
+    // Phone in a pocket / app in the background: the assignee still
+    // hears about it. Tapping opens the chat, where the call rings if
+    // it's still live.
+    if (ringUserId && conversation) {
+      sendPushToUser(ringUserId, {
+        title: 'Llamada entrante',
+        body: outcome.contact.name || outcome.contact.phone || 'WhatsApp',
+        data: { conversationId: conversation.id },
+      }).catch((err) => console.error('[webhook] call push failed:', err))
     }
   }
 }
