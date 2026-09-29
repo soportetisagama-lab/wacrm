@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './admin-client'
+import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
 import type { AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
@@ -363,6 +364,8 @@ export async function runAutoReplyNow(
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
+    // …or a human answered by hand in the last 24 h without claiming it.
+    if (await hasRecentHumanReply(db, conversationId)) return
     // `ai_autoreply_disabled` alone is no longer sticky forever once
     // nobody has actually claimed the thread (assigned_agent_id null,
     // checked above) — a model-decided handoff or a Flow handoff mid-
