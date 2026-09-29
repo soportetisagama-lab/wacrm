@@ -178,6 +178,25 @@ export async function POST(request: Request) {
         replyToMessageId: reply_to_message_id,
       })
 
+      // Answering an unassigned conversation by hand claims it (Asesor
+      // or ATC alike) — that's what keeps the Flows menu / AI from
+      // jumping back in on the customer's next message. Conditional on
+      // it still being unassigned so a concurrent assignment wins. Runs
+      // as the user, so the assignment notification trigger skips
+      // notifying them about their own action. Best-effort.
+      try {
+        const { error: assignErr } = await supabase
+          .from('conversations')
+          .update({ assigned_agent_id: userId })
+          .eq('id', conversationId)
+          .is('assigned_agent_id', null)
+        if (assignErr) {
+          console.error('[send] auto-assign on reply failed:', assignErr.message)
+        }
+      } catch (err) {
+        console.error('[send] auto-assign on reply threw:', err)
+      }
+
       return NextResponse.json({
         success: true,
         message_id: result.messageId,
