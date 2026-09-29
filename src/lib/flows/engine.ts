@@ -42,6 +42,7 @@ import {
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
 import { isRecentLineTransfer } from "@/lib/line-transfer-inbound";
+import { hasRecentHumanReply } from "@/lib/conversations/human-activity";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -2462,6 +2463,16 @@ export async function dispatchInboundToFlows(
       input.conversationId,
     );
     if (!isConversationBotEligible(conversationGate)) {
+      return { consumed: false, outcome: "no_match" };
+    }
+    // A teammate answered by hand recently (but nobody is assigned —
+    // e.g. before auto-assign-on-reply existed): don't re-show the menu
+    // on the customer's next "gracias". Only an explicit "menú" (the
+    // reentry keywords) brings the bot back while the human is active.
+    if (
+      (await hasRecentHumanReply(db, input.conversationId)) &&
+      !(await findReentryFlow(db, input.accountId, input.message))
+    ) {
       return { consumed: false, outcome: "no_match" };
     }
     if (isHumanRequest(input.message)) {
