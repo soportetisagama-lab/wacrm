@@ -2100,5 +2100,26 @@
     "rowDescriptionPlaceholder": "설명 (선택)",
     "addRow": "행 추가",
     "addSection": "섹션 추가"
+  },
+  "Calls": {
+    "incoming": "수신 전화",
+    "whatsappCall": "WhatsApp 통화",
+    "unknownCaller": "고객",
+    "accept": "받기",
+    "decline": "거절",
+    "hangUp": "끊기",
+    "mute": "음소거",
+    "unmute": "음소거 해제",
+    "openChat": "채팅 열기",
+    "connecting": "연결 중…",
+    "answeredElsewhere": "다른 팀원이 이미 전화를 받았습니다",
+    "ended": "통화 종료",
+    "failed": "통화를 연결할 수 없습니다",
+    "connectionLost": "통화 연결이 끊겼습니다",
+    "micBlocked": "전화를 받으려면 마이크 접근을 허용하세요",
+    "logLive": "통화 중",
+    "logMissed": "부재중 전화",
+    "logRejected": "거절한 전화",
+    "logAnswered": "음성 통화 · {duration}"
   }
 }

@@ -2100,5 +2100,26 @@
     "rowDescriptionPlaceholder": "Descripción (opcional)",
     "addRow": "Agregar fila",
     "addSection": "Agregar sección"
+  },
+  "Calls": {
+    "incoming": "Llamada entrante",
+    "whatsappCall": "Llamada de WhatsApp",
+    "unknownCaller": "Cliente",
+    "accept": "Contestar",
+    "decline": "Rechazar",
+    "hangUp": "Colgar",
+    "mute": "Silenciar",
+    "unmute": "Activar micrófono",
+    "openChat": "Abrir chat",
+    "connecting": "Conectando…",
+    "answeredElsewhere": "Otro compañero ya contestó la llamada",
+    "ended": "Llamada finalizada",
+    "failed": "No se pudo conectar la llamada",
+    "connectionLost": "Se perdió la conexión de la llamada",
+    "micBlocked": "Permite el acceso al micrófono para contestar llamadas",
+    "logLive": "Llamada en curso",
+    "logMissed": "Llamada perdida",
+    "logRejected": "Llamada rechazada",
+    "logAnswered": "Llamada de voz · {duration}"
   }
 }

@@ -2100,5 +2100,26 @@
     "rowDescriptionPlaceholder": "Description (optional)",
     "addRow": "Add row",
     "addSection": "Add section"
+  },
+  "Calls": {
+    "incoming": "Incoming call",
+    "whatsappCall": "WhatsApp call",
+    "unknownCaller": "Customer",
+    "accept": "Answer",
+    "decline": "Decline",
+    "hangUp": "Hang up",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "openChat": "Open chat",
+    "connecting": "Connecting…",
+    "answeredElsewhere": "A teammate already answered this call",
+    "ended": "Call ended",
+    "failed": "Couldn't connect the call",
+    "connectionLost": "The call connection was lost",
+    "micBlocked": "Allow microphone access to answer calls",
+    "logLive": "Call in progress",
+    "logMissed": "Missed call",
+    "logRejected": "Declined call",
+    "logAnswered": "Voice call · {duration}"
   }
 }
