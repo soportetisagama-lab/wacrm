@@ -467,14 +467,15 @@
     },
     "form": {
       "addTitle": "Agregar contacto",
-      "addDesc": "Creá un nuevo contacto. El nombre es obligatorio.",
+      "addDesc": "Crea un nuevo contacto. El nombre es obligatorio.",
       "editTitle": "Editar contacto",
-      "editDesc": "Actualizá los datos y etiquetas del contacto.",
+      "editDesc": "Actualiza los datos y etiquetas del contacto.",
       "nameLabel": "Nombre",
       "namePlaceholder": "Juan Pérez",
       "phoneLabel": "Número de teléfono",
       "phonePlaceholder": "+1234567890",
-      "phoneHint": "Incluí el código de país, p. ej. +54 para Argentina",
+      "phoneHint": "Incluye el código de país, p. ej. +51 para Perú",
+      "phoneLockedAgent": "Solo ATC o administración pueden cambiar el número de un contacto.",
       "emailLabel": "Correo electrónico",
       "emailPlaceholder": "juan@ejemplo.com",
       "companyLabel": "Empresa",
@@ -495,10 +496,11 @@
       "dupExact": "Ya existe un contacto con este número de teléfono.",
       "dupSimilar": "Ya existe un contacto con un número muy similar.",
       "loadingTags": "Cargando etiquetas...",
-      "noTagsAvailable": "No hay etiquetas disponibles. Creá etiquetas en Configuración.",
+      "noTagsAvailable": "No hay etiquetas disponibles. Crea etiquetas en Configuración.",
       "phoneRequired": "El número de teléfono es obligatorio"
     },
     "detailView": {
+      "phoneLockedAgent": "Solo ATC o administración pueden cambiar el número de un contacto.",
       "tabs": {
         "details": "Detalles",
         "activity": "Actividad",
@@ -543,7 +545,7 @@
       },
       "tagsTab": {
         "clickTagDesc": "Hacé clic en una etiqueta para agregarla o quitarla de este contacto.",
-        "noTagsAvailable": "No hay etiquetas disponibles. Creá etiquetas en Configuración."
+        "noTagsAvailable": "No hay etiquetas disponibles. Crea etiquetas en Configuración."
       },
       "sendTemplateBtn": "Enviar plantilla",
       "saveChangesBtn": "Guardar cambios",
