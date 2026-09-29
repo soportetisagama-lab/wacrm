@@ -4,6 +4,7 @@ import type { Deal, PipelineStage } from "@/types";
 import { Calendar, Check, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
 import { useTranslations } from "next-intl";
+import { CallContactButton } from "@/components/calls/call-contact-button";
 
 interface DealCardProps {
   deal: Deal;
@@ -81,7 +82,16 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
           {initials(deal.contact?.name, deal.contact?.phone || deal.contact?.whatsapp_user_id)}
         </span>
-        <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{contactLabel}</span>
+        {deal.contact_id && !isOverlay && (
+          // Stop the pointer from starting a card drag / opening the editor.
+          <span
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CallContactButton contactId={deal.contact_id} name={contactLabel} className="h-6 w-6" />
+          </span>
+        )}
       </div>
 
       <div className="mt-2 flex items-center justify-between">

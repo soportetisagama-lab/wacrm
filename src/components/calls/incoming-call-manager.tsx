@@ -26,6 +26,12 @@ import { cn } from "@/lib/utils";
  * it with a local RTCPeerConnection and hand the SDP answer to
  * /api/whatsapp/calls/[id], which forwards it to Meta — the audio then
  * flows straight between this browser and WhatsApp.
+ *
+ * Calling out (migration 073): any "Llamar" button dispatches
+ * CALL_CONTACT_EVENT; we check the customer's call permission, offer to
+ * request it if missing, warn about the cost, then send our SDP offer via
+ * /api/whatsapp/calls/outbound. Meta's answer comes back on the row
+ * (answer_sdp) over realtime.
  */
 
 interface CallRow {
@@ -37,14 +43,27 @@ interface CallRow {
   ring_user_id: string | null;
   answered_by: string | null;
   created_at: string;
+  direction?: string;
+  answer_sdp?: string | null;
 }
+
+/** Window event any "Llamar" button fires (see call-contact-button.tsx). */
+export const CALL_CONTACT_EVENT = "wacrm:call-contact";
+export interface CallContactDetail {
+  contactId: string;
+  name: string;
+}
+
+/** Pre-call dialog: permission / cost confirmation for an outbound call. */
+type Pending =
+  | { step: "checking" | "confirm" | "permission" | "waiting"; contactId: string; name: string };
 
 /** Meta gives ~30–60 s to answer; older "ringing" rows are stale. */
 const RING_WINDOW_MS = 60_000;
 /** Assigned Asesor didn't pick up → ATC starts ringing too. */
 const ESCALATE_AFTER_MS = 15_000;
 
-type Phase = "ringing" | "connecting" | "active";
+type Phase = "ringing" | "connecting" | "calling" | "active";
 
 export function IncomingCallManager() {
   const { user, accountRole } = useAuth();
@@ -59,6 +78,10 @@ export function IncomingCallManager() {
   const [contactName, setContactName] = useState<string>("");
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [pending, setPending] = useState<Pending | null>(null);
+  // Latest-closure refs for handlers called from effects/realtime.
+  const onOutboundUpdateRef = useRef<(row: CallRow) => void>(() => {});
+  const hangUpRef = useRef<() => Promise<void>>(async () => {});
 
   const callRef = useRef<CallRow | null>(null);
   const phaseRef = useRef<Phase>("ringing");
@@ -115,6 +138,7 @@ export function IncomingCallManager() {
   const consider = useCallback(
     (row: CallRow) => {
       if (!userId || !canAct || row.status !== "ringing" || !row.offer_sdp) return;
+      if (row.direction === "outbound") return;
       if (row.ring_user_id === userId || (!row.ring_user_id && isAtc)) {
         void ring(row);
         return;
@@ -165,6 +189,10 @@ export function IncomingCallManager() {
           const row = payload.new as CallRow;
           const current = callRef.current;
           if (!current || current.id !== row.id) return;
+          if (current.direction === "outbound") {
+            onOutboundUpdateRef.current(row);
+            return;
+          }
           if (phaseRef.current === "ringing" && row.status !== "ringing") {
             // Picked up by a teammate, rejected, or the customer hung up.
             cleanup();
@@ -235,41 +263,191 @@ export function IncomingCallManager() {
       body: JSON.stringify(body),
     });
 
+  /** Mic + peer connection shared by incoming and outgoing calls. */
+  const openPeer = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamRef.current = stream;
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+    pcRef.current = pc;
+    stream.getTracks().forEach((tr) => pc.addTrack(tr, stream));
+    pc.ontrack = (e) => {
+      if (audioRef.current) {
+        audioRef.current.srcObject = e.streams[0];
+        void audioRef.current.play().catch(() => {});
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" && callRef.current) {
+        toast.error(t("connectionLost"));
+        void hangUp();
+      }
+    };
+    return pc;
+  };
+
+  /** No trickle ICE with Meta: send our SDP once candidates are in. */
+  const gatherIce = (pc: RTCPeerConnection) =>
+    new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === "complete") return resolve();
+      pc.addEventListener("icegatheringstatechange", () => {
+        if (pc.iceGatheringState === "complete") resolve();
+      });
+      setTimeout(resolve, 2500);
+    });
+
+  const micError = (err: unknown) => {
+    // getUserMedia's DOMException name says why the mic failed — tell
+    // the agent how to fix it instead of the browser's raw English text.
+    const name = err instanceof DOMException ? err.name : "";
+    toast.error(
+      name === "NotAllowedError" || name === "SecurityError"
+        ? t("micBlocked")
+        : name === "NotFoundError" || name === "OverconstrainedError"
+          ? t("micNotFound")
+          : name === "NotReadableError" || name === "AbortError"
+            ? t("micBusy")
+            : err instanceof Error && err.message
+              ? err.message
+              : t("failed"),
+    );
+  };
+
+  const postOutbound = async (body: Record<string, unknown>) => {
+    const res = await fetch("/api/whatsapp/calls/outbound", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("failed"));
+    return data;
+  };
+
+  // A "Llamar" button was pressed somewhere: check permission first.
+  const startOutgoing = async (contactId: string, name: string) => {
+    if (callRef.current) {
+      toast(t("busy"));
+      return;
+    }
+    setPending({ step: "checking", contactId, name });
+    try {
+      const p = await postOutbound({ action: "check", contactId });
+      setPending({
+        step: p.canCall ? "confirm" : p.canRequest ? "permission" : "waiting",
+        contactId,
+        name,
+      });
+    } catch (err) {
+      setPending(null);
+      toast.error(err instanceof Error ? err.message : t("failed"));
+    }
+  };
+  const startOutgoingRef = useRef(startOutgoing);
+  useEffect(() => {
+    startOutgoingRef.current = startOutgoing;
+  });
+  useEffect(() => {
+    const onCall = (e: Event) => {
+      const d = (e as CustomEvent<CallContactDetail>).detail;
+      if (d?.contactId) void startOutgoingRef.current(d.contactId, d.name);
+    };
+    window.addEventListener(CALL_CONTACT_EVENT, onCall);
+    return () => window.removeEventListener(CALL_CONTACT_EVENT, onCall);
+  }, []);
+
+  const requestPermission = async () => {
+    if (!pending) return;
+    const { contactId } = pending;
+    setPending(null);
+    try {
+      await postOutbound({ action: "request_permission", contactId });
+      toast.success(t("permissionSent"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("failed"));
+    }
+  };
+
+  const placeCall = async () => {
+    if (!pending) return;
+    const { contactId, name } = pending;
+    setPending(null);
+    setContactName(name);
+    try {
+      const pc = await openPeer();
+      await pc.setLocalDescription(await pc.createOffer());
+      await gatherIce(pc);
+      const { id } = await postOutbound({
+        action: "start",
+        contactId,
+        sdp: pc.localDescription?.sdp,
+      });
+      const row: CallRow = {
+        id,
+        conversation_id: null,
+        contact_id: contactId,
+        status: "ringing",
+        offer_sdp: null,
+        ring_user_id: null,
+        answered_by: userId ?? null,
+        created_at: new Date().toISOString(),
+        direction: "outbound",
+      };
+      callRef.current = row;
+      setCall(row);
+      setPhaseBoth("calling");
+      // The answer may already be on the row if the customer was quick.
+      const { data } = await createClient()
+        .from("whatsapp_calls")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (data) onOutboundUpdateRef.current(data as CallRow);
+    } catch (err) {
+      micError(err);
+      cleanup();
+    }
+  };
+
+  // Realtime progress of the call we placed.
+  const onOutboundUpdate = (row: CallRow) => {
+    const pc = pcRef.current;
+    if (row.conversation_id && callRef.current) {
+      callRef.current = { ...callRef.current, conversation_id: row.conversation_id };
+      setCall(callRef.current);
+    }
+    if (row.answer_sdp && pc && !pc.remoteDescription) {
+      void pc.setRemoteDescription({ type: "answer", sdp: row.answer_sdp }).catch(() => {});
+    }
+    if (row.status === "accepted" && phaseRef.current !== "active") {
+      setSeconds(0);
+      setPhaseBoth("active");
+    } else if (["ended", "missed", "rejected", "failed"].includes(row.status)) {
+      toast(row.status === "rejected" ? t("customerDeclined") : row.status === "missed" ? t("noAnswer") : t("ended"));
+      cleanup();
+    }
+  };
+  useEffect(() => {
+    onOutboundUpdateRef.current = onOutboundUpdate;
+  });
+
+  // Nobody answers an outbound call within Meta's window → hang up.
+  useEffect(() => {
+    if (phase !== "calling") return;
+    const id = setTimeout(() => void hangUpRef.current(), RING_WINDOW_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
+
   const accept = async () => {
     const current = callRef.current;
     if (!current?.offer_sdp) return;
     setPhaseBoth("connecting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
-      pcRef.current = pc;
-      stream.getTracks().forEach((tr) => pc.addTrack(tr, stream));
-      pc.ontrack = (e) => {
-        if (audioRef.current) {
-          audioRef.current.srcObject = e.streams[0];
-          void audioRef.current.play().catch(() => {});
-        }
-      };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed" && callRef.current) {
-          toast.error(t("connectionLost"));
-          void hangUp();
-        }
-      };
+      const pc = await openPeer();
       await pc.setRemoteDescription({ type: "offer", sdp: current.offer_sdp });
       await pc.setLocalDescription(await pc.createAnswer());
-      // No trickle ICE with Meta: send the answer once candidates are in.
-      await new Promise<void>((resolve) => {
-        if (pc.iceGatheringState === "complete") return resolve();
-        const done = () => {
-          if (pc.iceGatheringState === "complete") resolve();
-        };
-        pc.addEventListener("icegatheringstatechange", done);
-        setTimeout(resolve, 2500);
-      });
+      await gatherIce(pc);
       const res = await post(current.id, {
         action: "accept",
         sdp: pc.localDescription?.sdp,
@@ -282,21 +460,8 @@ export function IncomingCallManager() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error);
       setPhaseBoth("active");
     } catch (err) {
-      // getUserMedia's DOMException name says why the mic failed — tell
-      // the agent how to fix it instead of the browser's raw English text.
       // The call keeps ringing for teammates (we never claimed it).
-      const name = err instanceof DOMException ? err.name : "";
-      toast.error(
-        name === "NotAllowedError" || name === "SecurityError"
-          ? t("micBlocked")
-          : name === "NotFoundError" || name === "OverconstrainedError"
-            ? t("micNotFound")
-            : name === "NotReadableError" || name === "AbortError"
-              ? t("micBusy")
-              : err instanceof Error && err.message
-                ? err.message
-                : t("failed"),
-      );
+      micError(err);
       cleanup();
     }
   };
@@ -315,6 +480,9 @@ export function IncomingCallManager() {
     await post(current.id, { action: "terminate" }).catch(() => {});
     toast(t("ended"));
   };
+  useEffect(() => {
+    hangUpRef.current = hangUp;
+  });
 
   const toggleMute = () => {
     const next = !muted;
@@ -332,6 +500,65 @@ export function IncomingCallManager() {
   return (
     <>
       <audio ref={audioRef} autoPlay className="hidden" />
+      {pending && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-label={t("callTitle")}
+            className="w-full max-w-sm rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
+                <Phone className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{pending.name || t("unknownCaller")}</p>
+                <p className="text-xs text-muted-foreground">{t("callTitle")}</p>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-muted-foreground">
+              {pending.step === "checking"
+                ? t("checkingPermission")
+                : pending.step === "confirm"
+                  ? t("costWarning")
+                  : pending.step === "permission"
+                    ? t("noPermission")
+                    : t("permissionPending")}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPending(null)}
+                className="rounded-md px-3 py-2 text-sm hover:bg-muted"
+              >
+                {pending.step === "waiting" ? t("close") : t("cancel")}
+              </button>
+              {pending.step === "checking" && (
+                <Loader2 className="h-5 w-5 animate-spin self-center text-muted-foreground" />
+              )}
+              {pending.step === "confirm" && (
+                <button
+                  type="button"
+                  onClick={placeCall}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+                >
+                  <Phone className="h-4 w-4" />
+                  {t("callNow")}
+                </button>
+              )}
+              {pending.step === "permission" && (
+                <button
+                  type="button"
+                  onClick={requestPermission}
+                  className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  {t("requestPermission")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {call && (
         <div
           role="dialog"
@@ -342,7 +569,7 @@ export function IncomingCallManager() {
             <div
               className={cn(
                 "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-green-600 text-white",
-                phase === "ringing" && "animate-pulse",
+                (phase === "ringing" || phase === "calling") && "animate-pulse",
               )}
             >
               <Phone className="h-5 w-5" />
@@ -354,7 +581,9 @@ export function IncomingCallManager() {
                   ? t("incoming")
                   : phase === "connecting"
                     ? t("connecting")
-                    : `${mm}:${ss}`}
+                    : phase === "calling"
+                      ? t("calling")
+                      : `${mm}:${ss}`}
               </p>
             </div>
             {call.conversation_id && (
@@ -382,6 +611,10 @@ export function IncomingCallManager() {
               </>
             ) : phase === "connecting" ? (
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            ) : phase === "calling" ? (
+              <RoundButton label={t("hangUp")} onClick={hangUp} className="bg-red-600 hover:bg-red-700">
+                <PhoneOff className="h-5 w-5" />
+              </RoundButton>
             ) : (
               <>
                 <RoundButton
