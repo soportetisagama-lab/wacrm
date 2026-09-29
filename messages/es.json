@@ -166,6 +166,8 @@
       "pendingReply": "Falta responder",
       "agent": "Asesor",
       "allAgents": "Todos los asesores",
+      "searchAgents": "Buscar asesor...",
+      "noAgentsFound": "No se encontraron asesores",
       "unassigned": "Sin asignar",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Todavía no hay mensajes",
