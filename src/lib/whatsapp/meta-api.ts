@@ -1128,3 +1128,42 @@ export async function downloadMedia(
   const buffer = Buffer.from(await response.arrayBuffer())
   return { buffer, contentType }
 }
+
+// ============================================================
+// Calling API (customer → business voice calls)
+// ============================================================
+
+export type CallAction = 'pre_accept' | 'accept' | 'reject' | 'terminate'
+
+export interface CallActionArgs {
+  phoneNumberId: string
+  accessToken: string
+  callId: string
+  action: CallAction
+  /** Our WebRTC SDP answer — required for pre_accept / accept. */
+  sdpAnswer?: string
+}
+
+/**
+ * POST /{phone-number-id}/calls — answer, reject or hang up a WhatsApp
+ * call. Meta connects the audio straight to whichever WebRTC peer
+ * produced `sdpAnswer` (the agent's browser).
+ */
+export async function callAction(args: CallActionArgs): Promise<void> {
+  const { phoneNumberId, accessToken, callId, action, sdpAnswer } = args
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    call_id: callId,
+    action,
+  }
+  if (sdpAnswer) body.session = { sdp_type: 'answer', sdp: sdpAnswer }
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/calls`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) await throwMetaError(response, `Call ${action} failed`)
+}
