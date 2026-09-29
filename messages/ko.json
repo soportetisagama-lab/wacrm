@@ -166,6 +166,8 @@
       "pendingReply": "답장 필요",
       "agent": "상담원",
       "allAgents": "전체 상담원",
+      "searchAgents": "상담원 검색...",
+      "noAgentsFound": "상담원을 찾을 수 없습니다",
       "unassigned": "미배정",
       "noConversations": "대화를 찾을 수 없습니다",
       "noMessagesYet": "아직 메시지가 없습니다",

@@ -341,6 +341,21 @@ export function ConversationList({
     return m;
   }, [agents]);
 
+  // The "Asesor" filter only lists Asesores (account_role = 'agent') —
+  // admins, gerencia, ATC etc. aren't the ones handling chats, so they'd
+  // just be noise. agentsById above keeps everyone so row badges still
+  // show whoever a conversation is assigned to.
+  const [agentSearch, setAgentSearch] = useState("");
+  const asesores = useMemo(
+    () => agents.filter((a) => a.account_role === "agent"),
+    [agents]
+  );
+  const filteredAsesores = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    if (!q) return asesores;
+    return asesores.filter((a) => (a.full_name ?? "").toLowerCase().includes(q));
+  }, [asesores, agentSearch]);
+
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
   // are worth offering as an inbox filter.
@@ -641,8 +656,8 @@ export function ConversationList({
               conversation list to only their own, so this filter can
               never do anything for them — it would just expose every
               other teammate's name for no functional reason. */}
-          {!embedded && !isAgent && agents.length > 0 && (
-            <DropdownMenu>
+          {!embedded && !isAgent && asesores.length > 0 && (
+            <DropdownMenu onOpenChange={(open) => { if (!open) setAgentSearch(""); }}>
               <DropdownMenuTrigger
                 className={cn(
                   "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
@@ -660,8 +675,21 @@ export function ConversationList({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
-                className="max-h-64 w-56 border-border bg-popover"
+                className="max-h-72 w-56 border-border bg-popover"
               >
+                <div className="relative p-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={agentSearch}
+                    onChange={(e) => setAgentSearch(e.target.value)}
+                    // Keep the menu's typeahead / arrow-key handling from
+                    // stealing keystrokes meant for the search box.
+                    onKeyDown={(e) => e.stopPropagation()}
+                    placeholder={t("searchAgents")}
+                    className="h-8 pl-7 text-sm"
+                    autoFocus
+                  />
+                </div>
                 <DropdownMenuItem
                   onClick={() => setSelectedAgentId(null)}
                   className={cn(
@@ -684,7 +712,7 @@ export function ConversationList({
                 >
                   {t("unassigned")}
                 </DropdownMenuItem>
-                {agents.map((a) => (
+                {filteredAsesores.map((a) => (
                   <DropdownMenuItem
                     key={a.user_id}
                     onClick={() => setSelectedAgentId(a.user_id)}
@@ -698,6 +726,11 @@ export function ConversationList({
                     <span className="truncate">{a.full_name}</span>
                   </DropdownMenuItem>
                 ))}
+                {filteredAsesores.length === 0 && (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    {t("noAgentsFound")}
+                  </p>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

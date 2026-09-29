@@ -166,6 +166,8 @@
       "pendingReply": "Needs reply",
       "agent": "Agent",
       "allAgents": "All agents",
+      "searchAgents": "Search agents...",
+      "noAgentsFound": "No agents found",
       "unassigned": "Unassigned",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
