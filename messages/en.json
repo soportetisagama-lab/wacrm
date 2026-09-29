@@ -475,6 +475,7 @@
       "phoneLabel": "Phone Number",
       "phonePlaceholder": "+1234567890",
       "phoneHint": "Include country code, e.g. +1 for US",
+      "phoneLockedAgent": "Only ATC or admins can change a contact's phone number.",
       "emailLabel": "Email",
       "emailPlaceholder": "jane@example.com",
       "companyLabel": "Company",
@@ -499,6 +500,7 @@
       "phoneRequired": "Phone number is required"
     },
     "detailView": {
+      "phoneLockedAgent": "Only ATC or admins can change a contact's phone number.",
       "tabs": {
         "details": "Details",
         "activity": "Activity",
