@@ -1,5 +1,6 @@
 "use client";
 
+import { CallContactButton } from '@/components/calls/call-contact-button';
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
@@ -273,6 +274,12 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
             {contact.company && (
               <p className="text-xs text-muted-foreground">{contact.company}</p>
             )}
+            <CallContactButton
+              contactId={contact.id}
+              name={displayName}
+              withLabel
+              className="mt-2 border border-border"
+            />
           </div>
 
           {/* Phone */}

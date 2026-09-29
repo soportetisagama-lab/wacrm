@@ -31,6 +31,7 @@ import {
   Paperclip,
   MoreVertical,
   ArrowRightLeft,
+  Phone,
 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -59,6 +60,7 @@ import { deleteAccountMedia } from '@/lib/storage/upload-media';
 import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
 import { LineTransferButton } from './line-transfer-button';
+import { CallContactButton, callContact } from '@/components/calls/call-contact-button';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
 import {
@@ -212,6 +214,7 @@ export function MessageThread({
   const tComposer = useTranslations('Inbox.composer');
   const canTemplates = useCan('send-templates');
   const tTransfer = useTranslations('Inbox.lineTransfer');
+  const tCalls = useTranslations('Calls');
   // On phones the contact / refresh / transfer icons collapse into one
   // "⋮" menu; the transfer dialog is opened from there via this state.
   const [transferOpen, setTransferOpen] = useState(false);
@@ -1177,6 +1180,16 @@ export function MessageThread({
               when realtime missed an event or the agent just wants to be
               sure nothing's stale. Only rendered when the parent wires
               up `onRefresh`. */}
+          {/* Outbound WhatsApp call (permission + cost check happen in the
+              call manager). Phones get it from the "⋮" menu instead. */}
+          {contact && (
+            <CallContactButton
+              contactId={contact.id}
+              name={contactDisplayName}
+              className="hidden sm:inline-flex"
+            />
+          )}
+
           {onRefresh && (
             <button
               type="button"
@@ -1207,7 +1220,7 @@ export function MessageThread({
 
           {/* Phones: contact / refresh / transfer behind one "⋮" button,
               so the name and the status/assign dropdowns keep their room. */}
-          {(onOpenContactMobile || onRefresh || canTransfer) && (
+          {(onOpenContactMobile || onRefresh || canTransfer || contact) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t('moreOptions')}
@@ -1221,6 +1234,12 @@ export function MessageThread({
                   <DropdownMenuItem onClick={onOpenContactMobile}>
                     <PanelRightOpen className="mr-2 h-4 w-4" />
                     {t('showContact')}
+                  </DropdownMenuItem>
+                )}
+                {contact && (
+                  <DropdownMenuItem onClick={() => callContact(contact.id, contactDisplayName)}>
+                    <Phone className="mr-2 h-4 w-4" />
+                    {tCalls('callNow')}
                   </DropdownMenuItem>
                 )}
                 {onRefresh && (
