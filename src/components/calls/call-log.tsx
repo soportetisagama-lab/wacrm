@@ -82,7 +82,9 @@ export function CallLogChip({ call }: { call: ThreadCall }) {
   const missed = call.status === "missed" || call.status === "rejected" || call.status === "failed";
   const live = call.status === "ringing" || call.status === "accepted";
   const label = live
-    ? t("logLive")
+    ? call.status === "ringing"
+      ? t("logRinging")
+      : t("logLive")
     : missed
       ? call.status === "rejected"
         ? t("logRejected")
