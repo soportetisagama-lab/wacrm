@@ -48,8 +48,11 @@ export function ContactForm({
 }: ContactFormProps) {
   const t = useTranslations('Contacts.form');
   const supabase = createClient();
-  const { accountId } = useAuth();
+  const { accountId, isAgent } = useAuth();
   const isEdit = !!contact;
+  // Asesores can't change an existing contact's number (enforced in the
+  // DB too — migration 072); they still set it when creating one.
+  const phoneLocked = isEdit && isAgent;
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -154,7 +157,7 @@ export function ContactForm({
           .from('contacts')
           .update({
             name: name.trim() || null,
-            phone: phone.trim(),
+            ...(phoneLocked ? {} : { phone: phone.trim() }),
             email: email.trim() || null,
             company: company.trim() || null,
             updated_at: new Date().toISOString(),
@@ -261,7 +264,9 @@ export function ContactForm({
               }}
               onBlur={checkDuplicate}
               placeholder={t('phonePlaceholder')}
-              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+              disabled={phoneLocked}
+              title={phoneLocked ? t('phoneLockedAgent') : undefined}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"
             />
             {dupMatch ? (
               <div
@@ -291,7 +296,7 @@ export function ContactForm({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {t('phoneHint')}
+                {phoneLocked ? t('phoneLockedAgent') : t('phoneHint')}
               </p>
             )}
           </div>

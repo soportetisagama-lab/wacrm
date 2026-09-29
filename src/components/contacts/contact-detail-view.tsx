@@ -60,7 +60,7 @@ export function ContactDetailView({
   // Templates are ATC and above — hidden for an agent (asesor).
   const canTemplates = useCan('send-templates');
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, defaultCurrency, isAgent } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -220,7 +220,8 @@ export function ContactDetailView({
       .from('contacts')
       .update({
         name: editName.trim() || null,
-        phone: editPhone.trim() || null,
+        // Asesores can't change the number (migration 072 enforces it).
+        ...(isAgent ? {} : { phone: editPhone.trim() || null }),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),
@@ -526,7 +527,9 @@ export function ContactDetailView({
                     <Input
                       value={editPhone}
                       onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      disabled={isAgent}
+                      title={isAgent ? t('phoneLockedAgent') : undefined}
+                      className="bg-muted border-border text-foreground h-8 text-sm disabled:cursor-not-allowed disabled:opacity-70"
                     />
                   </div>
                   <div className="space-y-1.5">
