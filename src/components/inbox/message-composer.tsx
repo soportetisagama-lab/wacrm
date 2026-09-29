@@ -22,6 +22,10 @@ import {
   Mic,
   Trash2,
   ChevronLeft,
+  ChevronUp,
+  Lock,
+  LockOpen,
+  Pause,
   X,
   Loader2,
   Sparkles,
@@ -89,13 +93,18 @@ const MAX_RECORDING_SECONDS = 5 * 60;
 /** Press-and-hold (touch): how far left the finger slides to cancel. */
 const CANCEL_SLIDE_PX = 110;
 
+/** Press-and-hold (touch): how far up the finger slides to lock the
+ *  recording hands-free, like WhatsApp's padlock. */
+const LOCK_SLIDE_PX = 90;
+
 /** Press-and-hold (touch): a tap shorter than this isn't a voice note —
  *  it's discarded with a "hold to record" hint, like WhatsApp. */
 const MIN_HOLD_MS = 600;
 
-/** How the current recording was started. `toggle` = mouse (click to
- *  start, click the send button to finish); `hold` = touch (record while
- *  pressed, release to send, slide left to cancel). */
+/** How the current recording is driven. `toggle` = hands-free: started
+ *  with a mouse click, or a touch hold slid up onto the padlock — trash /
+ *  pause / send buttons finish it. `hold` = touch (record while pressed,
+ *  release to send, slide left to cancel, slide up to lock). */
 type RecordMode = "toggle" | "hold";
 
 export interface SendMediaPayload {
@@ -285,7 +294,13 @@ export function MessageComposer({
   // encoder load) — the start is aborted as soon as it resolves.
   const releasedEarlyRef = useRef(false);
   const holdStartXRef = useRef(0);
+  const holdStartYRef = useRef(0);
   const [slideX, setSlideX] = useState(0);
+  const [slideY, setSlideY] = useState(0);
+  // Paused hands-free recording (WhatsApp's "Pausar"): the encoder is
+  // detached and the timer frozen until resumed.
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
   // Viewers (read-only role) can browse the inbox but never send.
@@ -736,6 +751,9 @@ export function MessageComposer({
       setRecording(false);
       setRecordMode(null);
       setSlideX(0);
+      setSlideY(0);
+      pausedRef.current = false;
+      setPaused(false);
       setAnalyser(null);
       void recorderRef.current?.stop().catch(() => {});
     },
@@ -744,6 +762,20 @@ export function MessageComposer({
 
   const stopRecording = useCallback(() => endRecording(true), [endRecording]);
   const cancelRecording = useCallback(() => endRecording(false), [endRecording]);
+
+  const togglePause = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || !recordingRef.current) return;
+    if (pausedRef.current) {
+      recorder.resume();
+      pausedRef.current = false;
+      setPaused(false);
+    } else {
+      void Promise.resolve(recorder.pause()).catch(() => {});
+      pausedRef.current = true;
+      setPaused(true);
+    }
+  }, []);
 
   const startRecording = useCallback(
     async (mode: RecordMode) => {
@@ -787,12 +819,15 @@ export function MessageComposer({
           setAnalyser(node);
         }
         recordingRef.current = true;
+        pausedRef.current = false;
+        setPaused(false);
         recordStartedAtRef.current = Date.now();
         setRecordMode(mode);
         setRecording(true);
         setRecordSeconds(0);
         let elapsed = 0;
         timerRef.current = setInterval(() => {
+          if (pausedRef.current) return;
           elapsed += 1;
           setRecordSeconds(elapsed);
           // Auto-stop at the cap so a forgotten recording can't blow the
@@ -822,7 +857,9 @@ export function MessageComposer({
 
   // ---- Mic button (WhatsApp-style) -----------------------------------
   // Mouse: click to start, click again (now a send button) to send.
-  // Touch: hold to record, release to send, slide left to cancel.
+  // Touch: hold to record, release to send, slide left to cancel, slide
+  // up onto the padlock to keep recording hands-free (then it behaves
+  // like the mouse flow: trash / pause / send).
 
   const handleMicPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -842,7 +879,9 @@ export function MessageComposer({
         // Keep receiving move/up even when the finger leaves the button.
         e.currentTarget.setPointerCapture(e.pointerId);
         holdStartXRef.current = e.clientX;
+        holdStartYRef.current = e.clientY;
         setSlideX(0);
+        setSlideY(0);
         void startRecording("hold");
       }
     },
@@ -853,10 +892,21 @@ export function MessageComposer({
     (e: ReactPointerEvent<HTMLButtonElement>) => {
       if (recordModeRef.current !== "hold" || !recordingRef.current) return;
       const dx = Math.max(0, holdStartXRef.current - e.clientX);
-      if (dx >= CANCEL_SLIDE_PX) {
+      const dy = Math.max(0, holdStartYRef.current - e.clientY);
+      if (dy >= LOCK_SLIDE_PX) {
+        // Locked: from here on lifting the finger doesn't send
+        // (handleMicPointerUp ignores non-hold modes).
+        recordModeRef.current = "toggle";
+        setRecordMode("toggle");
+        setSlideX(0);
+        setSlideY(0);
+        navigator.vibrate?.(30);
+      } else if (dx >= CANCEL_SLIDE_PX) {
         cancelRecording();
       } else {
-        setSlideX(dx);
+        // Follow whichever direction the finger is mostly going.
+        setSlideX(dx > dy ? dx : 0);
+        setSlideY(dy >= dx ? dy : 0);
       }
     },
     [cancelRecording],
@@ -1016,7 +1066,9 @@ export function MessageComposer({
               seconds={recordSeconds}
               slideX={slideX}
               analyser={analyser}
+              paused={paused}
               onCancel={cancelRecording}
+              onTogglePause={togglePause}
               t={t}
             />
           ) : (
@@ -1305,6 +1357,23 @@ export function MessageComposer({
               <Send className="h-4 w-4" />
             </GatedButton>
           ) : (
+            <div className="relative shrink-0">
+            {/* WhatsApp padlock: shown while holding, rises with the
+                finger and locks the recording once reached. */}
+            {recording && recordMode === "hold" && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute bottom-full left-1/2 mb-5 flex flex-col items-center gap-1 rounded-full border border-border bg-popover px-2 pb-2 pt-3 text-muted-foreground shadow-lg"
+                style={{ transform: `translate(-50%, ${-Math.min(slideY, LOCK_SLIDE_PX)}px)` }}
+              >
+                {slideY >= LOCK_SLIDE_PX * 0.6 ? (
+                  <Lock className="h-5 w-5 text-primary" />
+                ) : (
+                  <LockOpen className="h-5 w-5" />
+                )}
+                <ChevronUp className="h-4 w-4 animate-bounce" />
+              </div>
+            )}
             <button
               type="button"
               disabled={inputsDisabled || (busy && !recording)}
@@ -1337,6 +1406,7 @@ export function MessageComposer({
                 <Mic className="h-5 w-5" />
               )}
             </button>
+            </div>
           )}
         </div>
       )}
@@ -1504,14 +1574,18 @@ function RecordingStrip({
   seconds,
   slideX,
   analyser,
+  paused,
   onCancel,
+  onTogglePause,
   t,
 }: {
   mode: RecordMode;
   seconds: number;
   slideX: number;
   analyser: AnalyserNode | null;
+  paused: boolean;
   onCancel: () => void;
+  onTogglePause: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
   return (
@@ -1527,7 +1601,12 @@ function RecordingStrip({
           <Trash2 className="h-4 w-4" />
         </button>
       )}
-      <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+      <span
+        className={cn(
+          "flex h-2.5 w-2.5 shrink-0 rounded-full",
+          paused ? "bg-muted-foreground" : "animate-pulse bg-red-500"
+        )}
+      />
       <span className="shrink-0 text-sm tabular-nums text-foreground">
         {formatDuration(seconds)}
       </span>
@@ -1543,7 +1622,21 @@ function RecordingStrip({
           {t("slideToCancel")}
         </span>
       ) : (
-        <VoiceLevelBars analyser={analyser} />
+        <>
+          <VoiceLevelBars analyser={analyser} paused={paused} />
+          <button
+            type="button"
+            onClick={onTogglePause}
+            aria-label={paused ? t("resumeRecording") : t("pauseRecording")}
+            title={paused ? t("resumeRecording") : t("pauseRecording")}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-card",
+              paused ? "text-red-500" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {paused ? <Mic className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+          </button>
+        </>
       )}
     </div>
   );
@@ -1551,11 +1644,19 @@ function RecordingStrip({
 
 /** Scrolling mic-level bars, WhatsApp-style. Falls back to a gentle
  *  pulse when the recorder exposed no audio graph to tap. */
-function VoiceLevelBars({ analyser }: { analyser: AnalyserNode | null }) {
+function VoiceLevelBars({
+  analyser,
+  paused = false,
+}: {
+  analyser: AnalyserNode | null;
+  paused?: boolean;
+}) {
   const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0.08));
 
   useEffect(() => {
-    if (!analyser) return;
+    // Paused: freeze the bars where they are (the mic is still open, but
+    // nothing is being recorded).
+    if (!analyser || paused) return;
     const data = new Uint8Array(analyser.fftSize);
     let raf = 0;
     let last = 0;
@@ -1575,13 +1676,13 @@ function VoiceLevelBars({ analyser }: { analyser: AnalyserNode | null }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [analyser]);
+  }, [analyser, paused]);
 
   return (
     <div
       className={cn(
         "flex h-6 min-w-0 flex-1 items-center justify-end gap-[2px] overflow-hidden",
-        !analyser && "animate-pulse"
+        !analyser && !paused && "animate-pulse"
       )}
       aria-hidden
     >

@@ -29,6 +29,9 @@ declare module "opus-recorder" {
     sourceNode?: MediaStreamAudioSourceNode;
     start(): Promise<void>;
     stop(): Promise<void>;
+    /** Detach the encoder without closing the mic; resume() re-attaches. */
+    pause(flush?: boolean): Promise<void> | void;
+    resume(): void;
     /** Browser support probe exposed as a static on the class. */
     static isRecordingSupported(): boolean;
   }
