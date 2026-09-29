@@ -305,7 +305,9 @@
       "sendVoiceNote": "음성 메시지 보내기",
       "holdToRecord": "길게 눌러 녹음하고 손을 떼면 전송됩니다",
       "slideToCancel": "밀어서 취소",
-      "cancelRecording": "녹음 취소"
+      "cancelRecording": "녹음 취소",
+      "pauseRecording": "일시정지",
+      "resumeRecording": "녹음 계속"
     },
     "bubble": {
       "photo": "사진",

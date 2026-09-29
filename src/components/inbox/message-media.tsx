@@ -488,18 +488,29 @@ export function MediaDocumentBubble({
   // document with no filename captured), and showing it twice would
   // be redundant.
   const caption = message.filename ? message.content_text : null;
+  // WhatsApp-style "PDF" / "DOCX" line under the name.
+  const ext = /\.([a-z0-9]{1,5})$/i.exec(label)?.[1]?.toUpperCase();
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex w-64 max-w-full flex-col gap-1">
       <div className="flex items-center gap-2">
         <a
           href={message.media_url}
           target="_blank"
           rel="noopener noreferrer"
+          title={label}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
         >
           <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-          <span className="truncate font-medium">{label}</span>
+          {/* Long names wrap to two lines (breaking anywhere, since file
+              names often have no spaces) instead of one unbreakable line
+              that pushed the bubble past the edge of the thread. */}
+          <span className="flex min-w-0 flex-col">
+            <span className="line-clamp-2 font-medium leading-snug [overflow-wrap:anywhere]">
+              {label}
+            </span>
+            {ext && <span className="text-[10px] opacity-70">{ext}</span>}
+          </span>
         </a>
         <MediaActionButton
           icon={Download}

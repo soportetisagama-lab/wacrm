@@ -305,7 +305,9 @@
       "sendVoiceNote": "Send voice note",
       "holdToRecord": "Hold to record, release to send",
       "slideToCancel": "Slide to cancel",
-      "cancelRecording": "Cancel recording"
+      "cancelRecording": "Cancel recording",
+      "pauseRecording": "Pause",
+      "resumeRecording": "Resume recording"
     },
     "bubble": {
       "photo": "Photo",
