@@ -547,12 +547,24 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
     // Phone in a pocket / app in the background: the assignee still
     // hears about it. Tapping opens the chat, where the call rings if
     // it's still live.
-    if (ringUserId && conversation) {
-      sendPushToUser(ringUserId, {
-        title: 'Llamada entrante',
-        body: outcome.contact.name || outcome.contact.phone || 'WhatsApp',
-        data: { conversationId: conversation.id },
-      }).catch((err) => console.error('[webhook] call push failed:', err))
+    // Unassigned → every ATC member (the only ones it rings for).
+    if (conversation) {
+      let targets: string[] = ringUserId ? [ringUserId] : []
+      if (!ringUserId) {
+        const { data: atc } = await admin
+          .from('profiles')
+          .select('user_id')
+          .eq('account_id', config.account_id)
+          .eq('account_role', 'atc')
+        targets = (atc ?? []).map((p: { user_id: string }) => p.user_id)
+      }
+      for (const target of targets) {
+        sendPushToUser(target, {
+          title: 'Llamada entrante',
+          body: outcome.contact.name || outcome.contact.phone || 'WhatsApp',
+          data: { conversationId: conversation.id },
+        }).catch((err) => console.error('[webhook] call push failed:', err))
+      }
     }
   }
 }
