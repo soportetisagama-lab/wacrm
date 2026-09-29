@@ -2128,6 +2128,7 @@
     "logMissed": "Missed call",
     "logRejected": "Declined call",
     "logAnswered": "Voice call · {duration}",
+    "logOutgoing": "Outgoing call · {duration}",
     "busy": "You're already on a call",
     "calling": "Calling…",
     "customerDeclined": "The customer declined the call",

@@ -2128,6 +2128,7 @@
     "logMissed": "Llamada perdida",
     "logRejected": "Llamada rechazada",
     "logAnswered": "Llamada de voz · {duration}",
+    "logOutgoing": "Llamada saliente · {duration}",
     "busy": "Ya tienes una llamada en curso",
     "calling": "Llamando…",
     "customerDeclined": "El cliente rechazó la llamada",
