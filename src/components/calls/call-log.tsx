@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
-import { PhoneIncoming, PhoneMissed } from "lucide-react";
+import { PhoneIncoming, PhoneMissed, PhoneOutgoing } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ export interface ThreadCall {
   status: string;
   duration_seconds: number | null;
   created_at: string;
+  direction?: string;
 }
 
 /** This conversation's calls, kept live over realtime. */
@@ -30,7 +31,7 @@ export function useConversationCalls(
     const load = async () => {
       const { data } = await supabase
         .from("whatsapp_calls")
-        .select("id, status, duration_seconds, created_at")
+        .select("id, status, duration_seconds, created_at, direction")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: true });
       if (!cancelled) setCalls((data as ThreadCall[]) ?? []);
@@ -89,10 +90,10 @@ export function CallLogChip({ call }: { call: ThreadCall }) {
       ? call.status === "rejected"
         ? t("logRejected")
         : t("logMissed")
-      : t("logAnswered", {
+      : t(call.direction === "outbound" ? "logOutgoing" : "logAnswered", {
           duration: `${Math.floor((call.duration_seconds ?? 0) / 60)}:${String((call.duration_seconds ?? 0) % 60).padStart(2, "0")}`,
         });
-  const Icon = missed ? PhoneMissed : PhoneIncoming;
+  const Icon = missed ? PhoneMissed : call.direction === "outbound" ? PhoneOutgoing : PhoneIncoming;
   return (
     <div className="flex justify-center py-1">
       <span

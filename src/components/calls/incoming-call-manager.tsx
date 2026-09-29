@@ -82,6 +82,13 @@ export function IncomingCallManager() {
   // Latest-closure refs for handlers called from effects/realtime.
   const onOutboundUpdateRef = useRef<(row: CallRow) => void>(() => {});
   const hangUpRef = useRef<() => Promise<void>>(async () => {});
+  // Go "live" (timer + beep) only once the call is accepted AND the audio
+  // path is actually up — Meta's answer reaches us a couple of seconds
+  // after the customer picks up, and anything said before the WebRTC
+  // link connects is lost.
+  const acceptedRef = useRef(false);
+  const connectedRef = useRef(false);
+  const goLiveRef = useRef<() => void>(() => {});
 
   const callRef = useRef<CallRow | null>(null);
   const phaseRef = useRef<Phase>("ringing");
@@ -102,6 +109,8 @@ export function IncomingCallManager() {
     streamRef.current = null;
     if (audioRef.current) audioRef.current.srcObject = null;
     callRef.current = null;
+    acceptedRef.current = false;
+    connectedRef.current = false;
     setCall(null);
     setMuted(false);
     setSeconds(0);
@@ -279,6 +288,10 @@ export function IncomingCallManager() {
       }
     };
     pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") {
+        connectedRef.current = true;
+        goLiveRef.current();
+      }
       if (pc.connectionState === "failed" && callRef.current) {
         toast.error(t("connectionLost"));
         void hangUp();
@@ -420,9 +433,10 @@ export function IncomingCallManager() {
     if (row.answer_sdp && pc && !pc.remoteDescription) {
       void pc.setRemoteDescription({ type: "answer", sdp: row.answer_sdp }).catch(() => {});
     }
-    if (row.status === "accepted" && phaseRef.current !== "active") {
-      setSeconds(0);
-      setPhaseBoth("active");
+    if (row.status === "accepted" && !acceptedRef.current) {
+      acceptedRef.current = true;
+      setPhaseBoth("connecting");
+      goLiveRef.current();
     } else if (["ended", "missed", "rejected", "failed"].includes(row.status)) {
       toast(row.status === "rejected" ? t("customerDeclined") : row.status === "missed" ? t("noAnswer") : t("ended"));
       cleanup();
@@ -438,6 +452,44 @@ export function IncomingCallManager() {
     const id = setTimeout(() => void hangUpRef.current(), RING_WINDOW_MS);
     return () => clearTimeout(id);
   }, [phase]);
+
+  // Realtime alone adds ~1 s; also poll the row while the outbound call
+  // rings or connects so the SDP answer is applied as early as possible.
+  useEffect(() => {
+    if (phase !== "calling" && phase !== "connecting") return;
+    const current = callRef.current;
+    if (!current || current.direction !== "outbound") return;
+    const supabase = createClient();
+    const id = setInterval(async () => {
+      const { data } = await supabase
+        .from("whatsapp_calls")
+        .select("*")
+        .eq("id", current.id)
+        .maybeSingle();
+      if (data && callRef.current?.id === current.id) onOutboundUpdateRef.current(data as CallRow);
+    }, 500);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  const goLive = () => {
+    if (!acceptedRef.current || phaseRef.current === "active" || !callRef.current) return;
+    if (!connectedRef.current) {
+      // Safety net: never leave the agent stuck on "Conectando…".
+      setTimeout(() => {
+        if (acceptedRef.current && phaseRef.current === "connecting") {
+          connectedRef.current = true;
+          goLiveRef.current();
+        }
+      }, 5000);
+      return;
+    }
+    setSeconds(0);
+    setPhaseBoth("active");
+    playConnectedBeep();
+  };
+  useEffect(() => {
+    goLiveRef.current = goLive;
+  });
 
   const accept = async () => {
     const current = callRef.current;
@@ -458,7 +510,8 @@ export function IncomingCallManager() {
         return;
       }
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error);
-      setPhaseBoth("active");
+      acceptedRef.current = true;
+      goLive();
     } catch (err) {
       // The call keeps ringing for teammates (we never claimed it).
       micError(err);
@@ -634,6 +687,23 @@ export function IncomingCallManager() {
       )}
     </>
   );
+}
+
+/** Short "you're connected, talk now" tone. */
+function playConnectedBeep() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.value = 0.08;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+    osc.onended = () => void ctx.close();
+  } catch {
+    // No audio context — the timer still tells the agent it's live.
+  }
 }
 
 function RoundButton({
