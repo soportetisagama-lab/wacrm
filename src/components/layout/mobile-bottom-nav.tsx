@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Bell, MessageSquare, Users } from "lucide-react";
+import { Bell, MessageSquare, Phone, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
@@ -22,6 +22,7 @@ import { isInboxThreadRoute } from "@/lib/mobile-app";
 const TABS = [
   { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
   { href: "/contacts", labelKey: "contacts", icon: Users },
+  { href: "/calls", labelKey: "calls", icon: Phone },
   { href: "/notifications", labelKey: "notifications", icon: Bell },
 ] as const;
 

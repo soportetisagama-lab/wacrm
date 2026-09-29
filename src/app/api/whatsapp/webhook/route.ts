@@ -464,9 +464,28 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
 async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number]['value']) {
   const calls = value.calls ?? []
-  if (calls.length === 0) return
   const phoneNumberId = value.metadata.phone_number_id
   const admin = supabaseAdmin()
+
+  // Outbound call progress (RINGING / ACCEPTED / REJECTED) arrives as
+  // `statuses` keyed by the call id.
+  for (const st of value.statuses ?? []) {
+    const s = st.status?.toUpperCase()
+    if (s === 'ACCEPTED') {
+      await admin
+        .from('whatsapp_calls')
+        .update({ status: 'accepted', answered_at: new Date().toISOString() })
+        .eq('wa_call_id', st.id)
+        .eq('status', 'ringing')
+    } else if (s === 'REJECTED') {
+      await admin
+        .from('whatsapp_calls')
+        .update({ status: 'rejected', ended_at: new Date().toISOString() })
+        .eq('wa_call_id', st.id)
+        .eq('status', 'ringing')
+    }
+  }
+  if (calls.length === 0) return
 
   for (const call of calls) {
     if (call.event === 'terminate') {
@@ -496,7 +515,19 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
       continue
     }
 
-    if (call.event !== 'connect' || call.direction === 'BUSINESS_INITIATED') continue
+    // Outbound: the customer's WhatsApp answered our offer — hand the SDP
+    // answer to the caller's browser (it listens on this row).
+    if (call.event === 'connect' && call.direction === 'BUSINESS_INITIATED') {
+      if (call.session?.sdp) {
+        await admin
+          .from('whatsapp_calls')
+          .update({ answer_sdp: call.session.sdp })
+          .eq('wa_call_id', call.id)
+      }
+      continue
+    }
+
+    if (call.event !== 'connect') continue
 
     const { data: configRows } = await admin
       .from('whatsapp_config')

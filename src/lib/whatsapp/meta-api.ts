@@ -1167,3 +1167,88 @@ export async function callAction(args: CallActionArgs): Promise<void> {
   })
   if (!response.ok) await throwMetaError(response, `Call ${action} failed`)
 }
+
+// ---- Business-initiated calls -------------------------------------------
+// A business may only call someone who granted call permission (7 days
+// or permanent). Permission is requested with an interactive message;
+// Meta caps requests at 1 / 24 h and 2 / 7 days per customer.
+
+export interface CallPermissionInfo {
+  status: 'no_permission' | 'temporary' | 'permanent' | string
+  expirationTime: number | null
+  canRequestPermission: boolean
+  canStartCall: boolean
+}
+
+interface MetaCallPermissionResponse {
+  permission?: { status?: string; expiration_time?: number }
+  actions?: Array<{ action_name?: string; can_perform_action?: boolean }>
+}
+
+export async function getCallPermission(args: {
+  phoneNumberId: string
+  accessToken: string
+  userWaId: string
+}): Promise<CallPermissionInfo> {
+  const { phoneNumberId, accessToken, userWaId } = args
+  const url = `${META_API_BASE}/${phoneNumberId}/call_permissions?user_wa_id=${encodeURIComponent(userWaId)}`
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!response.ok) await throwMetaError(response, 'Could not read call permission')
+  const data = (await response.json()) as MetaCallPermissionResponse
+  const can = (name: string) =>
+    data.actions?.find((a) => a.action_name === name)?.can_perform_action ?? false
+  return {
+    status: data.permission?.status ?? 'no_permission',
+    expirationTime: data.permission?.expiration_time ?? null,
+    canRequestPermission: can('send_call_permission_request'),
+    canStartCall: can('start_call'),
+  }
+}
+
+export async function sendCallPermissionRequest(
+  args: RecipientTarget & { phoneNumberId: string; accessToken: string; bodyText: string },
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, bodyText } = args
+  validateInteractiveBody(bodyText)
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      ...recipientTargetFields(args),
+      type: 'interactive',
+      interactive: {
+        type: 'call_permission_request',
+        action: { name: 'call_permission_request' },
+        body: { text: bodyText },
+      },
+    }),
+  })
+  if (!response.ok) await throwMetaError(response, 'Call permission request failed')
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+/** Ring a customer. Returns Meta's call id; the answer SDP arrives on the
+ *  `calls` webhook (event `connect`, direction BUSINESS_INITIATED). */
+export async function startCall(
+  args: RecipientTarget & { phoneNumberId: string; accessToken: string; sdpOffer: string },
+): Promise<{ callId: string }> {
+  const { phoneNumberId, accessToken, sdpOffer } = args
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/calls`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      ...recipientTargetFields(args),
+      action: 'connect',
+      session: { sdp_type: 'offer', sdp: sdpOffer },
+    }),
+  })
+  if (!response.ok) await throwMetaError(response, 'Call could not be started')
+  const data = (await response.json()) as { calls?: Array<{ id: string }> }
+  const callId = data.calls?.[0]?.id
+  if (!callId) throw new Error('Meta returned no call id')
+  return { callId }
+}

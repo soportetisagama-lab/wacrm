@@ -28,6 +28,7 @@ import {
   Workflow,
   X,
   Zap,
+  Phone,
 } from 'lucide-react';
 import { hasMinRole, type AccountRole } from '@/lib/auth/roles';
 
@@ -127,6 +128,7 @@ const navItems: NavItem[] = [
   { href: '/inbox', labelKey: 'inbox', icon: MessageSquare },
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
+  { href: '/calls', labelKey: 'calls', icon: Phone },
   { href: '/pipelines', labelKey: 'pipelines', icon: GitBranch, minRole: 'admin' },
   { href: '/broadcasts', labelKey: 'broadcasts', icon: Radio, minRole: 'admin' },
   { href: '/automations', labelKey: 'automations', icon: Zap, minRole: 'admin' },

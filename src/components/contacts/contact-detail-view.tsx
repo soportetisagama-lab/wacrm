@@ -1,5 +1,6 @@
 'use client';
 
+import { CallContactButton } from '@/components/calls/call-contact-button';
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
@@ -417,6 +418,12 @@ export function ContactDetailView({
                   <SheetDescription className="text-muted-foreground text-xs mt-0.5">
                     {t('contactDetailsDesc')}
                   </SheetDescription>
+                  <CallContactButton
+                    contactId={contact.id}
+                    name={contact.name || contact.phone || t('unnamed')}
+                    withLabel
+                    className="mt-1.5 border border-border"
+                  />
                   <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     {contact.phone ? (
                       <button

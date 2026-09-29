@@ -101,16 +101,18 @@ export async function POST(
       if (call.status === 'accepted' && call.answered_by !== user.id) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       }
+      // An outbound call hung up before the customer answered is still
+      // 'ringing' — record it as missed rather than ended.
       const answeredAt = call.answered_at ? new Date(call.answered_at as string).getTime() : null
       await admin
         .from('whatsapp_calls')
         .update({
-          status: 'ended',
+          status: call.status === 'accepted' ? 'ended' : 'missed',
           ended_at: new Date().toISOString(),
           duration_seconds: answeredAt ? Math.round((Date.now() - answeredAt) / 1000) : null,
         })
         .eq('id', call.id)
-        .eq('status', 'accepted')
+        .in('status', ['accepted', 'ringing'])
       await callAction({ ...meta, action: 'terminate' })
       return NextResponse.json({ ok: true })
     }
