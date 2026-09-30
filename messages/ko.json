@@ -2169,9 +2169,8 @@
     "to": "종료",
     "agent": "상담원",
     "allAgents": "모든 상담원",
-    "priceTemplate": "템플릿당 가격 (USD)",
-    "priceOther": "일반 메시지당 가격 (USD)",
-    "priceHint": "Meta는 템플릿 발송마다 과금하며, 24시간 이내 답장은 보통 무료입니다. 요금을 입력해 비용을 추정하세요. 이 브라우저에 저장됩니다.",
+    "priceOther": "일반 메시지 가격 (USD)",
+    "priceHint": "Meta는 전달된 템플릿마다 과금합니다: 마케팅은 항상, 유틸리티는 고객이 최근 24시간 내에 메시지를 보내지 않은 경우에만, 인증은 항상. 일반 메시지(상담원·봇)는 무료입니다. 요금을 입력하세요. 이 브라우저에 저장됩니다.",
     "cardTotal": "보낸 메시지",
     "cardTemplates": "템플릿",
     "cardOthers": "일반 메시지",
@@ -2179,7 +2178,6 @@
     "tableTitle": "상담원별 상세",
     "exportCsv": "CSV 내보내기",
     "colAgent": "상담원",
-    "colTemplates": "템플릿",
     "colOthers": "일반",
     "colTotal": "합계",
     "colCost": "예상 비용",
@@ -2191,6 +2189,16 @@
     "empty": "이 기간에 보낸 메시지가 없습니다.",
     "loadError": "보고서를 불러오지 못했습니다. 다시 시도하세요.",
     "noAccess": "이 보고서에 접근할 수 없습니다.",
-    "attributionNote": "메시지는 보낸 상담원에게 집계됩니다. 이번 버전 이전 메시지는 대화에 배정된 상담원 기준입니다. 실패한 메시지는 제외됩니다."
+    "attributionNote": "메시지는 보낸 상담원에게 집계됩니다. 이번 버전 이전 메시지는 대화에 배정된 상담원 기준입니다. 카테고리는 저장된 템플릿 기준이며, 찾을 수 없으면 마케팅으로 집계됩니다. 실패한 메시지는 제외됩니다.",
+    "priceMarketing": "마케팅 가격 (USD)",
+    "priceUtility": "유틸리티 가격 (USD)",
+    "priceAuthentication": "인증 가격 (USD)",
+    "cardTemplatesSub": "마케팅 {marketing} · 유틸리티 {utility} · 인증 {authentication}",
+    "cardOthersSub": "무료 (24시간 이내)",
+    "colMarketing": "마케팅",
+    "colUtility": "유틸리티",
+    "colUtilityFree": "무료 유틸리티 (24시간)",
+    "colAuthentication": "인증",
+    "utilityFree": "{count}건 무료 (24시간)"
   }
 }

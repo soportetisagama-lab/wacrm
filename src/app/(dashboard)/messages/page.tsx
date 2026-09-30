@@ -24,27 +24,34 @@ import { cn } from "@/lib/utils";
 
 /** "Mensajes" — outbound messages per Asesor in a date range, to
  *  estimate Meta's per-message cost. Data comes from the
- *  message_usage() RPC (migration 075), which only answers for
- *  owner / admin / analista. */
+ *  message_usage() RPC (migrations 075/076), which only answers for
+ *  owner / admin / analista. Templates are split by Meta's pricing
+ *  category; utility templates sent inside the 24 h window are free. */
 
-interface UsageRow {
+const COUNTS = ["marketing", "utility", "utility_free", "authentication", "others"] as const;
+type CountKey = (typeof COUNTS)[number];
+type Counts = Record<CountKey, number>;
+
+interface UsageRow extends Counts {
   source: "agent" | "bot" | "broadcast";
   user_id: string | null;
-  templates: number;
-  others: number;
 }
 
-interface ReportRow {
+interface ReportRow extends Counts {
   key: string;
   name: string;
-  templates: number;
-  others: number;
 }
+
+type PriceKey = "marketing" | "utility" | "authentication" | "other";
+type Prices = Record<PriceKey, string>;
 
 type Preset = "today" | "7d" | "month" | "lastMonth";
 
-const PRICE_KEY = "wacrm.messageUsage.prices";
+const PRICE_KEY = "wacrm.messageUsage.prices.v2";
 const ALL = "all";
+const NO_ROWS: UsageRow[] = [];
+const SPECIAL = ["unassigned", "bot", "broadcast"];
+const EMPTY: Counts = { marketing: 0, utility: 0, utility_free: 0, authentication: 0, others: 0 };
 
 function presetRange(p: Preset): { from: string; to: string } {
   const now = new Date();
@@ -68,6 +75,9 @@ function toNumber(v: string): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
+const templatesOf = (r: Counts) => r.marketing + r.utility + r.authentication;
+const totalOf = (r: Counts) => templatesOf(r) + r.others;
+
 export default function MessageUsagePage() {
   const t = useTranslations("MessageUsage");
   const { accountRole } = useAuth();
@@ -81,17 +91,19 @@ export default function MessageUsagePage() {
   const [names, setNames] = useState<Map<string, string>>(new Map());
   // The shell only renders pages client-side (after auth resolves), so
   // reading localStorage in the initializer can't cause a hydration mismatch.
-  const [prices, setPrices] = useState<{ template: string; other: string }>(() => {
+  // Normal messages default to 0: Meta doesn't bill them.
+  const [prices, setPrices] = useState<Prices>(() => {
+    const blank: Prices = { marketing: "", utility: "", authentication: "", other: "0" };
     try {
       const saved = localStorage.getItem(PRICE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) return { ...blank, ...JSON.parse(saved) };
     } catch {
       // Private window / blocked storage — prices just start empty.
     }
-    return { template: "", other: "" };
+    return blank;
   });
 
-  const updatePrice = (field: "template" | "other", value: string) => {
+  const updatePrice = (field: PriceKey, value: string) => {
     setPrices((prev) => {
       const next = { ...prev, [field]: value };
       try {
@@ -138,11 +150,11 @@ export default function MessageUsagePage() {
         setResult({
           key: `${range.from}|${range.to}`,
           error: !!rpcError,
-          rows: ((data ?? []) as UsageRow[]).map((r) => ({
-            ...r,
-            templates: Number(r.templates),
-            others: Number(r.others),
-          })),
+          rows: ((data ?? []) as UsageRow[]).map((r) => {
+            const row = { ...r };
+            for (const k of COUNTS) row[k] = Number(r[k] ?? 0);
+            return row;
+          }),
         });
       });
     return () => {
@@ -150,10 +162,10 @@ export default function MessageUsagePage() {
     };
   }, [range.from, range.to, rangeValid]);
 
-  const rows = !rangeValid ? [] : result && result.key === rangeKey ? result.rows : null;
+  const rows = !rangeValid ? NO_ROWS : result && result.key === rangeKey ? result.rows : null;
   const error = !!result && result.key === rangeKey && result.error;
 
-  // One row per Asesor, then the bot / broadcast / unattributed buckets.
+  // One row per Asesor, then the unattributed / bot / broadcast buckets.
   const report = useMemo<ReportRow[]>(() => {
     const byKey = new Map<string, ReportRow>();
     for (const r of rows ?? []) {
@@ -166,46 +178,65 @@ export default function MessageUsagePage() {
             : key === "broadcast"
               ? t("broadcasts")
               : names.get(key) || t("formerMember");
-      const row = byKey.get(key) ?? { key, name, templates: 0, others: 0 };
-      row.templates += r.templates;
-      row.others += r.others;
+      const row = byKey.get(key) ?? { key, name, ...EMPTY };
+      for (const k of COUNTS) row[k] += r[k];
       byKey.set(key, row);
     }
-    const special = new Set(["bot", "broadcast", "unassigned"]);
     const agents = [...byKey.values()]
-      .filter((r) => !special.has(r.key))
-      .sort((a, b) => b.templates + b.others - (a.templates + a.others));
-    const rest = ["unassigned", "bot", "broadcast"]
-      .map((k) => byKey.get(k))
-      .filter((r): r is ReportRow => !!r);
+      .filter((r) => !SPECIAL.includes(r.key))
+      .sort((a, b) => totalOf(b) - totalOf(a));
+    const rest = SPECIAL.map((k) => byKey.get(k)).filter((r): r is ReportRow => !!r);
     return [...agents, ...rest];
   }, [rows, names, t]);
 
-  const agentOptions = useMemo(
-    () => report.filter((r) => !["bot", "broadcast", "unassigned"].includes(r.key)),
-    [report],
-  );
+  const agentOptions = useMemo(() => report.filter((r) => !SPECIAL.includes(r.key)), [report]);
 
   const visible = agentFilter === ALL ? report : report.filter((r) => r.key === agentFilter);
 
-  const priceTemplate = toNumber(prices.template);
-  const priceOther = toNumber(prices.other);
-  const cost = (r: { templates: number; others: number }) =>
-    r.templates * priceTemplate + r.others * priceOther;
-  const totals = visible.reduce(
-    (acc, r) => ({ templates: acc.templates + r.templates, others: acc.others + r.others }),
-    { templates: 0, others: 0 },
-  );
+  const p = {
+    marketing: toNumber(prices.marketing),
+    utility: toNumber(prices.utility),
+    authentication: toNumber(prices.authentication),
+    other: toNumber(prices.other),
+  };
+  const cost = (r: Counts) =>
+    r.marketing * p.marketing +
+    (r.utility - r.utility_free) * p.utility +
+    r.authentication * p.authentication +
+    r.others * p.other;
+  const totals = visible.reduce<Counts>((acc, r) => {
+    const next = { ...acc };
+    for (const k of COUNTS) next[k] += r[k];
+    return next;
+  }, EMPTY);
   const money = (n: number) =>
     `$ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
 
   const exportCsv = () => {
+    const line = (name: string, r: Counts) =>
+      [
+        `"${name.replace(/"/g, '""')}"`,
+        r.marketing,
+        r.utility,
+        r.utility_free,
+        r.authentication,
+        r.others,
+        totalOf(r),
+        cost(r).toFixed(4),
+      ].join(",");
     const lines = [
-      [t("colAgent"), t("colTemplates"), t("colOthers"), t("colTotal"), t("colCost")].join(","),
-      ...visible.map((r) =>
-        [`"${r.name.replace(/"/g, '""')}"`, r.templates, r.others, r.templates + r.others, cost(r).toFixed(4)].join(","),
-      ),
-      [`"${t("total")}"`, totals.templates, totals.others, totals.templates + totals.others, cost(totals).toFixed(4)].join(","),
+      [
+        t("colAgent"),
+        t("colMarketing"),
+        t("colUtility"),
+        t("colUtilityFree"),
+        t("colAuthentication"),
+        t("colOthers"),
+        t("colTotal"),
+        t("colCost"),
+      ].join(","),
+      ...visible.map((r) => line(r.name, r)),
+      line(t("total"), totals),
     ];
     const blob = new Blob([`﻿${lines.join("\n")}`], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -220,8 +251,26 @@ export default function MessageUsagePage() {
     return <p className="py-12 text-center text-sm text-muted-foreground">{t("noAccess")}</p>;
   }
 
+  const priceFields: { key: PriceKey; label: string }[] = [
+    { key: "marketing", label: t("priceMarketing") },
+    { key: "utility", label: t("priceUtility") },
+    { key: "authentication", label: t("priceAuthentication") },
+    { key: "other", label: t("priceOther") },
+  ];
+
+  const utilityCell = (r: Counts) => (
+    <>
+      {r.utility.toLocaleString()}
+      {r.utility_free > 0 && (
+        <span className="block text-[11px] text-muted-foreground">
+          {t("utilityFree", { count: r.utility_free })}
+        </span>
+      )}
+    </>
+  );
+
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-foreground">{t("pageTitle")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("pageDesc")}</p>
@@ -230,25 +279,25 @@ export default function MessageUsagePage() {
       {/* Filters */}
       <div className="space-y-4 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 sm:w-fit">
-          {(["today", "7d", "month", "lastMonth"] as Preset[]).map((p) => (
+          {(["today", "7d", "month", "lastMonth"] as Preset[]).map((pr) => (
             <button
-              key={p}
+              key={pr}
               type="button"
               onClick={() => {
-                setPreset(p);
-                setRange(presetRange(p));
+                setPreset(pr);
+                setRange(presetRange(pr));
               }}
               className={cn(
                 "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                preset === p ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                preset === pr ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
             >
-              {t(`preset_${p}`)}
+              {t(`preset_${pr}`)}
             </button>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">{t("from")}</Label>
             <Input
@@ -288,33 +337,45 @@ export default function MessageUsagePage() {
               ))}
             </select>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">{t("priceTemplate")}</Label>
-            <Input
-              inputMode="decimal"
-              placeholder="0.00"
-              value={prices.template}
-              onChange={(e) => updatePrice("template", e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">{t("priceOther")}</Label>
-            <Input
-              inputMode="decimal"
-              placeholder="0.00"
-              value={prices.other}
-              onChange={(e) => updatePrice("other", e.target.value)}
-            />
-          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {priceFields.map((f) => (
+            <div key={f.key} className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">{f.label}</Label>
+              <Input
+                inputMode="decimal"
+                placeholder="0.00"
+                value={prices[f.key]}
+                onChange={(e) => updatePrice(f.key, e.target.value)}
+              />
+            </div>
+          ))}
         </div>
         <p className="text-xs text-muted-foreground">{t("priceHint")}</p>
       </div>
 
       {/* Totals */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard title={t("cardTotal")} value={(totals.templates + totals.others).toLocaleString()} icon={Send} accent="chart-1" />
-        <MetricCard title={t("cardTemplates")} value={totals.templates.toLocaleString()} icon={FileText} accent="chart-2" />
-        <MetricCard title={t("cardOthers")} value={totals.others.toLocaleString()} icon={MessageSquare} accent="chart-3" />
+        <MetricCard title={t("cardTotal")} value={totalOf(totals).toLocaleString()} icon={Send} accent="chart-1" />
+        <MetricCard
+          title={t("cardTemplates")}
+          value={templatesOf(totals).toLocaleString()}
+          icon={FileText}
+          accent="chart-2"
+          subtitle={t("cardTemplatesSub", {
+            marketing: totals.marketing,
+            utility: totals.utility,
+            authentication: totals.authentication,
+          })}
+        />
+        <MetricCard
+          title={t("cardOthers")}
+          value={totals.others.toLocaleString()}
+          icon={MessageSquare}
+          accent="chart-3"
+          subtitle={t("cardOthersSub")}
+        />
         <MetricCard title={t("cardCost")} value={money(cost(totals))} icon={DollarSign} accent="chart-4" />
       </div>
 
@@ -345,7 +406,9 @@ export default function MessageUsagePage() {
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-4 py-2.5 font-medium">{t("colAgent")}</th>
-                  <th className="px-4 py-2.5 text-right font-medium">{t("colTemplates")}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t("colMarketing")}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t("colUtility")}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t("colAuthentication")}</th>
                   <th className="px-4 py-2.5 text-right font-medium">{t("colOthers")}</th>
                   <th className="px-4 py-2.5 text-right font-medium">{t("colTotal")}</th>
                   <th className="px-4 py-2.5 text-right font-medium">{t("colCost")}</th>
@@ -355,11 +418,11 @@ export default function MessageUsagePage() {
                 {visible.map((r) => (
                   <tr key={r.key}>
                     <td className="px-4 py-2.5 text-foreground">{r.name}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{r.templates.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{r.marketing.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{utilityCell(r)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{r.authentication.toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.others.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                      {(r.templates + r.others).toLocaleString()}
-                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium tabular-nums">{totalOf(r).toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{money(cost(r))}</td>
                   </tr>
                 ))}
@@ -368,11 +431,11 @@ export default function MessageUsagePage() {
                 <tfoot>
                   <tr className="border-t border-border bg-muted/40 font-semibold">
                     <td className="px-4 py-2.5">{t("total")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{totals.templates.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{totals.marketing.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{utilityCell(totals)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{totals.authentication.toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{totals.others.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {(totals.templates + totals.others).toLocaleString()}
-                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{totalOf(totals).toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{money(cost(totals))}</td>
                   </tr>
                 </tfoot>
