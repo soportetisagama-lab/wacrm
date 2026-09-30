@@ -128,6 +128,7 @@ const EDITABLE_ROLES: { value: AccountRole }[] = [
   { value: 'jefe_linea' },
   { value: 'atc' },
   { value: 'agent' },
+  { value: 'analista' },
   { value: 'viewer' },
 ];
 

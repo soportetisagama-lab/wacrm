@@ -148,6 +148,7 @@ export async function POST(request: Request) {
         conversationId: conversation.id,
         messageType: 'text',
         contentText: transferNoticeText({ topic, targetLabel: target.label }),
+        senderId: userId,
       })
       noticeSent = true
       // With no human owning this chat, whatever the customer sends next
