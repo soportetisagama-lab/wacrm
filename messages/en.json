@@ -2169,9 +2169,8 @@
     "to": "To",
     "agent": "Agent",
     "allAgents": "All agents",
-    "priceTemplate": "Price per template (USD)",
-    "priceOther": "Price per regular message (USD)",
-    "priceHint": "Meta charges per template sent; replies inside the 24 h window are usually free. Enter your rates to estimate the cost. Saved in this browser.",
+    "priceOther": "Regular message price (USD)",
+    "priceHint": "Meta bills per delivered template: marketing always; utility only if the customer hasn't written in the last 24 h; authentication always. Regular messages (agents and bot) are free. Enter your rates; saved in this browser.",
     "cardTotal": "Messages sent",
     "cardTemplates": "Templates",
     "cardOthers": "Regular messages",
@@ -2179,7 +2178,6 @@
     "tableTitle": "Breakdown by agent",
     "exportCsv": "Export CSV",
     "colAgent": "Agent",
-    "colTemplates": "Templates",
     "colOthers": "Regular",
     "colTotal": "Total",
     "colCost": "Estimated cost",
@@ -2191,6 +2189,16 @@
     "empty": "No messages sent in this range.",
     "loadError": "Couldn't load the report. Try again.",
     "noAccess": "You don't have access to this report.",
-    "attributionNote": "Messages are attributed to the agent who sent them. Messages from before this release use the conversation's assigned agent. Failed messages are not counted."
+    "attributionNote": "Messages are attributed to the agent who sent them. Messages from before this release use the conversation's assigned agent. The category comes from the saved template; if it isn't found it counts as marketing. Failed messages are not counted.",
+    "priceMarketing": "Marketing price (USD)",
+    "priceUtility": "Utility price (USD)",
+    "priceAuthentication": "Authentication price (USD)",
+    "cardTemplatesSub": "{marketing} marketing · {utility} utility · {authentication} authentication",
+    "cardOthersSub": "Free (inside the 24 h window)",
+    "colMarketing": "Marketing",
+    "colUtility": "Utility",
+    "colUtilityFree": "Free utility (24 h)",
+    "colAuthentication": "Authentication",
+    "utilityFree": "{count} free (24 h)"
   }
 }
