@@ -18,6 +18,7 @@ import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { UpdateBanner } from "@/components/layout/update-banner";
 import { App } from "@capacitor/app";
+import { ANALISTA_ROUTES } from "@/lib/auth/roles";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -27,8 +28,19 @@ const SIDEBAR_COLLAPSED_KEY = 'wacrm.sidebarCollapsed';
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const t = useTranslations("Common");
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, accountRole } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Analista only works the Panel + Mensajes report — typing another
+  // route by hand bounces back to the Panel (RLS keeps them read-only
+  // anyway; this just keeps the app matching their menu).
+  useEffect(() => {
+    if (accountRole !== "analista") return;
+    if (!ANALISTA_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`))) {
+      router.replace("/dashboard");
+    }
+  }, [accountRole, pathname, router]);
 
   // Set once on mount — the Android WebView wrapper's User-Agent never
   // changes mid-session, and reading `navigator` during render would
