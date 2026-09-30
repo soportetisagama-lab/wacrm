@@ -45,7 +45,7 @@ import { useAuth } from '@/hooks/use-auth';
 // from the Members tab's role-change dropdown instead. 'viewer' isn't
 // part of the 5-role business mapping either and is likewise not
 // offered here (unchanged behavior for any existing viewer).
-type InviteRole = 'gerencia' | 'jefe_linea' | 'atc' | 'agent';
+type InviteRole = 'gerencia' | 'jefe_linea' | 'atc' | 'agent' | 'analista';
 
 interface InviteMemberDialogProps {
   open: boolean;
@@ -299,6 +299,9 @@ export function InviteMemberDialog({
                     </SelectItem>
                     <SelectItem value="atc">{tRoles('atc')}</SelectItem>
                     <SelectItem value="agent">{tRoles('agent')}</SelectItem>
+                    <SelectItem value="analista">
+                      {tRoles('analista')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-muted-foreground text-xs">
@@ -308,6 +311,7 @@ export function InviteMemberDialog({
                       | 'jefe_lineaHint'
                       | 'atcHint'
                       | 'agentHint'
+                      | 'analistaHint'
                   )}
                 </p>
               </div>
