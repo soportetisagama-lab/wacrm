@@ -88,6 +88,9 @@ export interface SendMessageParams {
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
+  /** The teammate who pressed send — stored as messages.sender_id for
+   *  the per-Asesor "Mensajes" report. Omitted for public-API sends. */
+  senderId?: string | null;
 }
 
 export interface SendMessageResult {
@@ -201,6 +204,7 @@ export async function sendMessageToConversation(
     templateMessageParams,
     interactivePayload,
     replyToMessageId,
+    senderId,
   } = params;
 
   if (!conversationId) {
@@ -480,6 +484,7 @@ export async function sendMessageToConversation(
     .insert({
       conversation_id: conversationId,
       sender_type: 'agent',
+      sender_id: senderId || null,
       content_type: messageType,
       content_text: interactiveBody ?? contentText ?? templateBody ?? null,
       media_url: mediaUrl || null,

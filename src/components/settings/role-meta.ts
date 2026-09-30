@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Briefcase,
   Crown,
   Headphones,
@@ -66,6 +67,12 @@ export const ROLE_META: Record<
     label: 'agent',
     variant: 'muted',
     className: 'border-border bg-muted text-muted-foreground',
+  },
+  analista: {
+    icon: BarChart3,
+    label: 'analista',
+    variant: 'analista',
+    className: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
   },
   viewer: {
     icon: UserIcon,
