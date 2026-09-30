@@ -102,6 +102,7 @@ export async function POST(request: Request) {
         await admin.from('messages').insert({
           conversation_id: conversation.id,
           sender_type: 'agent',
+          sender_id: user.id,
           content_type: 'text',
           content_text: `📞 ${PERMISSION_TEXT}`,
           message_id: messageId,

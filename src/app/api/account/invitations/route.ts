@@ -92,7 +92,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "'role' must be one of admin, gerencia, jefe_linea, atc, agent, viewer",
+            "'role' must be one of admin, gerencia, jefe_linea, atc, agent, analista, viewer",
         },
         { status: 400 }
       );

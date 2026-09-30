@@ -18,7 +18,7 @@
 // Business role mapping (see migration 037 for the full rationale):
 //   Administrador -> owner        Gerencia -> gerencia
 //   Jefe de Línea -> jefe_linea   ATC      -> atc
-//   Asesor        -> agent
+//   Asesor        -> agent        Analista -> analista
 // `admin` and `viewer` are not part of that 5-role business mapping
 // but remain valid, functioning roles (admin = generic technical
 // power role, not offered at invite time; viewer = unrestricted
@@ -26,7 +26,14 @@
 // ============================================================
 
 export type AccountRole =
-  'owner' | 'admin' | 'gerencia' | 'jefe_linea' | 'atc' | 'agent' | 'viewer';
+  | 'owner'
+  | 'admin'
+  | 'gerencia'
+  | 'jefe_linea'
+  | 'atc'
+  | 'agent'
+  | 'viewer'
+  | 'analista';
 
 /**
  * Ordered list of every valid role, lowest privilege first.
@@ -46,6 +53,7 @@ export type AccountRole =
  * supabase/migrations/039_conversation_visibility_by_role.sql).
  */
 export const ACCOUNT_ROLES: readonly AccountRole[] = [
+  'analista',
   'viewer',
   'agent',
   'atc',
@@ -74,6 +82,9 @@ export function roleRank(role: AccountRole): number {
     case 'agent':
       return 2;
     case 'viewer':
+    // Analista is read-only like viewer (same rank in is_account_member,
+    // migration 075) — it differs only in what the sidebar shows.
+    case 'analista':
       return 1;
   }
 }
@@ -135,8 +146,25 @@ export function canSendMessages(role: AccountRole): boolean {
  * shows the "Read-only" tooltip without inverting `canSendMessages`).
  */
 export function canViewOnly(role: AccountRole): boolean {
-  return role === 'viewer';
+  return role === 'viewer' || role === 'analista';
 }
+
+/**
+ * Owner / admin / analista: the "Mensajes" report (messages sent per
+ * Asesor, to estimate Meta's per-message cost). Keep in sync with the
+ * role check inside message_usage() (supabase/migrations/075_message_usage_report.sql).
+ */
+const MESSAGE_USAGE_ROLES: readonly AccountRole[] = ['owner', 'admin', 'analista'];
+
+export function canViewMessageUsage(role: AccountRole): boolean {
+  return MESSAGE_USAGE_ROLES.includes(role);
+}
+
+/**
+ * Routes an Analista may open — everything else redirects to the Panel
+ * (see DashboardShell). Settings stays reachable for their own profile.
+ */
+export const ANALISTA_ROUTES: readonly string[] = ['/dashboard', '/messages', '/settings'];
 
 /**
  * Owner / admin / gerencia / jefe_linea / atc: dashboard quick-action

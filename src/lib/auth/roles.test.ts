@@ -11,6 +11,7 @@ import {
   canSendMessages,
   canSendTemplates,
   canTransferOwnership,
+  canViewMessageUsage,
   canViewOnly,
   canViewTeamMembers,
   hasMinRole,
@@ -234,5 +235,17 @@ describe('canSendTemplates', () => {
     ['viewer', false],
   ])('%s -> %s', (role, expected) => {
     expect(canSendTemplates(role)).toBe(expected);
+  });
+});
+
+describe('analista', () => {
+  it('is read-only and only unlocks the Mensajes report', () => {
+    expect(isAccountRole('analista')).toBe(true);
+    expect(canSendMessages('analista')).toBe(false);
+    expect(canViewOnly('analista')).toBe(true);
+    expect(canViewMessageUsage('analista')).toBe(true);
+    expect(canViewMessageUsage('owner')).toBe(true);
+    expect(canViewMessageUsage('atc')).toBe(false);
+    expect(canViewMessageUsage('agent')).toBe(false);
   });
 });

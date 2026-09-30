@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useTotalUnread } from '@/hooks/use-total-unread';
 import { useUnreadNotifications } from '@/hooks/use-unread-notifications';
 import {
+  BarChart3,
   Bell,
   Bot,
   Briefcase,
@@ -30,7 +31,7 @@ import {
   Zap,
   Phone,
 } from 'lucide-react';
-import { hasMinRole, type AccountRole } from '@/lib/auth/roles';
+import { ANALISTA_ROUTES, hasMinRole, type AccountRole } from '@/lib/auth/roles';
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -72,6 +73,11 @@ const ROLE_CHIP: Record<
     labelKey: 'roleAgent',
     // Neutral: the operational default.
     className: 'border-white/15 bg-white/5 text-sidebar-foreground/80',
+  },
+  analista: {
+    icon: BarChart3,
+    labelKey: 'roleAnalista',
+    className: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
   },
   viewer: {
     icon: User,
@@ -121,6 +127,9 @@ interface NavItem {
    * use in the first place.
    */
   minRole?: AccountRole;
+  /** Explicit allow-list — when set, only these roles see the item
+   *  (used where a rank can't express it, e.g. Mensajes). */
+  roles?: readonly AccountRole[];
 }
 
 const navItems: NavItem[] = [
@@ -129,6 +138,7 @@ const navItems: NavItem[] = [
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
   { href: '/calls', labelKey: 'calls', icon: Phone },
+  { href: '/messages', labelKey: 'messages', icon: BarChart3, roles: ['owner', 'admin', 'analista'] },
   { href: '/pipelines', labelKey: 'pipelines', icon: GitBranch, minRole: 'admin' },
   { href: '/broadcasts', labelKey: 'broadcasts', icon: Radio, minRole: 'admin' },
   { href: '/automations', labelKey: 'automations', icon: Zap, minRole: 'admin' },
@@ -198,9 +208,15 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
   // same convention as useCan/RequireRole — so an admin-only item
   // never flashes visible before we actually know the role.
   const isNavItemVisible = (item: NavItem) => {
-    if (!item.minRole) return true;
+    // Analista gets Panel + Mensajes only (plus Settings for their profile,
+    // reachable from the user menu, not the nav).
+    if (accountRole === 'analista' && !ANALISTA_ROUTES.includes(item.href)) {
+      return false;
+    }
+    if (!item.minRole && !item.roles) return true;
     if (profileLoading || !accountRole) return false;
-    return hasMinRole(accountRole, item.minRole);
+    if (item.roles && !item.roles.includes(accountRole)) return false;
+    return !item.minRole || hasMinRole(accountRole, item.minRole);
   };
   // Computed once so both the list and its separator (hidden when the
   // list would otherwise be empty — currently just Settings) agree.
