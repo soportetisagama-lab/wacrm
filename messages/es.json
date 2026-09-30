@@ -2169,9 +2169,8 @@
     "to": "Hasta",
     "agent": "Asesor",
     "allAgents": "Todos los asesores",
-    "priceTemplate": "Precio por plantilla (USD)",
-    "priceOther": "Precio por mensaje normal (USD)",
-    "priceHint": "Meta cobra por plantilla enviada; las respuestas dentro de las 24 h suelen ser gratis. Ingresa los precios de tu tarifa para estimar el costo. Se guardan en este navegador.",
+    "priceOther": "Precio mensaje normal (USD)",
+    "priceHint": "Meta cobra por plantilla entregada: marketing siempre; utilidad solo si el cliente no escribió en las últimas 24 h; autenticación siempre. Los mensajes normales (asesores y bot) son gratis. Ingresa los precios de tu tarifa; se guardan en este navegador.",
     "cardTotal": "Mensajes enviados",
     "cardTemplates": "Plantillas",
     "cardOthers": "Mensajes normales",
@@ -2179,7 +2178,6 @@
     "tableTitle": "Detalle por asesor",
     "exportCsv": "Exportar CSV",
     "colAgent": "Asesor",
-    "colTemplates": "Plantillas",
     "colOthers": "Normales",
     "colTotal": "Total",
     "colCost": "Costo estimado",
@@ -2191,6 +2189,16 @@
     "empty": "No hay mensajes enviados en este rango.",
     "loadError": "No se pudo cargar el reporte. Intenta de nuevo.",
     "noAccess": "No tienes acceso a este reporte.",
-    "attributionNote": "Los mensajes se atribuyen al asesor que los envió. En los mensajes anteriores a esta versión se usa el asesor asignado a la conversación. No se cuentan los mensajes fallidos."
+    "attributionNote": "Los mensajes se atribuyen al asesor que los envió. En los mensajes anteriores a esta versión se usa el asesor asignado a la conversación. La categoría sale de la plantilla guardada; si no se encuentra, se cuenta como marketing. No se cuentan los mensajes fallidos.",
+    "priceMarketing": "Precio marketing (USD)",
+    "priceUtility": "Precio utilidad (USD)",
+    "priceAuthentication": "Precio autenticación (USD)",
+    "cardTemplatesSub": "{marketing} marketing · {utility} utilidad · {authentication} autenticación",
+    "cardOthersSub": "Gratis (dentro de las 24 h)",
+    "colMarketing": "Marketing",
+    "colUtility": "Utilidad",
+    "colUtilityFree": "Utilidad gratis (24 h)",
+    "colAuthentication": "Autenticación",
+    "utilityFree": "{count} gratis (24 h)"
   }
 }
