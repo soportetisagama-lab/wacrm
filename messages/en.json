@@ -261,6 +261,8 @@
       "draftWithAI": "Draft a reply with AI",
       "addCaption": "Add a caption…",
       "removeAttachment": "Remove attachment",
+      "tooManyAttachments": "You can attach up to {max} files at once.",
+      "addMoreAttachments": "Add more",
       "moreActions": "More",
       "interactiveMessage": "Interactive message",
       "quickReplies": "Quick replies",
