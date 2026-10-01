@@ -166,17 +166,22 @@ function kindForFile(file: File): "image" | "video" | "document" | null {
 /** Imperative handle so the thread can hand the composer a file dropped
  *  anywhere on the conversation, not just on the composer itself. */
 export interface MessageComposerHandle {
-  attachFile: (file: File) => void;
+  attachFiles: (files: File[]) => void;
 }
 
 interface MediaDraft {
+  /** Local key for the preview list. */
+  id: string;
   kind: ComposerMediaKind;
   mediaUrl: string;
   /** Storage path — used to GC the object if the draft is discarded. */
   path: string;
   filename: string;
-  caption: string;
 }
+
+/** Most attachments staged at once — like WhatsApp's per-send limit,
+ *  and keeps a careless drop of a whole folder from flooding the chat. */
+const MAX_MEDIA_DRAFTS = 10;
 
 interface MessageComposerProps {
   conversationId: string;
@@ -186,7 +191,9 @@ interface MessageComposerProps {
    *  templates either way. */
   awaitingCustomer?: boolean;
   onSend: (text: string, replyToId?: string) => void;
-  onSendMedia: (payload: SendMediaPayload) => void;
+  /** May return a promise — several staged files are sent one after
+   *  another, awaiting each, so they reach the customer in order. */
+  onSendMedia: (payload: SendMediaPayload) => void | Promise<void>;
   onSendInteractive: (payload: InteractiveMessagePayload, replyToId?: string) => void;
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
@@ -256,20 +263,22 @@ export function MessageComposer({
   const [slashReplies, setSlashReplies] = useState<QuickReply[] | null>(null);
   const slashLoadingRef = useRef(false);
 
-  // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
-  // attachment; `busy` covers the upload/transcode window.
-  const [draft, setDraft] = useState<MediaDraft | null>(null);
+  // Media attachment state. `drafts` holds uploaded-but-not-yet-sent
+  // attachments (several can be staged at once, sent in order with one
+  // shared caption on the first); `busy` covers the upload/send window.
+  const [drafts, setDrafts] = useState<MediaDraft[]>([]);
+  const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
-  // Mirror of `draft` for the unmount cleanup, which can't read render
-  // state. Kept in sync below so navigating away with a staged-but-unsent
-  // attachment GCs the orphaned object.
-  const draftRef = useRef<MediaDraft | null>(null);
+  // Mirror of `drafts` for the unmount cleanup, which can't read render
+  // state. Kept in sync below so navigating away with staged-but-unsent
+  // attachments GCs the orphaned objects.
+  const draftsRef = useRef<MediaDraft[]>([]);
   useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
+    draftsRef.current = drafts;
+  }, [drafts]);
 
   // Best-effort GC of a staged object the user never sent. Fire-and-forget.
   const removeStaged = useCallback((path: string | undefined) => {
@@ -330,7 +339,7 @@ export function MessageComposer({
       cancelledRef.current = true;
       // stop() releases the mic stream + audio context inside opus-recorder.
       void recorderRef.current?.stop().catch(() => {});
-      removeStaged(draftRef.current?.path);
+      for (const d of draftsRef.current) removeStaged(d.path);
     };
   }, [clearTimer, removeStaged]);
 
@@ -623,14 +632,16 @@ export function MessageComposer({
     [slashOpen, slashMatches, slashReplies, slashIndex, applySlashPick, openSlashCreate, handleKeyDown],
   );
 
-  // Upload a captured file to chat-media and stage it as a draft.
-  const stageUpload = useCallback(
-    async (kind: ComposerMediaKind, file: File) => {
+  // Upload picked/dropped/pasted files to chat-media and stage them as
+  // drafts, appended to any already staged.
+  const stageUploads = useCallback(
+    async (items: { kind: ComposerMediaKind; file: File }[]) => {
       // Per-kind ceiling mirrors Meta's caps (image 5 MB, etc.) so we
       // reject before upload rather than orphaning an object that Meta
       // would then refuse at send.
-      const max = MEDIA_MAX_BYTES_BY_KIND[kind];
-      if (file.size > max) {
+      const accepted = items.filter(({ kind, file }) => {
+        const max = MEDIA_MAX_BYTES_BY_KIND[kind];
+        if (file.size <= max) return true;
         const kindLabel =
           kind === "image" ? t("photo")
           : kind === "video" ? t("video")
@@ -643,57 +654,82 @@ export function MessageComposer({
             maxMb: Math.round(max / 1024 / 1024),
           }),
         );
-        return;
+        return false;
+      });
+      const room = MAX_MEDIA_DRAFTS - draftsRef.current.length;
+      if (accepted.length > room) {
+        toast.error(t("tooManyAttachments", { max: MAX_MEDIA_DRAFTS }));
       }
+      const batch = accepted.slice(0, Math.max(room, 0));
+      if (batch.length === 0) return;
+
       setBusy(true);
       try {
-        const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
-        // Replacing an existing draft? GC the previous object first.
-        removeStaged(draftRef.current?.path);
-        setDraft({ kind, mediaUrl: publicUrl, path, filename: file.name, caption: "" });
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : t("uploadFailed"));
+        // Parallel uploads; allSettled keeps the picked order and lets
+        // one failed file not sink the rest.
+        const results = await Promise.allSettled(
+          batch.map(({ file }) => uploadAccountMedia(CHAT_MEDIA_BUCKET, file)),
+        );
+        const staged: MediaDraft[] = [];
+        results.forEach((r, i) => {
+          if (r.status === "fulfilled") {
+            staged.push({
+              id: r.value.path,
+              kind: batch[i].kind,
+              mediaUrl: r.value.publicUrl,
+              path: r.value.path,
+              filename: batch[i].file.name,
+            });
+          } else {
+            const err = r.reason;
+            toast.error(err instanceof Error ? err.message : t("uploadFailed"));
+          }
+        });
+        if (staged.length > 0) setDrafts((prev) => [...prev, ...staged]);
       } finally {
         setBusy(false);
       }
     },
-    [removeStaged, t],
+    [t],
   );
 
   const handlePicked = useCallback(
-    (kind: "image" | "video" | "document", file: File | undefined) => {
-      if (file) void stageUpload(kind, file);
+    (kind: "image" | "video" | "document", files: FileList | null) => {
+      if (files && files.length > 0) {
+        void stageUploads(Array.from(files, (file) => ({ kind, file })));
+      }
     },
-    [stageUpload],
+    [stageUploads],
   );
 
   // Drag-and-drop / paste entry point: same checks as the picker, but the
-  // kind is inferred from the file instead of the menu item clicked.
-  const attachFile = useCallback(
-    (file: File) => {
-      if (inputsDisabled || busy || recording) return;
-      const kind = kindForFile(file);
-      if (!kind) {
-        toast.error(t("unsupportedFile", { name: file.name }));
-        return;
+  // kind is inferred from each file instead of the menu item clicked.
+  const attachFiles = useCallback(
+    (files: File[]) => {
+      if (inputsDisabled || busy || recording || files.length === 0) return;
+      const items: { kind: ComposerMediaKind; file: File }[] = [];
+      for (const file of files) {
+        const kind = kindForFile(file);
+        if (kind) items.push({ kind, file });
+        else toast.error(t("unsupportedFile", { name: file.name }));
       }
-      void stageUpload(kind, file);
+      if (items.length > 0) void stageUploads(items);
     },
-    [inputsDisabled, busy, recording, stageUpload, t],
+    [inputsDisabled, busy, recording, stageUploads, t],
   );
 
-  useImperativeHandle(ref, () => ({ attachFile }), [attachFile]);
+  useImperativeHandle(ref, () => ({ attachFiles }), [attachFiles]);
 
   // Ctrl+V of a screenshot or a copied file attaches it; plain-text
   // pastes fall through to the textarea untouched.
   const handlePaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
-      const file = e.clipboardData.files[0];
-      if (!file) return;
+      const files = Array.from(e.clipboardData.files);
+      if (files.length === 0) return;
       e.preventDefault();
-      attachFile(file);
+      attachFiles(files);
     },
-    [attachFile],
+    [attachFiles],
   );
 
   // ---- Voice recording (client-side Ogg/Opus, no server transcode) ---
@@ -939,33 +975,44 @@ export function MessageComposer({
 
   // ---- Draft send / discard -----------------------------------------
 
-  const sendDraft = useCallback(() => {
-    if (!draft || busy) return;
-    onSendMedia({
-      kind: draft.kind,
-      mediaUrl: draft.mediaUrl,
-      path: draft.path,
-      // Audio takes no caption (Meta rejects it). Everything else: the
-      // trimmed caption, or undefined when blank.
-      caption:
-        draft.kind === "audio" ? undefined : draft.caption.trim() || undefined,
-      filename: draft.kind === "document" ? draft.filename : undefined,
-      replyToId: replyTo?.id,
-    });
-    // The object is now owned by the sent message — clear without GC.
-    setDraft(null);
+  const sendDrafts = useCallback(async () => {
+    if (drafts.length === 0 || busy) return;
+    const toSend = drafts;
+    const text = caption.trim() || undefined;
+    const replyToId = replyTo?.id;
+    // The objects are now owned by the sent messages — clear without GC.
+    setDrafts([]);
+    setCaption("");
     onClearReply?.();
-  }, [draft, busy, onSendMedia, replyTo?.id, onClearReply]);
+    setBusy(true);
+    try {
+      // One after another so they arrive in the order they were picked.
+      // The caption and the quoted reply ride on the first one only.
+      for (const [i, d] of toSend.entries()) {
+        await onSendMedia({
+          kind: d.kind,
+          mediaUrl: d.mediaUrl,
+          path: d.path,
+          // Audio takes no caption (Meta rejects it).
+          caption: i === 0 && d.kind !== "audio" ? text : undefined,
+          filename: d.kind === "document" ? d.filename : undefined,
+          replyToId: i === 0 ? replyToId : undefined,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [drafts, caption, busy, onSendMedia, replyTo?.id, onClearReply]);
 
   // Discard GCs the staged object — it was uploaded but never sent.
-  const discardDraft = useCallback(() => {
-    removeStaged(draft?.path);
-    setDraft(null);
-  }, [draft?.path, removeStaged]);
-
-  const setCaption = useCallback((caption: string) => {
-    setDraft((d) => (d ? { ...d, caption } : d));
-  }, []);
+  const discardDraft = useCallback(
+    (id: string) => {
+      const d = drafts.find((x) => x.id === id);
+      removeStaged(d?.path);
+      setDrafts((prev) => prev.filter((x) => x.id !== id));
+    },
+    [drafts, removeStaged],
+  );
 
   // ---- Render --------------------------------------------------------
 
@@ -1021,9 +1068,10 @@ export function MessageComposer({
         ref={imageInputRef}
         type="file"
         accept={PICKER_ACCEPT.image}
+        multiple
         className="hidden"
         onChange={(e) => {
-          handlePicked("image", e.target.files?.[0]);
+          handlePicked("image", e.target.files);
           e.target.value = "";
         }}
       />
@@ -1031,9 +1079,10 @@ export function MessageComposer({
         ref={videoInputRef}
         type="file"
         accept={PICKER_ACCEPT.video}
+        multiple
         className="hidden"
         onChange={(e) => {
-          handlePicked("video", e.target.files?.[0]);
+          handlePicked("video", e.target.files);
           e.target.value = "";
         }}
       />
@@ -1041,21 +1090,25 @@ export function MessageComposer({
         ref={documentInputRef}
         type="file"
         accept={PICKER_ACCEPT.document}
+        multiple
         className="hidden"
         onChange={(e) => {
-          handlePicked("document", e.target.files?.[0]);
+          handlePicked("document", e.target.files);
           e.target.value = "";
         }}
       />
 
-      {draft ? (
+      {drafts.length > 0 ? (
         <MediaDraftPreview
-          draft={draft}
+          drafts={drafts}
+          caption={caption}
           busy={busy}
           readOnly={readOnly}
+          canAddMore={drafts.length < MAX_MEDIA_DRAFTS}
+          onAddMore={() => imageInputRef.current?.click()}
           onCaptionChange={setCaption}
           onDiscard={discardDraft}
-          onSend={sendDraft}
+          onSend={() => void sendDrafts()}
           t={t}
         />
       ) : (
@@ -1418,7 +1471,7 @@ export function MessageComposer({
           that means nothing there, and the indent assumes the
           four-button layout that only collapses inside the wrapper.
           Unchanged in any real browser, phone or not. */}
-      {!draft && !recording && (
+      {drafts.length === 0 && !recording && (
         <p
           className={cn(
             "mt-1 pl-[5.5rem] text-[10px] text-muted-foreground",
@@ -1481,61 +1534,105 @@ export function MessageComposer({
  * caption input on every keystroke and drop focus.
  */
 function MediaDraftPreview({
-  draft,
+  drafts,
+  caption,
   busy,
   readOnly,
+  canAddMore,
+  onAddMore,
   onCaptionChange,
   onDiscard,
   onSend,
   t,
 }: {
-  draft: MediaDraft;
+  drafts: MediaDraft[];
+  caption: string;
   busy: boolean;
   readOnly: boolean;
+  canAddMore: boolean;
+  onAddMore: () => void;
   onCaptionChange: (caption: string) => void;
-  onDiscard: () => void;
+  onDiscard: (id: string) => void;
   onSend: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
+  const single = drafts.length === 1 ? drafts[0] : null;
+  const allAudio = drafts.every((d) => d.kind === "audio");
   return (
     <div className="rounded-xl border border-border bg-muted/40 p-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          {draft.kind === "image" && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={draft.mediaUrl}
-              alt={draft.filename}
-              className="max-h-40 rounded-lg object-cover"
-            />
-          )}
-          {draft.kind === "video" && (
-            <video src={draft.mediaUrl} controls className="max-h-40 rounded-lg" />
-          )}
-          {draft.kind === "audio" && (
-            <audio src={draft.mediaUrl} controls className="w-full" />
-          )}
-          {draft.kind === "document" && (
-            <div className="flex items-center gap-2 text-sm text-foreground">
-              <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-              <span className="truncate">{draft.filename}</span>
-            </div>
-          )}
+      {single ? (
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            {single.kind === "image" && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={single.mediaUrl}
+                alt={single.filename}
+                className="max-h-40 rounded-lg object-cover"
+              />
+            )}
+            {single.kind === "video" && (
+              <video src={single.mediaUrl} controls className="max-h-40 rounded-lg" />
+            )}
+            {single.kind === "audio" && (
+              <audio src={single.mediaUrl} controls className="w-full" />
+            )}
+            {single.kind === "document" && (
+              <div className="flex items-center gap-2 text-sm text-foreground">
+                <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{single.filename}</span>
+              </div>
+            )}
+          </div>
+          {canAddMore && <AddMoreButton onClick={onAddMore} disabled={busy} t={t} />}
+          <button
+            type="button"
+            onClick={() => onDiscard(single.id)}
+            aria-label={t("removeAttachment")}
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onDiscard}
-          aria-label={t("removeAttachment")}
-          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+      ) : (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {drafts.map((d) => (
+            <div
+              key={d.id}
+              className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-border bg-muted"
+              title={d.filename}
+            >
+              {d.kind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={d.mediaUrl} alt={d.filename} className="h-full w-full object-cover" />
+              ) : d.kind === "video" ? (
+                <video src={d.mediaUrl} muted className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-1">
+                  <FileText className="h-5 w-5 text-muted-foreground" />
+                  <span className="w-full truncate text-center text-[10px] text-foreground">
+                    {d.filename}
+                  </span>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => onDiscard(d.id)}
+                aria-label={t("removeAttachment")}
+                className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {canAddMore && <AddMoreButton onClick={onAddMore} disabled={busy} t={t} tile />}
+        </div>
+      )}
 
       <div className="mt-2 flex items-end gap-2">
-        {draft.kind !== "audio" && (
+        {!allAudio && (
           <input
-            value={draft.caption}
+            value={caption}
             maxLength={MEDIA_CAPTION_MAX}
             onChange={(e) => onCaptionChange(e.target.value)}
             onKeyDown={(e) => {
@@ -1556,13 +1653,42 @@ function MediaDraftPreview({
           onClick={onSend}
           className={cn(
             "h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40",
-            draft.kind === "audio" && "ml-auto",
+            allAudio && "ml-auto",
           )}
         >
-          <Send className="h-4 w-4" />
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </GatedButton>
       </div>
     </div>
+  );
+}
+
+/** "+" to pick more photos while some are already staged. */
+function AddMoreButton({
+  onClick,
+  disabled,
+  t,
+  tile = false,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  t: ReturnType<typeof useTranslations>;
+  tile?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={t("addMoreAttachments")}
+      title={t("addMoreAttachments")}
+      className={cn(
+        "flex shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40",
+        tile ? "h-20 w-20 rounded-lg border border-dashed border-border" : "rounded p-1",
+      )}
+    >
+      <Plus className={tile ? "h-5 w-5" : "h-4 w-4"} />
+    </button>
   );
 }
 

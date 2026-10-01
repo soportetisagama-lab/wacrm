@@ -261,6 +261,8 @@
       "draftWithAI": "Redactar respuesta con IA",
       "addCaption": "Agregar un pie de foto…",
       "removeAttachment": "Quitar adjunto",
+      "tooManyAttachments": "Puedes adjuntar hasta {max} archivos a la vez.",
+      "addMoreAttachments": "Agregar más",
       "moreActions": "Más",
       "interactiveMessage": "Mensaje interactivo",
       "quickReplies": "Respuestas rápidas",

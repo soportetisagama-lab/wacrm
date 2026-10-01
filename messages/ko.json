@@ -261,6 +261,8 @@
       "draftWithAI": "AI로 답장 초안 작성",
       "addCaption": "캡션 추가…",
       "removeAttachment": "첨부 파일 제거",
+      "tooManyAttachments": "한 번에 최대 {max}개의 파일을 첨부할 수 있습니다.",
+      "addMoreAttachments": "더 추가",
       "moreActions": "더보기",
       "interactiveMessage": "인터랙티브 메시지",
       "quickReplies": "빠른 답장",
