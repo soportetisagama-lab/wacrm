@@ -895,6 +895,24 @@ export function MessageThread({
     [contactDisplayName]
   );
 
+  // Clicking a reply's quote scrolls to the quoted message and flashes
+  // it, like WhatsApp — so the agent sees which photo the customer meant.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+  }, []);
+  const jumpToMessage = useCallback((messageId: string) => {
+    const el = scrollRef.current?.querySelector(
+      `[data-message-id="${CSS.escape(messageId)}"]`
+    );
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedId(messageId);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightedId(null), 1600);
+  }, []);
+
   const handleStartReply = useCallback(
     (msg: Message) => {
       setReplyTo({
@@ -1420,6 +1438,11 @@ export function MessageThread({
                                 contact?.whatsapp_user_id ||
                                 'Unknown',
                           preview: buildReplyPreview(parent, tQuote),
+                          thumbnailUrl:
+                            parent.content_type === 'image'
+                              ? parent.media_url
+                              : undefined,
+                          onJump: () => jumpToMessage(parent.id),
                         }
                       : null;
                     const msgReactions = reactionsByMessageId.get(msg.id);
@@ -1445,6 +1468,7 @@ export function MessageThread({
                         <MessageBubble
                           message={msg}
                           reply={reply}
+                          highlighted={highlightedId === msg.id}
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
