@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { canResumeAi } from '@/lib/auth/roles'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 type Params = { params: Promise<{ conversationId: string }> }
@@ -15,7 +16,7 @@ type Params = { params: Promise<{ conversationId: string }> }
  *                     `assign_to_me` is set, also assign the thread to the
  *                     caller (the usual "Take over" flow). Assignment
  *                     fires the `on_conversation_assigned` trigger.
- *   - paused: false → hand the thread back to the bot: clear the pause,
+ *   - paused: false → (supervisors only, see canResumeAi) hand the thread back to the bot: clear the pause,
  *                     reset the per-conversation reply count so it gets
  *                     fresh slots, and clear the handoff note. If the
  *                     caller currently owns the thread, unassign it too so
@@ -26,7 +27,7 @@ type Params = { params: Promise<{ conversationId: string }> }
  */
 export async function POST(request: Request, { params }: Params) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, userId, role } = await requireRole('agent')
 
     // Reuse the send bucket: this is a cheap per-user inbox action and
     // toggling it in a tight loop has no legitimate use.
@@ -43,6 +44,15 @@ export async function POST(request: Request, { params }: Params) {
     }
     const paused = body.paused as boolean
     const assignToMe = body.assign_to_me === true
+
+    // An Asesor can take over but never hand the thread back to the bot
+    // — the banner hides the button for them; this is the backstop.
+    if (!paused && !canResumeAi(role)) {
+      return NextResponse.json(
+        { error: 'Your role cannot resume the AI on this conversation' },
+        { status: 403 },
+      )
+    }
 
     // Confirm the conversation is in the caller's account before writing.
     const { data: conv, error: convErr } = await supabase

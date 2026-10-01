@@ -251,3 +251,14 @@ const ASSIGN_CONVERSATION_ROLES: readonly AccountRole[] = [
 export function canAssignConversations(role: AccountRole): boolean {
   return ASSIGN_CONVERSATION_ROLES.includes(role);
 }
+
+/**
+ * Who may hand a paused thread back to the AI bot ("Reanudar IA").
+ * Not the Asesor: once they've answered the customer themselves the
+ * bot has no business picking the conversation back up. Same
+ * supervisor list as `canAssignConversations`, since resuming also
+ * releases the thread's assignment.
+ */
+export function canResumeAi(role: AccountRole): boolean {
+  return ASSIGN_CONVERSATION_ROLES.includes(role);
+}

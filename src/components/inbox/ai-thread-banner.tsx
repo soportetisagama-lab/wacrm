@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
+import { canResumeAi } from "@/lib/auth/roles";
 
 // ------------------------------------------------------------
 // Account AI status is the same for every conversation, so cache it per
@@ -79,7 +80,7 @@ export function AiThreadBanner({
   onChange,
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
-  const { accountId } = useAuth();
+  const { accountId, accountRole } = useAuth();
   const [autoReplyOn, setAutoReplyOn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   // Optimistic local mirror of the pause flag so the banner flips
@@ -149,9 +150,12 @@ export function AiThreadBanner({
             </p>
           )}
         </div>
-        <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
-          {t("resume")}
-        </BannerButton>
+        {/* An Asesor who already answered shouldn't hand the chat back to the bot. */}
+        {accountRole && canResumeAi(accountRole) && (
+          <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
+            {t("resume")}
+          </BannerButton>
+        )}
       </Banner>
     );
   }
