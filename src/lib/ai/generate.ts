@@ -93,7 +93,26 @@ export function parseGeneration(
     .join('')
     .replace(SEND_DOCUMENT_SENTINEL_RE, '')
     .trim()
+  // The model "thought out loud" instead of replying (observed: an
+  // English monologue ending in "Handoff." without the sentinel) —
+  // never send that to the customer; treat it as the handoff it meant.
+  if (looksLikeLeakedReasoning(text)) {
+    return { text: '', handoff: true, sendDocument, usage }
+  }
   return { text, handoff, sendDocument, usage }
+}
+
+/**
+ * Phrases that only appear when the model writes its internal
+ * deliberation into the customer-facing reply — talk about the "user",
+ * the handoff protocol or its own instructions. A real WhatsApp reply
+ * never mentions any of these.
+ */
+const LEAKED_REASONING_RE =
+  /\bhand[\s-]?off\b|\bsystem prompt\b|\breply_text\b|\bsentinel\b|\bthe user\b|\buser (?:says|said|asks|asked|wants|writes|is asking)\b|\bneed (?:an? )?answer\b/i
+
+export function looksLikeLeakedReasoning(text: string): boolean {
+  return LEAKED_REASONING_RE.test(text)
 }
 
 // ============================================================
@@ -219,11 +238,16 @@ export function parseExtraction(
       ? obj.send_document
       : null
 
+  const replyText = typeof obj.reply_text === 'string' ? obj.reply_text.trim() : ''
+  // Same guard as parseGeneration: deliberation in `reply_text` is
+  // dropped and turned into a handoff instead of reaching the customer.
+  const leaked = looksLikeLeakedReasoning(replyText)
+
   return {
     fields: extracted,
-    replyText: typeof obj.reply_text === 'string' ? obj.reply_text.trim() : '',
-    done: obj.done === true,
-    handoff: obj.handoff === true,
+    replyText: leaked ? '' : replyText,
+    done: leaked ? false : obj.done === true,
+    handoff: leaked || obj.handoff === true,
     sendDocument,
     usage,
   }
