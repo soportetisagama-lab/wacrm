@@ -113,7 +113,7 @@ export function buildSystemPrompt(args: {
       'Write the next reply the business should send to the customer.',
     'Guidelines: reply in the same language the customer is writing in; keep it concise and friendly, suitable for WhatsApp; ' +
       'never invent facts, prices, order numbers, availability, or promises that are not supported by the conversation or the business context below; ' +
-      'output only the message text — no quotes, no "Reply:" label, no preamble.',
+      'output only the message text — no quotes, no "Reply:" label, no preamble; never write your reasoning, analysis or notes, since everything you output is sent verbatim to the customer.',
     NEUTRAL_SPANISH_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
   ]

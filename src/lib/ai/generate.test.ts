@@ -86,6 +86,26 @@ describe('parseGeneration', () => {
     expect(res.sendDocument).toBeNull()
   })
 
+  it('turns leaked reasoning into a handoff instead of sending it', () => {
+    // Real output that reached a customer on the Maxi line.
+    const leaked =
+      'Necesito hacer un ejemplo speech telling to B2B client about opening a professional deck. ' +
+      'Wait user says "Costo". Need answer in Spanish. We need handoff? We have no price. ' +
+      'Must not invent price. Handoff.'
+    expect(parseGeneration(leaked)).toEqual({
+      text: '',
+      handoff: true,
+      sendDocument: null,
+      usage: null,
+    })
+  })
+
+  it('does not flag a normal Spanish reply', () => {
+    const res = parseGeneration('¡Claro! Un asesor te enviará la cotización a primera hora. 😊')
+    expect(res.handoff).toBe(false)
+    expect(res.text).not.toBe('')
+  })
+
   it('passes usage straight through', () => {
     const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 }
     expect(parseGeneration('Hi', [], usage)).toEqual({
@@ -242,6 +262,22 @@ describe('parseExtraction', () => {
       sendDocument: null,
       usage: null,
     })
+  })
+
+  it('drops leaked reasoning in reply_text and hands off instead', () => {
+    const res = parseExtraction(
+      {
+        extracted: { equipos: '2 góndolas' },
+        reply_text: 'User says "Costo". We have no price. Let\'s do handoff?',
+        done: true,
+        handoff: false,
+      },
+      FIELDS,
+    )
+    expect(res.fields).toEqual({ equipos: '2 góndolas' })
+    expect(res.replyText).toBe('')
+    expect(res.done).toBe(false)
+    expect(res.handoff).toBe(true)
   })
 
   it('drops hallucinated keys not in the field list', () => {
