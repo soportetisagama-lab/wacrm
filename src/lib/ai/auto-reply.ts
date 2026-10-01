@@ -1,6 +1,6 @@
 import { supabaseAdmin } from './admin-client'
 import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
-import type { AiConfig } from './types'
+import { AiError, type AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
@@ -471,11 +471,20 @@ export async function runAutoReplyNow(
       outboundTransferNote: await loadOutboundTransferContext(db, conversationId, contactId),
     })
 
+    // An empty completion (the model spent its whole budget without
+    // writing a reply) used to end in silence for the customer — treat
+    // it as the handoff it effectively is. Other errors still bubble.
     const { text, handoff, sendDocument, usage } = await generateReply({
       config,
       systemPrompt,
       messages,
       documents: config.documents,
+    }).catch((err: unknown) => {
+      if (err instanceof AiError && err.code === 'empty_response') {
+        console.error('[ai auto-reply] empty model response, handing off:', err.message)
+        return { text: '', handoff: true, sendDocument: null, usage: null }
+      }
+      throw err
     })
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
