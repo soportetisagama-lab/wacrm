@@ -54,6 +54,25 @@ describe('generateOpenAi — image content', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.messages[1]).toEqual({ role: 'user', content: 'hello' })
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it('asks reasoning models for low effort so the reply is not starved of tokens', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({ choices: [{ message: { content: 'Sure.' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateOpenAi({
+      apiKey: 'sk-test',
+      model: 'gpt-5.4-mini',
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'hello' }],
+      timeoutMs: 5000,
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBe('low')
   })
 })
 

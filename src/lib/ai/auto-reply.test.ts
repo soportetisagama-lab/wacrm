@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AiConfig } from './types'
+import { AiError, type AiConfig } from './types'
 
 // Shared, hoisted mock state so the module mocks can close over it.
 const h = vi.hoisted(() => ({
@@ -458,6 +458,19 @@ describe('dispatchInboundToAiReply — handoff', () => {
     )
     // No handoff target configured → conversation left unassigned.
     expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('hands off instead of going silent when the model returns an empty response', async () => {
+    h.generateReply.mockRejectedValue(
+      new AiError('OpenAI returned an empty response.', { code: 'empty_response' }),
+    )
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Te comunico con un asesor especializado'),
+      }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
 
   it('routes to the configured handoff agent on handoff', async () => {
