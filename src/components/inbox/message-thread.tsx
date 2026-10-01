@@ -682,7 +682,7 @@ export function MessageThread({
           ? payload.caption || payload.filename || 'Document'
           : payload.caption;
 
-      const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const optimisticMsg: Message = {
         id: tempId,
         conversation_id: conversation.id,
@@ -1107,8 +1107,8 @@ export function MessageThread({
         e.preventDefault();
         dragDepthRef.current = 0;
         setDragging(false);
-        const file = e.dataTransfer.files[0];
-        if (file) composerRef.current?.attachFile(file);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) composerRef.current?.attachFiles(files);
       }}
     >
       {dragging && (
