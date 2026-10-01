@@ -157,7 +157,7 @@ export function buildExtractionPrompt(args: {
 
   parts.push(
     'In `extracted`, return ONLY new or updated values you are confident about from the latest customer message and the conversation so far — leave a field null if the customer has not actually provided it; never guess. ' +
-      '`reply_text` is the next message to send: reply in the same language the customer is writing in, keep it concise and friendly (suitable for WhatsApp), and ask only about the still-missing required fields — do not repeat what you already have. ' +
+      '`reply_text` is the next message to send, verbatim, to the customer — never put your reasoning, analysis or notes in it: reply in the same language the customer is writing in, keep it concise and friendly (suitable for WhatsApp), and ask only about the still-missing required fields — do not repeat what you already have. ' +
       'Set `done: true` only once every required field has a real value; in that case `reply_text` should be a short closing confirmation, not another question. ' +
       "Set `handoff: true` if the customer explicitly asks for a human, seems upset, or the conversation has gone somewhere you cannot resolve by collecting these fields — prefer handing off over guessing or over-probing.",
   )
