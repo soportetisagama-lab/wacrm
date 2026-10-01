@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMediaBlobUrl } from "@/hooks/use-media-blob-url";
 import type { Message } from "@/types";
 import { useTranslations } from "next-intl";
 
@@ -19,6 +20,11 @@ interface ReplyQuoteProps {
    *  quote must read against the primary surface rather than the neutral
    *  foreground — otherwise it goes low-contrast in light mode. */
   onPrimary?: boolean;
+  /** Quoted image's media URL — shown as a small thumbnail on the right,
+   *  like WhatsApp, so the agent sees which photo the customer means. */
+  thumbnailUrl?: string;
+  /** Present → the quote is clickable and jumps to the quoted message. */
+  onJump?: () => void;
 }
 
 export function ReplyQuote({
@@ -26,12 +32,28 @@ export function ReplyQuote({
   preview,
   onDismiss,
   onPrimary = false,
+  thumbnailUrl,
+  onJump,
 }: ReplyQuoteProps) {
   const t = useTranslations("Inbox.replyQuote");
   const isChip = !!onDismiss;
   return (
     <div
+      role={onJump ? "button" : undefined}
+      tabIndex={onJump ? 0 : undefined}
+      onClick={onJump}
+      onKeyDown={
+        onJump
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onJump();
+              }
+            }
+          : undefined
+      }
       className={cn(
+        onJump && "cursor-pointer transition-opacity hover:opacity-80",
         "flex items-start gap-2 border-l-2 px-2 py-1",
         onPrimary ? "border-primary-foreground/50" : "border-primary",
         isChip
@@ -61,6 +83,7 @@ export function ReplyQuote({
           {preview}
         </div>
       </div>
+      {thumbnailUrl && <QuoteThumbnail url={thumbnailUrl} />}
       {onDismiss && (
         <button
           type="button"
@@ -72,6 +95,15 @@ export function ReplyQuote({
         </button>
       )}
     </div>
+  );
+}
+
+function QuoteThumbnail({ url }: { url: string }) {
+  const { src } = useMediaBlobUrl(url);
+  if (!src) return <div className="h-10 w-10 shrink-0 rounded bg-muted" />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- blob: URL, next/image can't optimize it
+    <img src={src} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
   );
 }
 

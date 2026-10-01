@@ -28,7 +28,16 @@ import { useTranslations } from "next-intl";
 interface MessageBubbleProps {
   message: Message;
   /** Pre-computed quote info for messages that reply to another. */
-  reply?: { authorLabel: string; preview: string } | null;
+  reply?: {
+    authorLabel: string;
+    preview: string;
+    /** Quoted image's media URL, for the quote thumbnail. */
+    thumbnailUrl?: string;
+    /** Scrolls to + highlights the quoted message. */
+    onJump?: () => void;
+  } | null;
+  /** Briefly true after a quote jumped here, to flash the bubble. */
+  highlighted?: boolean;
   reactions?: MessageReaction[];
   currentUserId?: string;
   onToggleReaction?: (emoji: string) => void;
@@ -200,6 +209,7 @@ function MessageContent({
 export function MessageBubble({
   message,
   reply,
+  highlighted = false,
   reactions,
   currentUserId,
   onToggleReaction,
@@ -214,6 +224,7 @@ export function MessageBubble({
   // group matches the bubble's content area, not the full row.
   return (
     <div
+      data-message-id={message.id}
       className={cn(
         "flex flex-col",
         isAgent ? "items-end" : "items-start",
@@ -223,7 +234,8 @@ export function MessageBubble({
         className={cn(
           // max-w-full: never wider than the row's width cap, even when
           // the content (e.g. a long file name) would like to be.
-          "relative max-w-full rounded-2xl px-3 py-2",
+          "relative max-w-full rounded-2xl px-3 py-2 transition-shadow duration-500",
+          highlighted && "ring-2 ring-amber-400 ring-offset-2 ring-offset-background",
           isAgent
             ? "rounded-br-md bg-primary text-primary-foreground"
             : "rounded-bl-md bg-muted text-foreground",
@@ -234,6 +246,8 @@ export function MessageBubble({
             authorLabel={reply.authorLabel}
             preview={reply.preview}
             onPrimary={isAgent}
+            thumbnailUrl={reply.thumbnailUrl}
+            onJump={reply.onJump}
           />
         )}
         <MessageContent message={message} t={t} onOpenMedia={onOpenMedia} />
