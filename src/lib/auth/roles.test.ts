@@ -3,6 +3,7 @@ import {
   ACCOUNT_ROLES,
   type AccountRole,
   canAssignConversations,
+  canResumeAi,
   canCreateSharedTags,
   canDeleteAccount,
   canDeleteContacts,
@@ -221,6 +222,16 @@ describe('capability predicates', () => {
     expect(canAssignConversations('atc')).toBe(true);
     expect(canAssignConversations('agent')).toBe(false);
     expect(canAssignConversations('viewer')).toBe(false);
+  });
+
+  it('canResumeAi: supervisors only — an Asesor can never hand the thread back to the bot', () => {
+    expect(canResumeAi('owner')).toBe(true);
+    expect(canResumeAi('admin')).toBe(true);
+    expect(canResumeAi('gerencia')).toBe(true);
+    expect(canResumeAi('jefe_linea')).toBe(true);
+    expect(canResumeAi('atc')).toBe(true);
+    expect(canResumeAi('agent')).toBe(false);
+    expect(canResumeAi('viewer')).toBe(false);
   });
 });
 
