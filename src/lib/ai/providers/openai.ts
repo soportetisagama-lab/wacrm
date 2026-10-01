@@ -29,6 +29,16 @@ function toOpenAiContent(content: string | ContentBlock[]): string | OpenAiConte
   )
 }
 
+/**
+ * Reasoning models (gpt-5*, o-series) spend `max_completion_tokens` on
+ * hidden reasoning first; at the default effort a short WhatsApp turn
+ * can burn the whole budget and come back with empty content. Ask for
+ * low effort so the reply always fits. Other models reject the param.
+ */
+function reasoningParams(model: string): { reasoning_effort?: 'low' } {
+  return /^(gpt-5|o\d)/i.test(model) ? { reasoning_effort: 'low' } : {}
+}
+
 interface OpenAiResponse {
   choices?: { message?: { content?: string } }[]
   usage?: {
@@ -64,6 +74,7 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
           })),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
+        ...reasoningParams(model),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -133,6 +144,7 @@ export async function generateOpenAiStructured(
           })),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
+        ...reasoningParams(model),
         tools: [
           {
             type: 'function',
