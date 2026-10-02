@@ -39,6 +39,19 @@ function reasoningParams(model: string): { reasoning_effort?: 'low' } {
   return /^(gpt-5|o\d)/i.test(model) ? { reasoning_effort: 'low' } : {}
 }
 
+/**
+ * Same idea for the forced function-tool call (`generateOpenAiStructured`),
+ * except Chat Completions rejects function tools combined with any
+ * effort but 'none' on gpt-5.x models — observed in production:
+ * "Function tools with reasoning_effort are not supported for
+ * gpt-5.4-mini in /v1/chat/completions … set reasoning_effort to
+ * 'none'", which broke every collect_ai flow node. 'none' only exists
+ * from gpt-5.1 on, so older reasoning models keep their default.
+ */
+function structuredReasoningParams(model: string): { reasoning_effort?: 'none' } {
+  return /^gpt-5\.\d/i.test(model) ? { reasoning_effort: 'none' } : {}
+}
+
 interface OpenAiResponse {
   choices?: { message?: { content?: string } }[]
   usage?: {
@@ -144,7 +157,7 @@ export async function generateOpenAiStructured(
           })),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
-        ...reasoningParams(model),
+        ...structuredReasoningParams(model),
         tools: [
           {
             type: 'function',
