@@ -266,6 +266,16 @@ async function composeNudgeText(
 
 const NUDGE_CONTEXT_LIMIT = 30
 
+/** A customer parked on a menu (buttons/list) also gets reminded they
+ *  can bring the options back by typing "menú" — the reentry keyword
+ *  the old fixed reminders pointed to. Skipped when the text already
+ *  mentions it. */
+function withMenuHint(text: string, nodeType: string): string {
+  if (nodeType !== 'send_buttons' && nodeType !== 'send_list') return text
+  if (/men[uú]/i.test(text)) return text
+  return `${text}\n\nSi prefieres, escribe *menú* para ver las opciones.`
+}
+
 /** Node types eligible for an inactivity nudge — anything that can
  *  leave a run parked waiting for the customer's next move. */
 const NUDGE_ELIGIBLE_NODE_TYPES = ['collect_ai', 'send_buttons', 'send_list'] as const;
@@ -362,11 +372,14 @@ async function maybeSendInactivityNudge(
       userId: run.user_id,
       conversationId: run.conversation_id,
       contactId: run.contact_id,
-      text: await composeNudgeText(admin, {
-        accountId: run.account_id,
-        conversationId: run.conversation_id,
-        fallback: cfg.nudge_text?.trim() || DEFAULT_NUDGE_TEXT,
-      }),
+      text: withMenuHint(
+        await composeNudgeText(admin, {
+          accountId: run.account_id,
+          conversationId: run.conversation_id,
+          fallback: cfg.nudge_text?.trim() || DEFAULT_NUDGE_TEXT,
+        }),
+        node.node_type,
+      ),
     })
   } catch (err) {
     console.error('[flows-cron] nudge send failed:', err instanceof Error ? err.message : err)
