@@ -41,6 +41,10 @@ vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('@/lib/line-transfer-inbound', () => ({ loadLineTransferContext: async () => null }))
 vi.mock('@/lib/line-transfer-outbound', () => ({ loadOutboundTransferContext: async () => null }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
+// The advisor brief has its own model call + context read (tested in
+// handoff-brief.test.ts); stubbed so these tests keep asserting on the
+// reply path alone.
+vi.mock('./handoff-brief', () => ({ writeHandoffBrief: async () => {} }))
 vi.mock('./transcribe', () => ({ transcribeAudio: h.transcribeAudio }))
 vi.mock('@/lib/flows/meta-send', () => ({
   engineSendText: h.engineSendText,
@@ -250,7 +254,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('Te comunico con un asesor especializado'),
+        text: expect.stringContaining('ya le paso tu caso a un asesor'),
       }),
     )
     expect(h.engineSendText).not.toHaveBeenCalledWith(
@@ -336,7 +340,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('Te comunico con un asesor especializado'),
+        text: expect.stringContaining('ya le paso tu caso a un asesor'),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -427,7 +431,7 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
     }
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
@@ -449,7 +453,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('Te comunico con un asesor especializado'),
+        text: expect.stringContaining('ya le paso tu caso a un asesor'),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -467,7 +471,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Te comunico con un asesor especializado'),
+        text: expect.stringContaining('ya le paso tu caso a un asesor'),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -478,7 +482,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
     expect(h.state.updatePayload).toMatchObject({
       ai_autoreply_disabled: true,
@@ -654,7 +658,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     await dispatchInboundToAiReply(AUDIO_ARGS)
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
   })
 })
@@ -716,7 +720,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     await dispatchInboundToAiReply(IMAGE_ARGS)
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
   })
 })
@@ -787,7 +791,7 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
       expect.objectContaining({ kind: 'document', link: 'https://storage.example/catalogo.pdf' }),
     )
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
   })
 
@@ -945,7 +949,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await runAutoReplyNow(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
   })
 
@@ -969,7 +973,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     h.state.claim = false
     await runAutoReplyNow(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Te comunico con un asesor especializado') }),
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
     )
   })
 })
@@ -978,13 +982,13 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
 describe('handoffClosingText', () => {
   it('within hours promises the advisor "en breve"', () => {
     expect(handoffClosingText(new Date('2024-01-02T15:00:00Z'))).toBe(
-      '¡Claro! Te comunico con un asesor especializado, que continuará contigo por este chat en breve 🙌',
+      'Listo, ya le paso tu caso a un asesor del equipo y te escribe por aquí en breve 👍',
     )
   })
 
   it('after hours says when an advisor will actually write', () => {
     expect(handoffClosingText(new Date('2024-01-03T02:00:00Z'))).toBe(
-      '¡Claro! Te comunico con un asesor especializado 🙌 En este momento estamos fuera de nuestro horario de atención; un asesor te escribirá por este chat mañana a las 8:00 am.',
+      'Listo, ya le paso tu caso a un asesor del equipo 👍 Ahora estamos fuera de horario, así que te escribe por aquí mañana a las 8:00 am.',
     )
   })
 
