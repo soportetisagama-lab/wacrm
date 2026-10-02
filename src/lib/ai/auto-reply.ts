@@ -11,6 +11,7 @@ import { isWithinBusinessHours, nextOpeningPhrase } from '@/lib/flows/business-h
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
+import { writeHandoffBrief } from './handoff-brief'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
@@ -68,8 +69,8 @@ interface DispatchArgs {
  *  texts) instead of promising "en breve". */
 export function handoffClosingText(now: Date = new Date()): string {
   return isWithinBusinessHours(now)
-    ? '¡Claro! Te comunico con un asesor especializado, que continuará contigo por este chat en breve 🙌'
-    : `¡Claro! Te comunico con un asesor especializado 🙌 En este momento estamos fuera de nuestro horario de atención; un asesor te escribirá por este chat ${nextOpeningPhrase(now)}.`
+    ? 'Listo, ya le paso tu caso a un asesor del equipo y te escribe por aquí en breve 👍'
+    : `Listo, ya le paso tu caso a un asesor del equipo 👍 Ahora estamos fuera de horario, así que te escribe por aquí ${nextOpeningPhrase(now)}.`
 }
 
 /**
@@ -260,6 +261,7 @@ async function markNeedsHuman(
   await db.from('conversations').update(update).eq('id', args.conversationId)
 }
 
+
 /**
  * Reached the per-conversation reply cap (either the cheap pre-check
  * before generating a reply, or lost the atomic-claim race after
@@ -284,6 +286,11 @@ async function handleAutoReplyCapReached(
     config: args.config,
     assignedAgentId: args.assignedAgentId,
     summary: `🤖 Se alcanzó el límite de ${args.config.autoReplyMaxPerConversation} respuestas automáticas por conversación.`,
+  })
+  await writeHandoffBrief(db, {
+    accountId: args.accountId,
+    conversationId: args.conversationId,
+    config: args.config,
   })
 }
 
@@ -562,6 +569,10 @@ export async function runAutoReplyNow(
         assignedAgentId: conv.assigned_agent_id,
         summary,
       })
+      // Upgrade the note to an advisor brief with the details the
+      // customer gave — after the handoff is already committed, so a
+      // slow or failed model call never delays or blocks it.
+      await writeHandoffBrief(db, { accountId, conversationId, config })
       return
     }
 

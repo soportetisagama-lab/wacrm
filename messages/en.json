@@ -423,7 +423,9 @@
       "tookOver": "You’ve taken over this chat.",
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
-      "networkError": "Couldn’t reach the server."
+      "networkError": "Couldn’t reach the server.",
+      "showBrief": "Show full note",
+      "hideBrief": "Hide"
     }
   },
   "Contacts": {
