@@ -75,6 +75,11 @@ function isStale(conversation: Conversation): boolean {
   return Date.now() - new Date(conversation.last_message_at).getTime() > STALE_AFTER_MS;
 }
 
+/** Sort key for the WhatsApp-style "latest activity first" order. */
+function activityTime(conversation: Conversation): number {
+  return conversation.last_message_at ? new Date(conversation.last_message_at).getTime() : 0;
+}
+
 type InboxFilter = "all" | "unread" | "stale";
 
 /**
@@ -415,10 +420,12 @@ export function ConversationList({
   }, [conversations, filter, search, selectedTagIds, selectedCompany, selectedAgentId]);
 
   // Pinned conversations float to the top (most-recently-pinned first),
-  // same as WhatsApp; everything else keeps the order `filtered` already
-  // gave it. Skips the partition entirely when nothing is pinned.
+  // same as WhatsApp; everything else is re-sorted by latest activity on
+  // every change — realtime events patch rows in place, so without this
+  // a chat that just got a message (or was handed off to an advisor,
+  // which bumps last_message_at) would stay wherever the initial fetch
+  // put it until a reload.
   const sorted = useMemo(() => {
-    if (pinnedAt.size === 0) return filtered;
     const pinned: Conversation[] = [];
     const rest: Conversation[] = [];
     for (const c of filtered) {
@@ -427,6 +434,7 @@ export function ConversationList({
     pinned.sort(
       (a, b) => new Date(pinnedAt.get(b.id)!).getTime() - new Date(pinnedAt.get(a.id)!).getTime()
     );
+    rest.sort((a, b) => activityTime(b) - activityTime(a));
     return [...pinned, ...rest];
   }, [filtered, pinnedAt]);
 
