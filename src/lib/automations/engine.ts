@@ -498,7 +498,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!agentId) return 'no agent resolved'
       await db
         .from('conversations')
-        .update({ assigned_agent_id: agentId })
+        // Bump to the top of the inbox like a fresh message (unread is
+        // per-row, so it's left to the inbound that usually triggers this).
+        .update({ assigned_agent_id: agentId, last_message_at: new Date().toISOString() })
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
       return `assigned to ${agentId}`
