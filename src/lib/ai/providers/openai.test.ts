@@ -76,6 +76,37 @@ describe('generateOpenAi — image content', () => {
   })
 })
 
+describe('generateOpenAiStructured — reasoning effort', () => {
+  async function bodyFor(model: string) {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        choices: [{ message: { tool_calls: [{ function: { name: 'submit', arguments: '{}' } }] } }],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await generateOpenAiStructured({
+      apiKey: 'sk-test',
+      model,
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'hola' }],
+      timeoutMs: 5000,
+      schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      toolName: 'submit',
+    }).catch(() => {})
+    return JSON.parse(fetchMock.mock.calls[0][1].body)
+  }
+
+  it("sends 'none' on gpt-5.x — function tools reject any other effort there", async () => {
+    expect((await bodyFor('gpt-5.4-mini')).reasoning_effort).toBe('none')
+  })
+
+  it('omits the param for models that do not support none', async () => {
+    expect((await bodyFor('gpt-5-mini')).reasoning_effort).toBeUndefined()
+    expect((await bodyFor('o4-mini')).reasoning_effort).toBeUndefined()
+    expect((await bodyFor('gpt-4o-mini')).reasoning_effort).toBeUndefined()
+  })
+})
+
 describe('generateOpenAiStructured — image content', () => {
   it('maps image blocks the same way as the free-text path', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
