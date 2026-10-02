@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { attentionFields } from '@/lib/conversations/attention';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { usePresence } from '@/hooks/use-presence';
@@ -1022,10 +1023,17 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
+      // Handing the chat to someone else surfaces it for them like a
+      // fresh WhatsApp message (top of the inbox + unread badge); taking
+      // it yourself or unassigning leaves the order alone.
+      const handedToSomeoneElse = !!agentId && agentId !== user?.id;
       const supabase = createClient();
       const { error } = await supabase
         .from('conversations')
-        .update({ assigned_agent_id: agentId })
+        .update({
+          assigned_agent_id: agentId,
+          ...(handedToSomeoneElse ? attentionFields(conversation.unread_count) : {}),
+        })
         .eq('id', conversation.id);
 
       if (error) {
@@ -1036,7 +1044,7 @@ export function MessageThread({
 
       onAssignChange(conversation.id, agentId);
     },
-    [conversation, onAssignChange, t]
+    [conversation, onAssignChange, t, user?.id]
   );
 
   // Empty state — same WhatsApp-style doodle background as the active

@@ -32,8 +32,11 @@ export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 export const SEND_DOCUMENT_SENTINEL_RE = /\[\[SEND_DOCUMENT:([a-zA-Z0-9_]+)\]\]/
 
 /** Cap on generated reply length — keeps WhatsApp replies short and
- *  bounds token spend on the caller's own key. */
-export const MAX_OUTPUT_TOKENS = 1024
+ *  bounds token spend on the caller's own key. Only a backstop: the
+ *  real length control is HUMAN_STYLE_GUIDANCE, since on OpenAI
+ *  reasoning models this budget also covers hidden reasoning and too
+ *  low a cap comes back empty (= needless handoff). */
+export const MAX_OUTPUT_TOKENS = 800
 
 /**
  * Anti-prompt-injection guard shared by every prompt we build — the
@@ -54,6 +57,21 @@ export const UNTRUSTED_CUSTOMER_CONTENT_GUARD =
  */
 export const NEUTRAL_SPANISH_GUIDANCE =
   'When replying in Spanish, use neutral Latin American Spanish as spoken in Peru — "tú"/"usted", never Argentine "vos" or expressions like "che"; keep it natural and professional, not textbook-stiff.'
+
+/**
+ * Human-advisor style guard — shared by the same two prompts as the
+ * guards above. Advisors reported customers spotting the bot from its
+ * long, over-polite messages and stacked questions; this makes the
+ * model write like a real advisor chatting on WhatsApp.
+ */
+export const HUMAN_STYLE_GUIDANCE =
+  'Write like a real sales advisor chatting on WhatsApp, not like a bot: ' +
+  'keep every message short — usually one or two brief sentences, well under 300 characters — and only go longer when the customer asks for details that genuinely need it; ' +
+  'ask at most ONE question per message, and never stack several questions or ask for several details at once; ' +
+  'no bullet points, numbered lists, headings or bold text unless the customer asks for a list; ' +
+  'do not repeat or paraphrase what the customer just said, and do not over-thank or over-apologize; ' +
+  'avoid bot-like phrases such as "¡Excelente pregunta!", "Con gusto te ayudo", "Como asistente virtual", "Estoy aquí para ayudarte" or "¿Hay algo más en lo que pueda ayudarte?"; ' +
+  'greet only in your first message of the conversation, never sign off with a signature, and use emojis sparingly (at most one, and not in every message).'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_TRANSCRIBE_TIMEOUT_MS = 60_000
@@ -115,6 +133,7 @@ export function buildSystemPrompt(args: {
       'never invent facts, prices, order numbers, availability, or promises that are not supported by the conversation or the business context below; ' +
       'output only the message text — no quotes, no "Reply:" label, no preamble; never write your reasoning, analysis or notes, since everything you output is sent verbatim to the customer.',
     NEUTRAL_SPANISH_GUIDANCE,
+    HUMAN_STYLE_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
   ]
 

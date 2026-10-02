@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './admin-client'
 import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
+import { attentionFields } from '@/lib/conversations/attention'
 import { AiError, type AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
@@ -231,7 +232,15 @@ async function markNeedsHuman(
     summary: string
   },
 ): Promise<void> {
+  // Surface the handed-off chat like a fresh WhatsApp message — top of
+  // the inbox + unread badge (see lib/conversations/attention.ts).
+  const { data: current } = await db
+    .from('conversations')
+    .select('unread_count')
+    .eq('id', args.conversationId)
+    .maybeSingle()
   const update: Record<string, unknown> = {
+    ...attentionFields(current?.unread_count),
     // Also mark the thread 'pending' — mirrors markConversationPendingHandoff
     // (lib/flows/engine.ts) so the two independent "this needs a human"
     // signals (Flows' isConversationBotEligible checks `status`; this
