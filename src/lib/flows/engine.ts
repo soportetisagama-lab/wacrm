@@ -1036,7 +1036,7 @@ const DEFAULT_NON_TEXT_REPLY_TEXT =
  *  when a node is nudge-eligible but doesn't configure its own wording.
  *  Sent by the /api/flows/cron sweep, not by the engine itself. */
 export const DEFAULT_NUDGE_TEXT =
-  "¿Sigues ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.";
+  "Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.";
 
 /**
  * Default silence window (minutes) applied to a `send_buttons` /

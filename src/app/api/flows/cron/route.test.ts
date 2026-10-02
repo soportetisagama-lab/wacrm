@@ -329,7 +329,7 @@ describe('GET /api/flows/cron — inactivity nudge defaults', () => {
       expect.objectContaining({
         conversationId: 'conv-1',
         contactId: 'contact-1',
-        text: '¿Sigues ahí? Quedé esperando tu respuesta para poder continuar con tu consulta.',
+        text: 'Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.',
       }),
     )
     expect(h.state.flowRuns[0].last_nudge_sent_at).not.toBeNull()
