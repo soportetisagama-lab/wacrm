@@ -188,6 +188,10 @@ afterEach(() => {
   delete process.env.AUTOMATION_CRON_SECRET
 })
 
+
+/** Appended to every nudge sent while the customer is parked on a menu. */
+const MENU_HINT = '\n\nSi prefieres, escribe *menú* para ver las opciones.'
+
 describe('GET /api/flows/cron — auth', () => {
   it('401s when the secret header is missing or wrong', async () => {
     const res = await GET(request('wrong-secret'))
@@ -329,7 +333,7 @@ describe('GET /api/flows/cron — inactivity nudge defaults', () => {
       expect.objectContaining({
         conversationId: 'conv-1',
         contactId: 'contact-1',
-        text: 'Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.',
+        text: 'Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.' + MENU_HINT,
       }),
     )
     expect(h.state.flowRuns[0].last_nudge_sent_at).not.toBeNull()
@@ -365,7 +369,7 @@ describe('GET /api/flows/cron — inactivity nudge defaults', () => {
     // even though it's well under the 60-min default.
     expect(body.nudged).toBe(1)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Seguimos aquí para ayudarte con tu consulta.' }),
+      expect.objectContaining({ text: 'Seguimos aquí para ayudarte con tu consulta.' + MENU_HINT }),
     )
   })
 
