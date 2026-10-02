@@ -52,6 +52,7 @@ import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-a
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
+import { attentionFields } from "@/lib/conversations/attention";
 import {
   type CollectAiNodeConfig,
   type CollectInputNodeConfig,
@@ -1990,7 +1991,15 @@ async function markConversationPendingHandoff(
   summary: string,
   assignTo?: string,
 ): Promise<void> {
+  // Surface the handed-off chat like a fresh WhatsApp message — top of
+  // the inbox + unread badge (see lib/conversations/attention.ts).
+  const { data: current } = await db
+    .from("conversations")
+    .select("unread_count")
+    .eq("id", conversationId)
+    .maybeSingle();
   const update: Record<string, unknown> = {
+    ...attentionFields(current?.unread_count),
     status: "pending",
     ai_autoreply_disabled: true,
     ai_handoff_summary: summary,
