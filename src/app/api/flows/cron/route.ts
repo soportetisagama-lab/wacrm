@@ -6,6 +6,10 @@ import { DEFAULT_NUDGE_AFTER_MINUTES, DEFAULT_NUDGE_TEXT, shouldSendInactivityNu
 import { engineSendText } from '@/lib/flows/meta-send'
 import type { CollectAiNodeConfig, SendButtonsNodeConfig, SendListNodeConfig } from '@/lib/flows/types'
 import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
+import { loadAiConfig } from '@/lib/ai/config'
+import { buildConversationContext } from '@/lib/ai/context'
+import { generateNudge } from '@/lib/ai/nudge'
+import { logAiUsage } from '@/lib/ai/usage'
 
 /**
  * Sweep abandoned active flow runs, nudge collect_ai runs that have gone
@@ -229,6 +233,39 @@ async function sweepOrphanedDebounceWindows(
   return processed
 }
 
+/**
+ * The nudge text: a catchy, model-written line about what the customer
+ * was asking for (lib/ai/nudge.ts) when the account has an active AI
+ * config, else — or on any failure / unsafe output — the node's own
+ * `nudge_text` or the fixed default.
+ */
+async function composeNudgeText(
+  admin: ReturnType<typeof supabaseAdmin>,
+  args: { accountId: string; conversationId: string; fallback: string },
+): Promise<string> {
+  try {
+    const config = await loadAiConfig(admin, args.accountId)
+    if (!config) return args.fallback
+    const messages = await buildConversationContext(admin, args.conversationId, NUDGE_CONTEXT_LIMIT)
+    const result = await generateNudge({ config, messages })
+    if (!result) return args.fallback
+    void logAiUsage(admin, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      mode: 'auto_reply',
+      provider: config.provider,
+      model: config.model,
+      usage: result.usage,
+    })
+    return result.text
+  } catch (err) {
+    console.error('[flows-cron] AI nudge failed, using fixed text:', err instanceof Error ? err.message : err)
+    return args.fallback
+  }
+}
+
+const NUDGE_CONTEXT_LIMIT = 30
+
 /** Node types eligible for an inactivity nudge — anything that can
  *  leave a run parked waiting for the customer's next move. */
 const NUDGE_ELIGIBLE_NODE_TYPES = ['collect_ai', 'send_buttons', 'send_list'] as const;
@@ -325,7 +362,11 @@ async function maybeSendInactivityNudge(
       userId: run.user_id,
       conversationId: run.conversation_id,
       contactId: run.contact_id,
-      text: cfg.nudge_text?.trim() || DEFAULT_NUDGE_TEXT,
+      text: await composeNudgeText(admin, {
+        accountId: run.account_id,
+        conversationId: run.conversation_id,
+        fallback: cfg.nudge_text?.trim() || DEFAULT_NUDGE_TEXT,
+      }),
     })
   } catch (err) {
     console.error('[flows-cron] nudge send failed:', err instanceof Error ? err.message : err)

@@ -141,14 +141,10 @@ export function AiThreadBanner({
   // Paused here (a human took over, or the model handed off).
   if (paused) {
     return (
-      <Banner tone="muted">
+      <Banner tone="muted" align={handoffSummary ? "start" : "center"}>
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">{t("pausedTitle")}</p>
-          {handoffSummary && (
-            <p className="truncate text-muted-foreground" title={handoffSummary}>
-              {handoffSummary}
-            </p>
-          )}
+          {handoffSummary && <HandoffBrief key={conversationId} text={handoffSummary} />}
         </div>
         {/* An Asesor who already answered shouldn't hand the chat back to the bot. */}
         {accountRole && canResumeAi(accountRole) && (
@@ -179,17 +175,55 @@ export function AiThreadBanner({
   );
 }
 
+/**
+ * The advisor brief the bot leaves on handoff (lib/ai/handoff-brief.ts)
+ * — several "Campo: valor" lines. Wraps inside the banner on any width
+ * (phone app included) instead of running off-screen, and starts
+ * collapsed to two lines so it never pushes the thread out of view on a
+ * small screen; tapping it toggles the full note.
+ */
+function HandoffBrief({ text }: { text: string }) {
+  const t = useTranslations("Inbox.aiBanner");
+  const [expanded, setExpanded] = useState(false);
+  const multiLine = text.includes("\n") || text.length > 90;
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      disabled={!multiLine}
+      className="mt-0.5 block w-full min-w-0 text-left disabled:cursor-default"
+    >
+      <span
+        className={cn(
+          "block whitespace-pre-line break-words text-muted-foreground [overflow-wrap:anywhere]",
+          expanded ? "max-h-48 overflow-y-auto" : "line-clamp-2",
+        )}
+      >
+        {text}
+      </span>
+      {multiLine && (
+        <span className="mt-0.5 block font-medium text-primary">
+          {expanded ? t("hideBrief") : t("showBrief")}
+        </span>
+      )}
+    </button>
+  );
+}
+
 function Banner({
   tone,
+  align = "center",
   children,
 }: {
   tone: "primary" | "muted";
+  align?: "center" | "start";
   children: React.ReactNode;
 }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-3 border-b px-3 py-2 text-xs sm:px-4",
+        "flex gap-3 border-b px-3 py-2 text-xs sm:px-4",
+        align === "start" ? "items-start" : "items-center",
         tone === "primary"
           ? "border-primary/20 bg-primary/5"
           : "border-border bg-muted/40",
