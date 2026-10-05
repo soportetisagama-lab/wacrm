@@ -5,6 +5,7 @@ import {
   canAssignConversations,
   canDeleteAccount,
   canDeleteContacts,
+  canDraftWithAi,
   canEditSettings,
   canManageMembers,
   canSendMessages,
@@ -25,6 +26,7 @@ export type CanAction =
   | 'edit-settings'
   | 'send-messages'
   | 'send-templates'
+  | 'draft-with-ai'
   | 'view-only'
   | 'delete-account'
   | 'delete-contacts'
@@ -58,6 +60,8 @@ export function useCan(action: CanAction): boolean {
       return canSendMessages(accountRole);
     case 'send-templates':
       return canSendTemplates(accountRole);
+    case 'draft-with-ai':
+      return canDraftWithAi(accountRole);
     case 'view-only':
       return canViewOnly(accountRole);
     case 'delete-account':
