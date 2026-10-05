@@ -24,7 +24,8 @@ import { hasMinRole, type AccountRole } from '@/lib/auth/roles'
 export async function POST(request: Request) {
   let role: AccountRole | null = null
   try {
-    const ctx = await requireRole('agent')
+    // ATC and above — an agent (asesor) has no "draft with AI" (canDraftWithAi).
+    const ctx = await requireRole('atc')
     const { supabase, accountId, userId } = ctx
     role = ctx.role
 

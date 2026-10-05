@@ -320,6 +320,8 @@ export function MessageComposer({
   // Templates (the only way back in after the 24h window) are ATC and
   // above — an agent (asesor) never sees the template buttons.
   const canTemplates = useCan("send-templates");
+  // Same line for "draft with AI": an agent (asesor) never sees it.
+  const canDraft = useCan("draft-with-ai");
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
 
@@ -1210,22 +1212,24 @@ export function MessageComposer({
               </GatedButton>
             )}
 
-            <GatedButton
-              variant="ghost"
-              size="sm"
-              canAct={!readOnly}
-              gateReason="send messages"
-              disabled={drafting}
-              title={readOnly ? undefined : t("draftWithAI")}
-              className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
-              onClick={handleDraft}
-            >
-              {drafting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-            </GatedButton>
+            {canDraft && (
+              <GatedButton
+                variant="ghost"
+                size="sm"
+                canAct={!readOnly}
+                gateReason="send messages"
+                disabled={drafting}
+                title={readOnly ? undefined : t("draftWithAI")}
+                className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
+                onClick={handleDraft}
+              >
+                {drafting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+              </GatedButton>
+            )}
           </div>
 
           {/* Inside our own Android wrapper only: the four buttons above
@@ -1274,14 +1278,16 @@ export function MessageComposer({
                   {t("sendTemplate")}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={() => void handleDraft()} disabled={drafting}>
-                {drafting ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="mr-2 h-4 w-4" />
-                )}
-                {t("draftWithAI")}
-              </DropdownMenuItem>
+              {canDraft && (
+                <DropdownMenuItem onClick={() => void handleDraft()} disabled={drafting}>
+                  {drafting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-2 h-4 w-4" />
+                  )}
+                  {t("draftWithAI")}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
