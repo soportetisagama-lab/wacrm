@@ -17,6 +17,9 @@ describe("isAcknowledgement", () => {
     "🙏🏻🙏🏻",
     "Gracias, muy amable",
     "ok, hasta luego",
+    "gracias, buen día",
+    "buenas noches, muchas gracias",
+    "hasta luego, buen día",
   ])("treats %j as an acknowledgement", (text) => {
     expect(isAcknowledgement(text)).toBe(true);
   });
@@ -28,6 +31,11 @@ describe("isAcknowledgement", () => {
     "ok pero necesito una cotización",
     "mi número es 987654321",
     "",
+    "Buen día",
+    "buen dia",
+    "Buenas noches",
+    "buenas",
+    "Hola, buenas tardes",
   ])("does not treat %j as an acknowledgement", (text) => {
     expect(isAcknowledgement(text)).toBe(false);
   });
