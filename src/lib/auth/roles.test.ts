@@ -11,6 +11,7 @@ import {
   canManageMembers,
   canSendMessages,
   canSendTemplates,
+  canDraftWithAi,
   canTransferOwnership,
   canViewMessageUsage,
   canViewOnly,
@@ -246,6 +247,21 @@ describe('canSendTemplates', () => {
     ['viewer', false],
   ])('%s -> %s', (role, expected) => {
     expect(canSendTemplates(role)).toBe(expected);
+  });
+});
+
+describe('canDraftWithAi', () => {
+  it.each<[AccountRole, boolean]>([
+    ['owner', true],
+    ['admin', true],
+    ['gerencia', true],
+    ['jefe_linea', true],
+    ['atc', true],
+    ['agent', false],
+    ['viewer', false],
+    ['analista', false],
+  ])('%s -> %s', (role, expected) => {
+    expect(canDraftWithAi(role)).toBe(expected);
   });
 });
 
