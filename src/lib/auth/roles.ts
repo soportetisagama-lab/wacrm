@@ -188,6 +188,15 @@ export function canSendTemplates(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin / gerencia / jefe_linea / atc: the inbox "draft with
+ * AI" button. A plain agent (asesor) writes their own replies — the
+ * button is hidden for them and /api/ai/draft refuses the role.
+ */
+export function canDraftWithAi(role: AccountRole): boolean {
+  return hasMinRole(role, 'atc');
+}
+
+/**
  * Owner / admin / gerencia: delete contacts. Jefe de Línea, ATC and
  * Asesor can still create and edit them (canSendMessages) but not
  * delete. Keep in sync with the `contacts_delete` RLS policy
