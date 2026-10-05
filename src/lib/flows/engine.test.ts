@@ -39,6 +39,9 @@ import {
   decideCollectAiOutcome,
   collectAiRequiredFieldsPresent,
   enterCollectAiNode,
+  NO_AI_FORM_VAR,
+  MAX_NO_AI_QUESTIONS,
+  noAiQuestion,
   handleCollectAiReply,
   handleCollectAiNonTextReply,
   handleCollectAiBlankReply,
@@ -61,6 +64,8 @@ import {
   engineSendInteractiveButtons,
 } from "./meta-send";
 import type { AiConfig } from "@/lib/ai/types";
+import { AiError } from "@/lib/ai/types";
+import { noteAiKeyFailure, resetAiAvailability } from "@/lib/ai/availability";
 import type {
   CollectAiNodeConfig,
   FlowNodeRow,
@@ -1634,6 +1639,12 @@ function makeRun(overrides: Partial<FlowRunRow> = {}): FlowRunRow {
   };
 }
 
+/** run.vars of a run that already used its MAX_NO_AI_QUESTIONS on the
+ *  default "collect" node — the next provider failure hands off. */
+const NO_AI_FORM_ANSWERED = {
+  [NO_AI_FORM_VAR]: { node: "collect", field: "rubro", asked: MAX_NO_AI_QUESTIONS },
+};
+
 function makeNode(overrides: Partial<FlowNodeRow> = {}): FlowNodeRow {
   return {
     id: "node-1",
@@ -1990,9 +2001,9 @@ describe("handleCollectAiReply", () => {
     );
   });
 
-  it("a provider failure (extractWithReply throws) hands off instead of throwing or stranding the customer", async () => {
+  it("a provider failure after the no-AI question was answered hands off instead of throwing or stranding the customer", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun();
+    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
     const node = makeNode({ config: collectAiConfig() });
     mockExtract.mockRejectedValue(new Error("timeout"));
 
@@ -2008,7 +2019,7 @@ describe("handleCollectAiReply", () => {
 
   it("a provider failure sends handoff_fallback_text when the node configured one", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun();
+    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
     const node = makeNode({
       config: collectAiConfig({
         handoff_fallback_text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
@@ -2030,7 +2041,7 @@ describe("handleCollectAiReply", () => {
 
   it("a provider failure within the handoff cooldown skips the repeated handoff_fallback_text, but the conversation still ends up pending", async () => {
     const { db, updates } = makeFakeDb({ recentHandoffExists: true });
-    const run = makeRun();
+    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
     const node = makeNode({
       config: collectAiConfig({
         handoff_fallback_text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
@@ -2051,7 +2062,7 @@ describe("handleCollectAiReply", () => {
 
   it("a provider failure with handoff_node_key configured always sends its message, even within the handoff cooldown — it's advancing to a different node, not repeating a terminal handoff", async () => {
     const { db } = makeFakeDb({ recentHandoffExists: true });
-    const run = makeRun();
+    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
     const node = makeNode({
       config: collectAiConfig({
         handoff_fallback_text: "Un asesor te va a contactar en breve.",
@@ -2107,7 +2118,7 @@ describe("handleCollectAiReply", () => {
 
   it("no AI config for the account hands off instead of throwing", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun();
+    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
     const node = makeNode({ config: collectAiConfig() });
     mockLoadAiConfig.mockResolvedValue(null);
 
@@ -2290,7 +2301,7 @@ describe("handleCollectAiReply", () => {
     it("no handoff_fallback_text_after_hours configured: behavior is unchanged regardless of the time", async () => {
       vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed, but irrelevant here
       const { db } = makeFakeDb();
-      const run = makeRun();
+      const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
       const node = makeNode({
         config: collectAiConfig({ handoff_fallback_text: "Un asesor te contactará pronto." }),
       });
@@ -2302,6 +2313,120 @@ describe("handleCollectAiReply", () => {
         expect.objectContaining({ text: "Un asesor te contactará pronto.", aiGenerated: false }),
       );
     });
+  });
+});
+
+describe("collect_ai without AI (short questions, one at a time)", () => {
+  const HF = "Ya tengo tu información, un asesor te escribe.";
+
+  it("first provider failure asks ONE short question for the first missing required field — no handoff yet", async () => {
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ vars: { ciudad: "Lima" } });
+    const node = makeNode({ config: collectAiConfig({ handoff_fallback_text: HF }) });
+    mockExtract.mockRejectedValue(new Error("no credit"));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map(), "Quiero cotizar");
+
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¿Qué equipos quieres cotizar?", aiGenerated: false }),
+    );
+    expect(run.vars[NO_AI_FORM_VAR]).toEqual({ node: "collect", field: "equipos", asked: 1 });
+    // The text that led into the node is not an answer to anything yet.
+    expect(run.vars.equipos).toBeUndefined();
+    expect(
+      updates.some((u) => u.table === "conversations" && u.payload.ai_autoreply_disabled === true),
+    ).toBe(false);
+  });
+
+  it("saves each answer to the asked field and asks the next one (optional fields after required)", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({
+      vars: { ciudad: "Lima", [NO_AI_FORM_VAR]: { node: "collect", field: "equipos", asked: 1 } },
+    });
+    const node = makeNode({ config: collectAiConfig({ handoff_fallback_text: HF }) });
+    mockExtract.mockRejectedValue(new Error("no credit"));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map(), "Una cocina industrial");
+
+    expect(outcome).toEqual({ outcome: "advanced" });
+    expect(run.vars.equipos).toBe("Una cocina industrial");
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¿Qué tipo de negocio tienes?" }),
+    );
+    expect(run.vars[NO_AI_FORM_VAR]).toEqual({ node: "collect", field: "rubro", asked: 2 });
+  });
+
+  it("hands off with the node's own text once nothing is missing — now true", async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({
+      vars: { equipos: "cocina", ciudad: "Lima", [NO_AI_FORM_VAR]: { node: "collect", field: "rubro", asked: 2 } },
+    });
+    const node = makeNode({ config: collectAiConfig({ handoff_fallback_text: HF }) });
+    mockExtract.mockRejectedValue(new Error("no credit"));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map(), "Restaurante");
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    expect(run.vars.rubro).toBe("Restaurante");
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+    expect(mockSendText).toHaveBeenCalledWith(expect.objectContaining({ text: HF }));
+  });
+
+  it(`never asks more than ${MAX_NO_AI_QUESTIONS} questions — then hands off even with fields missing`, async () => {
+    const { db } = makeFakeDb();
+    const run = makeRun({
+      vars: { [NO_AI_FORM_VAR]: { node: "collect", field: "equipos", asked: MAX_NO_AI_QUESTIONS } },
+    });
+    const node = makeNode({ config: collectAiConfig({ handoff_fallback_text: HF }) });
+    mockExtract.mockRejectedValue(new Error("no credit"));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map(), "no sé");
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+  });
+
+  it("entering the node while the AI key is paused skips the intro and the model, asking the first question directly", async () => {
+    const { db } = makeFakeDb();
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ apiKey: "sk-paused" }));
+    noteAiKeyFailure("sk-paused", new AiError("no credit", { code: "no_credit" }));
+    try {
+      const run = makeRun({ vars: { [NO_AI_FORM_VAR]: { node: "collect", field: "ciudad", asked: 3 } } });
+      const node = makeNode({ config: collectAiConfig({ intro_text: "¡Hola! ¿Qué necesitas cotizar?" }) });
+
+      const outcome = await enterCollectAiNode(db, run, node, new Map());
+
+      expect(outcome).toEqual({ outcome: "advanced" });
+      expect(mockExtract).not.toHaveBeenCalled();
+      expect(mockSendText).toHaveBeenCalledTimes(1);
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "¿Qué equipos quieres cotizar?" }),
+      );
+      // A fresh visit starts counting again.
+      expect(run.vars[NO_AI_FORM_VAR]).toEqual({ node: "collect", field: "equipos", asked: 1 });
+    } finally {
+      resetAiAvailability();
+    }
+  });
+});
+
+describe("noAiQuestion", () => {
+  it.each([
+    [{ key: "equipos", label: "Muebles", required: true }, "¿Qué muebles quieres cotizar?"],
+    [{ key: "ciudad", label: "Ciudad", required: true }, "¿En qué ciudad te encuentras?"],
+    [
+      { key: "rubro", label: "Rubro del negocio", required: true, description: "Tipo de negocio del cliente (restaurante, hotel, panadería, etc.)" },
+      "¿Qué tipo de negocio tienes? (restaurante, hotel, panadería, etc.)",
+    ],
+    [
+      { key: "rubro", label: "Tipo de proyecto", required: true, description: "Si el proyecto es para su hogar o para un negocio" },
+      "¿Es para tu hogar o para un negocio?",
+    ],
+    [{ key: "medidas_aproximadas", label: "Medidas aproximadas", required: true }, "¿Qué medidas aproximadas tiene el espacio?"],
+    [{ key: "presupuesto", label: "Presupuesto", required: false }, "¿Nos indicas presupuesto?"],
+  ])("%o -> %s", (field, expected) => {
+    expect(noAiQuestion(field)).toBe(expected);
   });
 });
 
