@@ -10,7 +10,7 @@ import { sendPushToUser } from '@/lib/notifications/push-send'
 
 /** At most one push per account in this window, however many
  *  messages arrive while the AI is down. */
-const NOTIFY_EVERY_MS = 6 * 60 * 60_000
+const NOTIFY_EVERY_MS = 24 * 60 * 60_000
 
 const lastNotifiedAt = new Map<string, number>()
 
