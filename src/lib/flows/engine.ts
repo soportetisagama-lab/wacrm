@@ -1079,6 +1079,11 @@ const DEFAULT_NON_TEXT_REPLY_TEXT =
 export const DEFAULT_NUDGE_TEXT =
   "Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.";
 
+/** Same default for a `send_buttons` / `send_list` node (a menu): the
+ *  customer only saw the options, there's no "proyecto" in progress yet. */
+export const DEFAULT_MENU_NUDGE_TEXT =
+  "¿Te ayudamos con algo? 🙂 Elige una opción del menú o escríbenos tu consulta.";
+
 /**
  * Default silence window (minutes) applied to a `send_buttons` /
  * `send_list` node that doesn't set `nudge_after_minutes` explicitly —
