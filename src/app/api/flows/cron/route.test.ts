@@ -318,7 +318,14 @@ describe('GET /api/flows/cron — debounce sweep', () => {
 })
 
 describe('GET /api/flows/cron — inactivity nudge defaults', () => {
-  it('send_list node with no nudge_after_minutes configured nudges automatically after DEFAULT_NUDGE_AFTER_MINUTES, with the built-in text', async () => {
+  // Nudges only go out in business hours — pin "now" inside them.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-05T15:00:00Z')) // Monday 10:00 Lima
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('send_list node with no nudge_after_minutes configured nudges automatically after DEFAULT_NUDGE_AFTER_MINUTES, with the built-in menu text', async () => {
     h.state.flowRuns = [activeRun()]
     h.state.flowNodes['flow-1:node-1'] = {
       node_type: 'send_list',
@@ -333,9 +340,43 @@ describe('GET /api/flows/cron — inactivity nudge defaults', () => {
       expect.objectContaining({
         conversationId: 'conv-1',
         contactId: 'contact-1',
-        text: 'Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.' + MENU_HINT,
+        // A menu has no "proyecto" yet — and the text already names the
+        // menu, so the "escribe menú" hint isn't appended twice.
+        text: '¿Te ayudamos con algo? 🙂 Elige una opción del menú o escríbenos tu consulta.',
       }),
     )
+    expect(h.state.flowRuns[0].last_nudge_sent_at).not.toBeNull()
+  })
+
+  it('collect_ai node that opted in keeps the "proyecto" default text', async () => {
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = {
+      node_type: 'collect_ai',
+      config: { nudge_after_minutes: 60 },
+    }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Tu proyecto sigue en marcha 🙌 Cuando puedas, seguimos por aquí.' }),
+    )
+  })
+
+  it.each([
+    ['a weeknight', '2026-10-06T02:00:00Z'], // Monday 21:00 Lima
+    ['a Sunday', '2026-10-04T16:00:00Z'], // Sunday 11:00 Lima
+  ])('outside business hours (%s) sends nothing, and marks the period handled so it never goes out late', async (_, at) => {
+    vi.setSystemTime(new Date(at))
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = { node_type: 'send_list', config: {} }
+
+    const res = await GET(request())
+    const body = await res.json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.state.flowRuns[0].last_nudge_sent_at).not.toBeNull()
   })
 
