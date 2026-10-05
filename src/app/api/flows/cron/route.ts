@@ -2,7 +2,13 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
-import { DEFAULT_NUDGE_AFTER_MINUTES, DEFAULT_NUDGE_TEXT, shouldSendInactivityNudge } from '@/lib/flows/engine'
+import {
+  DEFAULT_MENU_NUDGE_TEXT,
+  DEFAULT_NUDGE_AFTER_MINUTES,
+  DEFAULT_NUDGE_TEXT,
+  shouldSendInactivityNudge,
+} from '@/lib/flows/engine'
+import { isWithinBusinessHours } from '@/lib/flows/business-hours'
 import { engineSendText } from '@/lib/flows/meta-send'
 import type { CollectAiNodeConfig, SendButtonsNodeConfig, SendListNodeConfig } from '@/lib/flows/types'
 import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
@@ -366,6 +372,19 @@ async function maybeSendInactivityNudge(
   })
   if (!decision) return false
 
+  // Outside business hours a reminder reads odd (at night, on Sunday)
+  // and by the next opening it's stale — mark this silence period as
+  // handled without sending, so it never goes out late either.
+  if (!isWithinBusinessHours(now)) {
+    await admin
+      .from('flow_runs')
+      .update({ last_nudge_sent_at: now.toISOString() })
+      .eq('id', run.id)
+    return false
+  }
+
+  const defaultText = node.node_type === 'collect_ai' ? DEFAULT_NUDGE_TEXT : DEFAULT_MENU_NUDGE_TEXT
+
   try {
     await engineSendText({
       accountId: run.account_id,
@@ -376,7 +395,7 @@ async function maybeSendInactivityNudge(
         await composeNudgeText(admin, {
           accountId: run.account_id,
           conversationId: run.conversation_id,
-          fallback: cfg.nudge_text?.trim() || DEFAULT_NUDGE_TEXT,
+          fallback: cfg.nudge_text?.trim() || defaultText,
         }),
         node.node_type,
       ),
