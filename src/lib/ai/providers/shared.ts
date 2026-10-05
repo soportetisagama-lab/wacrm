@@ -68,6 +68,18 @@ export function toNetworkError(err: unknown): AiError {
   })
 }
 
+/**
+ * Out of credit, as each provider reports it: OpenAI answers 429 with
+ * code `insufficient_quota` ("You exceeded your current quota…" — same
+ * status as a plain rate limit, so the code is what tells them apart);
+ * Anthropic answers 400 "Your credit balance is too low…" (or 402).
+ */
+function isNoCreditResponse(status: number, errorCode: string, detail: string): boolean {
+  if (status === 402) return true
+  if (errorCode === 'insufficient_quota' || errorCode === 'billing_not_active') return true
+  return /credit balance is too low|exceeded your current quota/i.test(detail)
+}
+
 /** Build a typed AiError from a non-2xx provider response, pulling the
  *  provider's own error message out of the JSON body when present. */
 export async function providerHttpError(
@@ -75,29 +87,38 @@ export async function providerHttpError(
   res: Response,
 ): Promise<AiError> {
   let detail = ''
+  let errorCode = ''
   try {
-    const body = (await res.json()) as { error?: { message?: string } | string }
+    const body = (await res.json()) as {
+      error?: { message?: string; code?: string; type?: string } | string
+    }
     detail =
       typeof body?.error === 'string'
         ? body.error
         : (body?.error?.message ?? '')
+    if (body?.error && typeof body.error === 'object') {
+      errorCode = body.error.code ?? body.error.type ?? ''
+    }
   } catch {
     // Non-JSON error body — fall back to the status line.
   }
 
   const { status } = res
-  const code =
-    status === 401 || status === 403
+  const code = isNoCreditResponse(status, errorCode, detail)
+    ? 'no_credit'
+    : status === 401 || status === 403
       ? 'invalid_key'
       : status === 429
         ? 'rate_limited'
         : 'provider_error'
   const base =
-    code === 'invalid_key'
-      ? `${provider} rejected the API key`
-      : code === 'rate_limited'
-        ? `${provider} rate limit reached`
-        : `${provider} API error (${status})`
+    code === 'no_credit'
+      ? `${provider} account has no credit left`
+      : code === 'invalid_key'
+        ? `${provider} rejected the API key`
+        : code === 'rate_limited'
+          ? `${provider} rate limit reached`
+          : `${provider} API error (${status})`
 
   return new AiError(detail ? `${base}: ${detail}` : base, {
     code,
