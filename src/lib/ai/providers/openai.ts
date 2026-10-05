@@ -9,6 +9,7 @@ import {
   type StructuredProviderArgs,
   type StructuredProviderResult,
 } from './shared'
+import { assertAiKeyAvailable, noteAiKeyFailure, resumeAiKey } from '../availability'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
@@ -69,6 +70,8 @@ interface OpenAiResponse {
 export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
 
+  assertAiKeyAvailable(apiKey)
+
   let res: Response
   try {
     res = await fetch(OPENAI_URL, {
@@ -96,8 +99,11 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
   }
 
   if (!res.ok) {
-    throw await providerHttpError('OpenAI', res)
+    const err = await providerHttpError('OpenAI', res)
+    noteAiKeyFailure(apiKey, err)
+    throw err
   }
+  resumeAiKey(apiKey)
 
   const data = (await res.json().catch(() => null)) as OpenAiResponse | null
   const text = data?.choices?.[0]?.message?.content
@@ -139,6 +145,8 @@ export async function generateOpenAiStructured(
 ): Promise<StructuredProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs, schema, toolName } = args
 
+  assertAiKeyAvailable(apiKey)
+
   let res: Response
   try {
     res = await fetch(OPENAI_URL, {
@@ -173,8 +181,11 @@ export async function generateOpenAiStructured(
   }
 
   if (!res.ok) {
-    throw await providerHttpError('OpenAI', res)
+    const err = await providerHttpError('OpenAI', res)
+    noteAiKeyFailure(apiKey, err)
+    throw err
   }
+  resumeAiKey(apiKey)
 
   const data = (await res.json().catch(() => null)) as OpenAiToolResponse | null
   const rawArgs = data?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments

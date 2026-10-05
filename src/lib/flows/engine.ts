@@ -52,6 +52,9 @@ import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-a
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
+import { handoffClosingText } from "@/lib/ai/auto-reply";
+import { isAiOutOfServiceError } from "@/lib/ai/availability";
+import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import {
   type CollectAiNodeConfig,
@@ -1309,6 +1312,7 @@ async function runCollectAiTurn(
       "[flows] collect_ai extractWithReply failed:",
       err instanceof Error ? err.message : err,
     );
+    if (isAiOutOfServiceError(err)) void notifyAdminsAiUnavailable(db, run.account_id);
     return null;
   }
 }
@@ -1351,9 +1355,15 @@ async function handOffFromCollectAi(
   // never call isWithinBusinessHours at all.
   const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
   const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
+  // Last resort for a terminal handoff with nothing configured (e.g. the
+  // AI ran out of credit mid-flow): the general assistant's closing line,
+  // so the customer is never left with silence. Not when the handoff
+  // advances to another node — that node sends its own message.
   const outgoingText = useAfterHoursText
     ? fillBusinessHoursPlaceholders(afterHoursText!)
-    : message?.trim() || cfg.handoff_fallback_text?.trim();
+    : message?.trim() ||
+      cfg.handoff_fallback_text?.trim() ||
+      (cfg.handoff_node_key ? undefined : handoffClosingText());
   // True only when `outgoingText` actually ended up being the model's
   // own courtesy line (`message`, model_handoff only) — the static
   // `handoff_fallback_text` / after-hours fallback is author-written,

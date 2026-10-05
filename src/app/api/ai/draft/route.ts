@@ -10,6 +10,7 @@ import { latestUserMessage } from '@/lib/ai/query'
 import { logAiUsage } from '@/lib/ai/usage'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { AiError } from '@/lib/ai/types'
+import { hasMinRole, type AccountRole } from '@/lib/auth/roles'
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -21,8 +22,11 @@ import { AiError } from '@/lib/ai/types'
  * sends or stores anything, just hands text back to the composer.
  */
 export async function POST(request: Request) {
+  let role: AccountRole | null = null
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const ctx = await requireRole('agent')
+    const { supabase, accountId, userId } = ctx
+    role = ctx.role
 
     const userLimit = checkRateLimit(`ai-draft:${userId}`, RATE_LIMITS.aiDraft)
     if (!userLimit.success) return rateLimitResponse(userLimit)
@@ -131,8 +135,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ draft: text })
   } catch (err) {
     if (err instanceof AiError) {
+      // The provider's own wording ("no credit left", "rejected the API
+      // key"…) is for admins only — anyone else gets the composer's
+      // generic "couldn't draft a reply".
+      const showDetail = role !== null && hasMinRole(role, 'admin')
       return NextResponse.json(
-        { error: err.message, code: err.code },
+        showDetail ? { error: err.message, code: err.code } : { code: 'ai_unavailable' },
         { status: err.status },
       )
     }
