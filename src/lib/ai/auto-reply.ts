@@ -13,6 +13,8 @@ import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { writeHandoffBrief } from './handoff-brief'
 import { logAiUsage } from './usage'
+import { isAiKeyPaused, isAiOutOfServiceError } from './availability'
+import { notifyAdminsAiUnavailable } from './availability-notify'
 import { latestUserMessage } from './query'
 import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
@@ -295,6 +297,39 @@ async function handleAutoReplyCapReached(
 }
 
 /**
+ * The AI can't answer right now — no credit, rejected key, provider down
+ * (see ./availability) — so keep serving the customer without it: the
+ * same closing line and human queue as a model-decided handoff. Skipped
+ * when the thread is already handed off and still waiting for a human,
+ * so a customer writing several messages during an outage doesn't get
+ * the closing line again on each one. No advisor brief: writing one
+ * needs the provider too.
+ */
+async function handOffWithoutAi(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    accountId: string
+    conversationId: string
+    contactId: string
+    configOwnerUserId: string
+    config: AiConfig
+    assignedAgentId: string | null
+    alreadyHandedOff: boolean
+  },
+): Promise<void> {
+  if (args.alreadyHandedOff) return
+  await sendHandoffClosingMessage(args)
+  await markNeedsHuman(db, {
+    conversationId: args.conversationId,
+    config: args.config,
+    assignedAgentId: args.assignedAgentId,
+    // Neutral on purpose — agents see this note; why the AI stopped is
+    // for admins only (notifyAdminsAiUnavailable).
+    summary: '🤖 El asistente derivó la conversación a un asesor.',
+  })
+}
+
+/**
  * AI auto-reply for a freshly-arrived inbound message — the actual gates
  * + model call + send. Called three ways:
  *   1. Directly by `dispatchInboundToAiReply` below for a non-text inbound
@@ -411,6 +446,23 @@ export async function runAutoReplyNow(
       return
     }
 
+    // AI paused for lack of credit (./availability) — hand off right
+    // away, before a transcription, knowledge lookup or provider call
+    // that would only fail. Back to normal on its own once it resumes.
+    if (isAiKeyPaused(config.apiKey)) {
+      void notifyAdminsAiUnavailable(db, accountId)
+      await handOffWithoutAi(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        alreadyHandedOff: Boolean(conv.ai_autoreply_disabled),
+      })
+      return
+    }
+
     // Media inbound (image/video/audio/sticker/document) — every gate
     // above already passed, so this account/conversation IS eligible
     // for auto-reply right now; it's just that there's no usable text
@@ -489,8 +541,10 @@ export async function runAutoReplyNow(
 
     // An empty completion (the model spent its whole budget without
     // writing a reply) used to end in silence for the customer — treat
-    // it as the handoff it effectively is. Other errors still bubble.
-    const { text, handoff, sendDocument, usage } = await generateReply({
+    // it as the handoff it effectively is. Any other provider failure
+    // (no credit, rejected key, timeout, outage) also ended in silence —
+    // it now hands off without AI.
+    const generation = await generateReply({
       config,
       systemPrompt,
       messages,
@@ -500,8 +554,26 @@ export async function runAutoReplyNow(
         console.error('[ai auto-reply] empty model response, handing off:', err.message)
         return { text: '', handoff: true, sendDocument: null, usage: null }
       }
-      throw err
+      console.error(
+        '[ai auto-reply] provider call failed, continuing without AI:',
+        err instanceof Error ? err.message : err,
+      )
+      if (isAiOutOfServiceError(err)) void notifyAdminsAiUnavailable(db, accountId)
+      return null
     })
+    if (!generation) {
+      await handOffWithoutAi(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        alreadyHandedOff: Boolean(conv.ai_autoreply_disabled),
+      })
+      return
+    }
+    const { text, handoff, sendDocument, usage } = generation
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`

@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { noteAiKeyFailure, resetAiAvailability } from './availability'
 import { AiError, type AiConfig } from './types'
 
 // Shared, hoisted mock state so the module mocks can close over it.
 const h = vi.hoisted(() => ({
   loadAiConfig: vi.fn(),
+  notifyAdmins: vi.fn(),
   buildConversationContext: vi.fn(),
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock('./generate', () => ({ generateReply: h.generateReply }))
 // handoff-brief.test.ts); stubbed so these tests keep asserting on the
 // reply path alone.
 vi.mock('./handoff-brief', () => ({ writeHandoffBrief: async () => {} }))
+vi.mock('./availability-notify', () => ({ notifyAdminsAiUnavailable: h.notifyAdmins }))
 vi.mock('./transcribe', () => ({ transcribeAudio: h.transcribeAudio }))
 vi.mock('@/lib/flows/meta-send', () => ({
   engineSendText: h.engineSendText,
@@ -495,6 +498,63 @@ describe('dispatchInboundToAiReply — handoff', () => {
     h.engineSendText.mockRejectedValue(new Error('meta send failed'))
     await dispatchInboundToAiReply(ARGS)
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('dispatchInboundToAiReply — AI unavailable (no credit / rejected key / outage)', () => {
+  afterEach(() => resetAiAvailability())
+
+  it('hands off instead of going silent when the provider call fails', async () => {
+    h.generateReply.mockRejectedValue(
+      new AiError('OpenAI account has no credit left', { code: 'no_credit' }),
+    )
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe('🤖 El asistente derivó la conversación a un asesor.')
+    // The reason is for admins only — never in the agent-visible note.
+    expect(h.state.updatePayload?.ai_handoff_summary).not.toMatch(/saldo|clave|credit/i)
+    expect(h.notifyAdmins).toHaveBeenCalledWith(expect.anything(), 'acct-1')
+  })
+
+  it('a timeout or outage hands off the same way', async () => {
+    h.generateReply.mockRejectedValue(new AiError('took too long', { code: 'timeout' }))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    // Transient — not a "recharge the account" situation, no admin push.
+    expect(h.notifyAdmins).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet on a conversation already handed off and still waiting for a human — no repeated closing line', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: true, ai_reply_count: 1 }
+    h.generateReply.mockRejectedValue(new AiError('no credit', { code: 'no_credit' }))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toBeNull()
+  })
+
+  it('while the key is paused, hands off without calling the provider at all', async () => {
+    noteAiKeyFailure(aiConfig().apiKey, new AiError('no credit', { code: 'no_credit' }))
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.buildConversationContext).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  it('while paused, a media inbound is handed off too — no text-only nudge or transcription attempt', async () => {
+    noteAiKeyFailure(aiConfig().apiKey, new AiError('no credit', { code: 'no_credit' }))
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.transcribeAudio).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+    )
   })
 })
 

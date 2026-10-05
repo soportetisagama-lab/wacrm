@@ -1,4 +1,5 @@
 import { generateReply } from './generate'
+import { resumeAiKey } from './availability'
 import type { AiConfig } from './types'
 
 /**
@@ -10,6 +11,9 @@ import type { AiConfig } from './types'
  * WhatsApp config uses with Meta.
  */
 export async function validateAiCredentials(config: AiConfig): Promise<void> {
+  // A manual test always makes a real call — after recharging the
+  // account it's the quickest way to bring a paused AI back.
+  resumeAiKey(config.apiKey)
   await generateReply({
     config,
     systemPrompt: 'You are a connectivity check. Reply with the single word: OK.',
