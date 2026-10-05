@@ -1999,7 +1999,11 @@ describe("handleCollectAiReply", () => {
     const outcome = await handleCollectAiReply(db, run, node, new Map());
 
     expect(outcome).toEqual({ outcome: "handed_off" });
-    expect(mockSendText).not.toHaveBeenCalled(); // no handoff_fallback_text configured — stays silent, as before
+    // No handoff_fallback_text configured — the default closing line
+    // still goes out, so the customer isn't left with silence.
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("asesor"), aiGenerated: false }),
+    );
   });
 
   it("a provider failure sends handoff_fallback_text when the node configured one", async () => {

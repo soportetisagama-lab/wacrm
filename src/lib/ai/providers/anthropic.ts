@@ -9,6 +9,7 @@ import {
   type StructuredProviderArgs,
   type StructuredProviderResult,
 } from './shared'
+import { assertAiKeyAvailable, noteAiKeyFailure, resumeAiKey } from '../availability'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -63,6 +64,8 @@ function toAnthropicContent(
 export async function generateAnthropic(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
 
+  assertAiKeyAvailable(apiKey)
+
   let res: Response
   try {
     res = await fetch(ANTHROPIC_URL, {
@@ -88,8 +91,11 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
   }
 
   if (!res.ok) {
-    throw await providerHttpError('Anthropic', res)
+    const err = await providerHttpError('Anthropic', res)
+    noteAiKeyFailure(apiKey, err)
+    throw err
   }
+  resumeAiKey(apiKey)
 
   const data = (await res.json().catch(() => null)) as AnthropicResponse | null
   const text = data?.content
@@ -127,6 +133,8 @@ export async function generateAnthropicStructured(
 ): Promise<StructuredProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs, schema, toolName } = args
 
+  assertAiKeyAvailable(apiKey)
+
   let res: Response
   try {
     res = await fetch(ANTHROPIC_URL, {
@@ -154,8 +162,11 @@ export async function generateAnthropicStructured(
   }
 
   if (!res.ok) {
-    throw await providerHttpError('Anthropic', res)
+    const err = await providerHttpError('Anthropic', res)
+    noteAiKeyFailure(apiKey, err)
+    throw err
   }
+  resumeAiKey(apiKey)
 
   const data = (await res.json().catch(() => null)) as AnthropicToolResponse | null
   const toolUse = data?.content?.find((b) => b.type === 'tool_use')
