@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { resetAiAvailability } from './availability'
 import { generateReply, parseGeneration, extractWithReply, parseExtraction } from './generate'
 import { AiError, type AiConfig } from './types'
 import type { ExtractionField } from './schema'
@@ -39,6 +40,7 @@ function errResponse(status: number, json: unknown): Response {
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
+  resetAiAvailability()
 })
 afterEach(() => vi.unstubAllGlobals())
 
