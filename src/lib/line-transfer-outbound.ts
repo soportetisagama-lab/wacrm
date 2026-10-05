@@ -36,6 +36,16 @@ const ACK_WORDS = new Set([
   "a", "usted", "ti", "le", "te", "lo", "agradezco", "si", "claro", "thanks",
   "thank", "you", "muy", "amable", "tan", "buen", "dia", "tarde", "noche",
   "buenas", "buenos", "hasta", "luego", "pronto", "cuidese", "cuidate",
+  // Greetings alongside a thanks/goodbye ("buenas noches, gracias") —
+  // greeting-only messages are ruled out separately (GREETING_WORDS).
+  "buena", "dias", "tardes", "noches", "hola",
+]);
+
+/** Greeting-only words. "Buen día" / "buenas noches" open a conversation —
+ *  answering them with the farewell reads as a goodbye to a hello. */
+const GREETING_WORDS = new Set([
+  "hola", "buen", "buena", "buenas", "buenos", "dia", "dias", "tarde", "tardes",
+  "noche", "noches", "que", "tal",
 ]);
 
 /**
@@ -57,6 +67,8 @@ export function isAcknowledgement(text: string, isSticker = false): boolean {
     .filter(Boolean);
   // Emoji / punctuation only ("👍", "🙏🏻", "!!").
   if (words.length === 0) return true;
+  // Only greetings ("Buen día", "buenas noches") — a hello, not a goodbye.
+  if (words.every((w) => GREETING_WORDS.has(w))) return false;
   return words.length <= 8 && words.every((w) => ACK_WORDS.has(w));
 }
 

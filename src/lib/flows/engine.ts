@@ -53,7 +53,7 @@ import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
 import { handoffClosingText } from "@/lib/ai/auto-reply";
-import { isAiOutOfServiceError } from "@/lib/ai/availability";
+import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import {
@@ -1317,6 +1317,18 @@ async function runCollectAiTurn(
   }
 }
 
+/** True only when the account's AI key is currently paused for lack of
+ *  credit (lib/ai/availability.ts). A config read failure counts as
+ *  "not known" — the normal path then decides. Never throws. */
+async function isAiKnownUnavailable(db: AdminClient, accountId: string): Promise<boolean> {
+  try {
+    const config = await loadAiConfig(db, accountId);
+    return config !== null && isAiKeyPaused(config.apiKey);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Route a collect_ai exit that isn't a clean `done` toward its
  * configured `handoff_node_key`, or — when unset — straight to a
@@ -1429,7 +1441,11 @@ async function handOffFromCollectAi(
     await markConversationPendingHandoff(
       db,
       run.conversation_id,
-      `🤖 El asistente derivó la conversación a un asesor (collect_ai: ${reason}).`,
+      // provider_error: neutral wording — why the AI failed is for
+      // admins only (notifyAdminsAiUnavailable), not the agent's note.
+      reason === "provider_error"
+        ? "🤖 El asistente derivó la conversación a un asesor."
+        : `🤖 El asistente derivó la conversación a un asesor (collect_ai: ${reason}).`,
     );
   }
   await endRun(
@@ -1536,6 +1552,112 @@ async function sendCollectAiDocumentIfRequested(
   }
 }
 
+// ------------------------------------------------------------
+// collect_ai without AI. When the provider can't answer (no credit,
+// rejected key, outage — lib/ai/availability.ts), the node keeps asking
+// what it needs the way the model would: one short question per
+// message for a missing field (required first), at most
+// MAX_NO_AI_QUESTIONS, saving each answer as that field. Then a human
+// takes over — so the node's handoff texts ("ya tengo tu información")
+// are true. With AI back, the next turn just runs the model again,
+// with whatever was answered already in vars.
+// ------------------------------------------------------------
+
+/** `run.vars` key holding the no-AI question state for this visit.
+ *  Run-scoped only — never written to the per-contact known vars. */
+export const NO_AI_FORM_VAR = "__sin_ia_formulario";
+
+/** Same budget the model usually needs for these nodes. */
+export const MAX_NO_AI_QUESTIONS = 3;
+
+interface NoAiFormState {
+  node: string;
+  /** Field the last question asked for — the next reply answers it. */
+  field: string;
+  asked: number;
+}
+
+function readNoAiFormState(vars: Record<string, unknown>, nodeKey: string): NoAiFormState | null {
+  const v = vars[NO_AI_FORM_VAR] as Partial<NoAiFormState> | undefined;
+  if (!v || typeof v !== "object" || v.node !== nodeKey || typeof v.field !== "string") return null;
+  return { node: v.node, field: v.field, asked: typeof v.asked === "number" ? v.asked : 1 };
+}
+
+/**
+ * One short question for a field, phrased for the field keys the
+ * lines' flows use; anything else falls back to its label. The
+ * description's own examples ("(restaurante, hotel, etc.)") help the
+ * customer answer the business-type question.
+ */
+export function noAiQuestion(field: ExtractionField): string {
+  const label = field.label.trim();
+  const description = field.description ?? "";
+  const examples = description.match(/\(([^)]+)\)/)?.[1];
+  switch (field.key) {
+    case "equipos":
+      return `¿Qué ${label.toLowerCase()} quieres cotizar?`;
+    case "ciudad":
+      return "¿En qué ciudad te encuentras?";
+    case "rubro":
+    case "tipo_proyecto":
+      if (/hogar/i.test(description)) return "¿Es para tu hogar o para un negocio?";
+      return examples ? `¿Qué tipo de negocio tienes? (${examples})` : "¿Qué tipo de negocio tienes?";
+    case "tipo_consulta":
+      return "Cuéntanos brevemente qué necesitas.";
+    case "espacio_a_equipar":
+      return "¿Qué espacio quieres equipar?";
+    case "medidas_aproximadas":
+      return "¿Qué medidas aproximadas tiene el espacio?";
+    case "nombre":
+      return "¿Cuál es tu nombre?";
+    default:
+      return `¿Nos indicas ${label.toLowerCase()}?`;
+  }
+}
+
+async function setRunVar(
+  db: AdminClient,
+  run: FlowRunRow,
+  key: string,
+  value: unknown,
+): Promise<void> {
+  const newVars = { ...run.vars };
+  if (value === null) delete newVars[key];
+  else newVars[key] = value;
+  const { error } = await db.from("flow_runs").update({ vars: newVars }).eq("id", run.id);
+  if (!error) run.vars = newVars;
+}
+
+/**
+ * The provider call for this turn failed (`result === null`). Saves
+ * `replyText` as the answer to the question asked last on this node (if
+ * any), then asks the next missing field — or hands off once nothing is
+ * missing or MAX_NO_AI_QUESTIONS were asked.
+ */
+async function handleCollectAiWithoutAi(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  nodes: Map<string, FlowNodeRow>,
+  replyText?: string,
+): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  const state = readNoAiFormState(run.vars, node.node_key);
+  if (state && replyText?.trim()) {
+    await mergeCollectAiFields(db, run, { [state.field]: replyText.trim() });
+  }
+  const asked = state?.asked ?? 0;
+  const isMissing = (f: ExtractionField) =>
+    !(typeof run.vars[f.key] === "string" && (run.vars[f.key] as string).trim());
+  const next =
+    cfg.fields.find((f) => f.required && isMissing(f)) ?? cfg.fields.find((f) => isMissing(f));
+  if (next && asked < MAX_NO_AI_QUESTIONS && run.conversation_id) {
+    await setRunVar(db, run, NO_AI_FORM_VAR, { node: node.node_key, field: next.key, asked: asked + 1 });
+    return sendCollectAiTextAndSuspend(db, run, node, noAiQuestion(next), false);
+  }
+  return handOffFromCollectAi(db, run, node, cfg, nodes, "provider_error");
+}
+
 /**
  * Shared conclusion of one collect_ai turn — used both by the node's
  * entry call (no intro_text configured) and by every reply while
@@ -1551,11 +1673,15 @@ async function handleCollectAiOutcome(
   cfg: CollectAiNodeConfig,
   nodes: Map<string, FlowNodeRow>,
   result: ExtractResult | null,
+  /** The customer's text this turn, when there is one — only read
+   *  without AI, to save it as the answer to the last question. */
+  replyText?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
-  if (result) {
-    await incrementAiTurnCount(db, run);
-    await mergeCollectAiFields(db, run, result.fields);
+  if (!result) {
+    return handleCollectAiWithoutAi(db, run, node, cfg, nodes, replyText);
   }
+  await incrementAiTurnCount(db, run);
+  await mergeCollectAiFields(db, run, result.fields);
 
   await sendCollectAiDocumentIfRequested(db, run, node, cfg, result);
 
@@ -1648,6 +1774,14 @@ export async function enterCollectAiNode(
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
   const cfg = node.config as unknown as CollectAiNodeConfig;
   await resetAiTurnCount(db, run);
+  // A fresh visit — a no-AI question from an earlier visit doesn't count.
+  if (run.vars[NO_AI_FORM_VAR] !== undefined) await setRunVar(db, run, NO_AI_FORM_VAR, null);
+
+  // AI known to be down: skip the intro (it opens a conversation only
+  // the model can carry on) and go straight to the no-AI question.
+  if (await isAiKnownUnavailable(db, run.account_id)) {
+    return handleCollectAiWithoutAi(db, run, node, cfg, nodes);
+  }
 
   if (cfg.intro_text && cfg.intro_text.trim()) {
     // Author-written, static — not the model.
@@ -1677,10 +1811,11 @@ export async function handleCollectAiReply(
   run: FlowRunRow,
   node: FlowNodeRow,
   nodes: Map<string, FlowNodeRow>,
+  replyText?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
   const cfg = node.config as unknown as CollectAiNodeConfig;
   const result = await runCollectAiTurn(db, run, cfg);
-  return handleCollectAiOutcome(db, run, node, cfg, nodes, result);
+  return handleCollectAiOutcome(db, run, node, cfg, nodes, result, replyText);
 }
 
 /**
@@ -2683,7 +2818,7 @@ export async function handleReplyForActiveRun(
       );
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
     }
-    const outcome = await handleCollectAiReply(db, run, currentNode, nodes);
+    const outcome = await handleCollectAiReply(db, run, currentNode, nodes, message.text);
     return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
   }
 
