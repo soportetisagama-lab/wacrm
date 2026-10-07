@@ -234,11 +234,11 @@ export function MessageBubble({
         className={cn(
           // max-w-full: never wider than the row's width cap, even when
           // the content (e.g. a long file name) would like to be.
-          "relative max-w-full rounded-2xl px-3 py-2 transition-shadow duration-500",
+          "relative max-w-full rounded-[18px] px-3.5 py-2 transition-shadow duration-500",
           highlighted && "ring-2 ring-amber-400 ring-offset-2 ring-offset-background",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+            ? "rounded-br-md bg-primary text-primary-foreground shadow-sm"
+            : "rounded-bl-md bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.08)]",
         )}
       >
         {reply && (
