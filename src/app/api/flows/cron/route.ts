@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
@@ -17,6 +16,7 @@ import { buildConversationContext } from '@/lib/ai/context'
 import { generateNudge } from '@/lib/ai/nudge'
 import { logAiUsage } from '@/lib/ai/usage'
 import { remindPendingReplies } from '@/lib/notifications/pending-replies'
+import { internalCronState, isAuthorizedCronSecret } from '@/lib/cron/internal'
 
 /**
  * Sweep abandoned active flow runs, nudge collect_ai runs that have gone
@@ -64,7 +64,8 @@ import { remindPendingReplies } from '@/lib/notifications/pending-replies'
  *      settles.
  *
  * Auth: re-uses `AUTOMATION_CRON_SECRET` so operators only have one
- * secret to provision. The two endpoints (`/api/automations/cron`
+ * secret to provision; the in-process scheduler (instrumentation-node.ts)
+ * uses its own per-process secret instead. The two endpoints (`/api/automations/cron`
  * and this one) are independent operations; we keep them on separate
  * URLs so one failing doesn't block the other.
  *
@@ -78,24 +79,24 @@ import { remindPendingReplies } from '@/lib/notifications/pending-replies'
  * for 60s or less.
  */
 export async function GET(request: Request) {
-  const expected = process.env.AUTOMATION_CRON_SECRET
-  if (!expected) {
-    return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
-  }
-  // Constant-time compare so an attacker who can hit the endpoint
-  // can't recover the secret byte-by-byte from response-time deltas.
-  // Length pre-check is required by timingSafeEqual (throws otherwise)
-  // and leaks only the length itself, which isn't sensitive.
-  const supplied = request.headers.get('x-cron-secret') ?? ''
-  const suppliedBuf = Buffer.from(supplied)
-  const expectedBuf = Buffer.from(expected)
-  if (
-    suppliedBuf.length !== expectedBuf.length ||
-    !timingSafeEqual(suppliedBuf, expectedBuf)
-  ) {
+  if (!isAuthorizedCronSecret(request.headers.get('x-cron-secret') ?? '')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // An external pinger and the in-process scheduler can both call this
+  // (see lib/cron/internal.ts) — never let two runs overlap.
+  const state = internalCronState()
+  if (state.flowsRunning) return NextResponse.json({ skipped: 'busy' })
+  state.flowsRunning = true
+  state.flowsLastStartedAt = Date.now()
+  try {
+    return await runFlowsCron()
+  } finally {
+    state.flowsRunning = false
+  }
+}
+
+async function runFlowsCron(): Promise<Response> {
   const admin = supabaseAdmin()
   const now = new Date()
 
