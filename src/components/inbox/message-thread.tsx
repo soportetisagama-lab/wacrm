@@ -1176,7 +1176,7 @@ export function MessageThread({
           <Badge
             variant="outline"
             className={cn(
-              'ml-1 hidden h-7 gap-1 rounded-full border-transparent px-2.5 text-[11px] font-semibold sm:ml-2 sm:inline-flex',
+              'ml-1 hidden h-7 shrink-0 gap-1 whitespace-nowrap rounded-full border-transparent px-2.5 text-[11px] font-semibold sm:ml-2 sm:inline-flex',
               sessionInfo.awaitingCustomer
                 ? 'bg-amber-500/15 text-amber-600'
                 : sessionInfo.expired
@@ -1201,7 +1201,7 @@ export function MessageThread({
               onClick={onOpenContactMobile}
               aria-label={t('showContact')}
               title={t('showContact')}
-              className="hover:bg-muted hover:text-foreground text-muted-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors sm:inline-flex xl:hidden"
+              className="hover:bg-muted hover:text-foreground text-muted-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors sm:inline-flex 2xl:hidden"
             >
               <PanelRightOpen className="h-4 w-4" />
             </button>
@@ -1216,7 +1216,7 @@ export function MessageThread({
               title={contactPanelOpen ? t('hideContact') : t('showContact')}
               aria-pressed={contactPanelOpen}
               className={cn(
-                'hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors xl:inline-flex',
+                'hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors 2xl:inline-flex',
                 contactPanelOpen ? 'text-primary' : 'text-muted-foreground'
               )}
             >
@@ -1239,7 +1239,7 @@ export function MessageThread({
             <CallContactButton
               contactId={contact.id}
               name={contactDisplayName}
-              className="hidden sm:inline-flex"
+              className="hidden xl:inline-flex"
             />
           )}
 
@@ -1251,7 +1251,7 @@ export function MessageThread({
               aria-label={t('refreshConversation')}
               title={t('refresh')}
               className={cn(
-                'text-muted-foreground hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors disabled:opacity-60 sm:inline-flex'
+                'text-muted-foreground hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors disabled:opacity-60 xl:inline-flex'
               )}
             >
               <RefreshCw
@@ -1268,7 +1268,7 @@ export function MessageThread({
             open={transferOpen}
             onOpenChange={setTransferOpen}
             onAvailableChange={setCanTransfer}
-            triggerClassName="hidden sm:inline-flex"
+            triggerClassName="hidden xl:inline-flex"
           />
 
           {/* Phones: contact / refresh / transfer behind one "⋮" button,
@@ -1278,7 +1278,7 @@ export function MessageThread({
               <DropdownMenuTrigger
                 aria-label={t('moreOptions')}
                 title={t('moreOptions')}
-                className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors sm:hidden"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-8 w-8 items-center justify-center rounded-xl transition-colors xl:hidden"
               >
                 <MoreVertical className="h-4 w-4" />
               </DropdownMenuTrigger>
@@ -1315,7 +1315,7 @@ export function MessageThread({
           <DropdownMenu>
             <DropdownMenuTrigger
               className={cn(
-                'bg-inbox-field hover:bg-muted inline-flex h-8 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold',
+                'bg-inbox-field hover:bg-muted inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold',
                 currentStatus?.color ?? 'text-muted-foreground'
               )}
             >
@@ -1347,12 +1347,12 @@ export function MessageThread({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  'bg-inbox-field hover:bg-muted inline-flex h-8 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold',
+                  'bg-inbox-field hover:bg-muted inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold',
                   assignedAgentId ? 'text-primary' : 'text-muted-foreground'
                 )}
               >
                 <UserPlus className="h-3 w-3" />
-                <span className="hidden sm:inline">{assignLabel}</span>
+                <span className="hidden xl:inline">{assignLabel}</span>
                 <ChevronDown className="h-3 w-3" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -1420,7 +1420,7 @@ export function MessageThread({
               )}
             >
               <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
+              <span className="hidden xl:inline">{assignLabel}</span>
             </span>
           )}
         </div>
