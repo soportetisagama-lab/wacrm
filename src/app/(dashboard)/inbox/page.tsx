@@ -707,7 +707,7 @@ function InboxPageInner() {
   return (
     <div
       className={cn(
-        "flex flex-col overflow-hidden",
+        "flex flex-col overflow-hidden bg-inbox-canvas",
         // The -m-4/calc(100vh-3.5rem) combo below cancels out the
         // desktop shell's <main> padding and its fixed-height Header —
         // numbers that only mean something in that specific layout.
@@ -730,7 +730,10 @@ function InboxPageInner() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      {/* Desktop: the thread and the contact panel float as rounded
+          cards on the inbox canvas ("tarjetas suaves"); phones keep the
+          edge-to-edge single pane. */}
+      <div className={cn("flex flex-1 overflow-hidden", !embedded && "lg:gap-3 lg:py-3 lg:pr-3")}>
         {/* Left panel: Conversation list.
             Hidden on mobile when a conversation is selected so the
             thread can occupy the full width. Always visible on lg+.
@@ -777,6 +780,8 @@ function InboxPageInner() {
           className={cn(
             "flex h-full min-w-0 flex-1 lg:flex",
             hasActiveConv ? "flex" : "hidden lg:flex",
+            !embedded &&
+              "lg:overflow-hidden lg:rounded-3xl lg:shadow-[0_8px_30px_rgb(0_0_0/0.08)]",
           )}
         >
           <MessageThread
@@ -797,21 +802,21 @@ function InboxPageInner() {
           />
         </div>
 
-        {/* Right panel: Contact sidebar — desktop only, and only when the
-            agent hasn't collapsed it via the thread-header toggle (#258).
-            On mobile it's always hidden (the `lg:block` below), so the
-            toggle — which is itself desktop-only — never affects it. */}
+        {/* Right panel: Contact sidebar — wide screens (xl+) only, and only
+            when the agent hasn't collapsed it via the thread-header toggle
+            (#258). Below xl (laptops, phones) it would squeeze the thread,
+            so the Sheet below shows it on demand instead. */}
         {contactPanelOpen && (
-          <div className="hidden lg:block">
+          <div className="hidden overflow-hidden rounded-3xl shadow-[0_1px_3px_rgb(0_0_0/0.06)] xl:block">
             <ContactSidebar contact={activeContact} conversationId={activeConversation?.id ?? null} />
           </div>
         )}
 
-        {/* Below lg (phones, the Android app) the side panel never shows —
-            the thread header's contact button opens it here instead, so
-            advisors can tag contacts and add notes from the phone too. */}
+        {/* Below xl (laptops, phones, the Android app) the side panel never
+            shows inline — the thread header's contact button opens it here
+            instead, so advisors can tag contacts and add notes anywhere. */}
         <Sheet open={mobileContactOpen} onOpenChange={setMobileContactOpen}>
-          <SheetContent side="right" className="w-auto max-w-[90vw] gap-0 p-0 lg:hidden">
+          <SheetContent side="right" className="w-auto max-w-[90vw] gap-0 p-0 xl:hidden">
             <SheetTitle className="sr-only">
               {activeContact?.name || activeContact?.phone || ""}
             </SheetTitle>
