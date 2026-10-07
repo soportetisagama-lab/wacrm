@@ -1019,7 +1019,7 @@ function ConversationItem({
                 loud badge. Shown on web and inside the embedded app. */}
             {assignedAgentName && (
               <span
-                className="shrink-0 truncate rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-black"
+                className="shrink-0 truncate rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-foreground"
                 title={assignedAgentName}
               >
                 {assignedAgentName}
