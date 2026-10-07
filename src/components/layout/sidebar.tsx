@@ -250,18 +250,18 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
           href={item.href}
           title={collapsed ? t(item.labelKey as string) : undefined}
           className={cn(
-            'group relative flex items-center gap-3 border-l-[3px] border-transparent px-4 py-2.5 text-[13px] font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
+            'group relative mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
             isActive || childActive
-              ? 'bg-[var(--sidebar-accent-dim)] text-sidebar-primary border-sidebar-primary'
-              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground hover:border-sidebar-primary/40',
-            collapsed && 'lg:justify-center lg:px-0'
+              ? 'bg-sidebar-primary text-white shadow-[0_6px_14px_color-mix(in_oklab,var(--sidebar-primary)_35%,transparent)]'
+              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+            collapsed && 'lg:mx-2 lg:justify-center lg:px-0'
           )}
         >
           <item.icon
             className={cn(
               'h-[18px] w-[18px] shrink-0 transition-colors',
               isActive || childActive
-                ? 'text-sidebar-primary'
+                ? 'text-white'
                 : 'text-sidebar-foreground/60 group-hover:text-sidebar-foreground'
             )}
           />
@@ -356,6 +356,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
           // Width is collapse-aware; transition it separately from the
           // (permanently disabled at lg) transform above.
           'lg:static lg:z-0 lg:translate-x-0 lg:transition-[width] lg:duration-200',
+          'lg:my-3 lg:ml-3 lg:h-auto lg:overflow-hidden lg:rounded-3xl lg:border-r-0 lg:shadow-[0_8px_24px_rgb(0_0_0/0.18)]',
           collapsed ? 'lg:w-20' : 'lg:w-[276px]'
         )}
         aria-label={t('primaryNav')}
@@ -396,7 +397,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
 
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto py-3">
-          <ul className="flex flex-col">
+          <ul className="flex flex-col gap-1">
             {navItems.filter(isNavItemVisible).map(renderNavItem)}
           </ul>
 
@@ -459,7 +460,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
             <DropdownMenuTrigger
               title={collapsed ? (profile?.full_name ?? t('defaultUser')) : undefined}
               className={cn(
-                'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-lg border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2',
+                'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-2xl border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2',
                 collapsed && 'lg:gap-0 lg:px-0 lg:py-2'
               )}
             >
