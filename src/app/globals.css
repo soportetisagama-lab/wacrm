@@ -333,3 +333,36 @@ html[data-theme="rose"] {
     @apply font-sans;
   }
 }
+
+/* ---- Scrollbars: thin, in the line's own color ----
+ * Native scrollbars app-wide (the chat thread, panels, the page). The
+ * custom ScrollArea thumb (components/ui/scroll-area.tsx) matches.
+ * Chromium/Safari get a rounded pill via ::-webkit-scrollbar; Firefox,
+ * which lacks it, the standard properties.
+ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--primary) 75%, transparent);
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--primary) 45%, transparent) transparent;
+  }
+}
