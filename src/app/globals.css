@@ -26,6 +26,10 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-inbox-canvas: var(--inbox-canvas);
+  --color-inbox-thread: var(--inbox-thread);
+  --color-inbox-field: var(--inbox-field);
+  --color-inbox-row: var(--inbox-row);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -136,6 +140,47 @@ html[data-mode="light"] {
   --chart-4: oklch(0.8 0.04 260);
   --chart-5: oklch(0.87 0.03 260);
   --radius: 0.625rem;
+}
+
+/* ---- INBOX: soft-card surfaces ----
+ * The inbox ("tarjetas suaves"): a warm canvas behind floating cards,
+ * per-contact avatar tints. Neutral surfaces only — every accent in the
+ * inbox stays on --primary, so each line keeps its own color.
+ */
+
+:root,
+html[data-mode="dark"] {
+  --inbox-canvas: oklch(0.11 0.006 260);
+  --inbox-thread: oklch(0.145 0.008 260);
+  --inbox-field: oklch(0.21 0.01 260);
+  --inbox-row: oklch(0.18 0.01 260 / 0.55);
+  --avatar-1-bg: oklch(0.33 0.07 60);
+  --avatar-1-fg: oklch(0.86 0.11 70);
+  --avatar-2-bg: oklch(0.31 0.07 255);
+  --avatar-2-fg: oklch(0.84 0.09 250);
+  --avatar-3-bg: oklch(0.31 0.06 155);
+  --avatar-3-fg: oklch(0.85 0.11 155);
+  --avatar-4-bg: oklch(0.31 0.08 305);
+  --avatar-4-fg: oklch(0.85 0.09 305);
+  --avatar-5-bg: oklch(0.31 0.08 350);
+  --avatar-5-fg: oklch(0.85 0.09 350);
+}
+
+html[data-mode="light"] {
+  --inbox-canvas: oklch(0.958 0.007 75);
+  --inbox-thread: oklch(0.985 0.004 75);
+  --inbox-field: oklch(0.958 0.007 75);
+  --inbox-row: oklch(1 0 0 / 0.6);
+  --avatar-1-bg: oklch(0.93 0.05 70);
+  --avatar-1-fg: oklch(0.45 0.13 45);
+  --avatar-2-bg: oklch(0.93 0.04 255);
+  --avatar-2-fg: oklch(0.42 0.15 265);
+  --avatar-3-bg: oklch(0.94 0.05 155);
+  --avatar-3-fg: oklch(0.42 0.11 150);
+  --avatar-4-bg: oklch(0.94 0.04 305);
+  --avatar-4-fg: oklch(0.42 0.16 305);
+  --avatar-5-bg: oklch(0.94 0.04 350);
+  --avatar-5-fg: oklch(0.45 0.16 355);
 }
 
 /* ---- ACCENT: primary color ---- */
