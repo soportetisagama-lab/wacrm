@@ -1049,6 +1049,35 @@ async function handleReaction(
 }
 
 /**
+ * Keep the full Meta payload of a WhatsApp Flows form submission as a
+ * contact note. The CRM never sends Flows itself, so every nfm_reply
+ * comes from something on Meta's side (e.g. one that arrived carrying
+ * only a `signup_id`) — the raw message is what identifies its origin.
+ * Best-effort, like saveReferralIfPresent.
+ */
+async function saveFlowFormPayloadIfPresent(
+  message: WhatsAppMessage,
+  accountId: string,
+  userId: string,
+  contactId: string
+) {
+  if (!message.interactive?.nfm_reply) return
+  const raw = JSON.stringify(message, null, 2)
+  console.log('[webhook] nfm_reply payload:', raw)
+  try {
+    const { error } = await supabaseAdmin().from('contact_notes').insert({
+      contact_id: contactId,
+      account_id: accountId,
+      user_id: userId,
+      note_text: `🧾 Formulario de WhatsApp recibido. Mensaje completo de Meta (sirve para identificar de dónde vino):\n${raw}`,
+    })
+    if (error) console.error('[webhook] Error saving nfm_reply payload note:', error)
+  } catch (err) {
+    console.error('[webhook] Error saving nfm_reply payload note:', err)
+  }
+}
+
+/**
  * Persist a Click-To-WhatsApp ad referral, if this message carries one.
  * Meta can attach `referral` to more than one inbound message per
  * conversation (a lead returning via a different ad later on), so this
@@ -1462,6 +1491,7 @@ async function processMessage(
   // type / first-message status — Meta can attach `referral` to any
   // inbound message, not only the very first one.
   await saveReferralIfPresent(message, accountId, conversation.id, contactRecord.id)
+  await saveFlowFormPayloadIfPresent(message, accountId, configOwnerUserId, contactRecord.id)
 
   // TODO(product): confirm whether Sagama has Meta's Contact Book
   // enabled (Meta Business Suite → Business settings → Business info).
