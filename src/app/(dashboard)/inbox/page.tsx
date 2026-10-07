@@ -798,21 +798,21 @@ function InboxPageInner() {
           />
         </div>
 
-        {/* Right panel: Contact sidebar — wide screens (xl+) only, and only
+        {/* Right panel: Contact sidebar — wide screens (2xl+) only, and only
             when the agent hasn't collapsed it via the thread-header toggle
-            (#258). Below xl (laptops, phones) it would squeeze the thread,
+            (#258). Below 2xl (laptops, phones) it would squeeze the thread,
             so the Sheet below shows it on demand instead. */}
         {contactPanelOpen && (
-          <div className="hidden overflow-hidden rounded-3xl shadow-[0_1px_3px_rgb(0_0_0/0.06)] xl:block">
+          <div className="hidden overflow-hidden rounded-3xl shadow-[0_1px_3px_rgb(0_0_0/0.06)] 2xl:block">
             <ContactSidebar contact={activeContact} conversationId={activeConversation?.id ?? null} />
           </div>
         )}
 
-        {/* Below xl (laptops, phones, the Android app) the side panel never
+        {/* Below 2xl (laptops, phones, the Android app) the side panel never
             shows inline — the thread header's contact button opens it here
             instead, so advisors can tag contacts and add notes anywhere. */}
         <Sheet open={mobileContactOpen} onOpenChange={setMobileContactOpen}>
-          <SheetContent side="right" className="w-auto max-w-[90vw] gap-0 p-0 xl:hidden">
+          <SheetContent side="right" className="w-auto max-w-[90vw] gap-0 p-0 2xl:hidden">
             <SheetTitle className="sr-only">
               {activeContact?.name || activeContact?.phone || ""}
             </SheetTitle>
