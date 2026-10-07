@@ -708,15 +708,11 @@ function InboxPageInner() {
     <div
       className={cn(
         "flex flex-col overflow-hidden bg-inbox-canvas",
-        // The -m-4/calc(100vh-3.5rem) combo below cancels out the
-        // desktop shell's <main> padding and its fixed-height Header —
-        // numbers that only mean something in that specific layout.
-        // The embedded shell's <main> has no padding to cancel, and its
-        // own header can be 0px (hidden inside an open thread) or its
-        // full height (list screens) — h-full just inherits whatever
-        // height <main> actually has at the time, correctly, without
-        // hardcoding either shell's chrome dimensions here.
-        embedded ? "h-full" : "-m-4 h-[calc(100vh-3.5rem)] sm:-m-6"
+        // -m-4/sm:-m-6 cancel the desktop shell's <main> padding and the
+        // percentage height (+ that padding) fills <main> exactly, whatever
+        // the header's height. The embedded shell's <main> has no padding
+        // to cancel, so h-full just inherits its height.
+        embedded ? "h-full" : "-m-4 h-[calc(100%+2rem)] sm:-m-6 sm:h-[calc(100%+3rem)]"
       )}
     >
       {/* WhatsApp connection banner — in the flex column, not absolute,
