@@ -1013,28 +1013,6 @@ function ConversationItem({
             >
               {displayName}
             </span>
-            {/* Tinted with the line's own brand color (green for Inox,
-                orange for Retail — whatever `--primary` resolves to) at
-                low opacity, so it reads as a soft accent rather than a
-                loud badge. Shown on web and inside the embedded app. */}
-            {assignedAgentName && (
-              <span
-                className="shrink-0 truncate rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-foreground"
-                title={assignedAgentName}
-              >
-                {assignedAgentName}
-              </span>
-            )}
-            {badgeTags.map((tag) => (
-              <span
-                key={tag.id}
-                className="max-w-24 shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
-                title={tag.name}
-              >
-                {tag.name}
-              </span>
-            ))}
           </div>
           <span className="flex shrink-0 items-center gap-1">
             <button
@@ -1099,14 +1077,34 @@ function ConversationItem({
             assigned_agent_id so it reads correctly even when the
             assignee hasn't changed (see engine.ts's
             markConversationPendingHandoff). */}
-        {conversation.status === "pending" && (
-          <div className={cn(embedded ? "mt-1.5" : "mt-1")}>
-            <span
-              className="inline-flex shrink-0 items-center rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
-              title={t("pendingReply")}
-            >
-              {t("pendingReply")}
-            </span>
+        {/* Assignee, tags and "pending reply" get their own wrapping row
+            below the message: next to the name they squeezed it out and
+            got cut to "Derivado de Sa…". Here each shows in full. The
+            assignee badge is tinted with the line's own --primary. */}
+        {(assignedAgentName || badgeTags.length > 0 || conversation.status === "pending") && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {assignedAgentName && (
+              <span className="inline-flex items-center rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-semibold text-foreground">
+                {assignedAgentName}
+              </span>
+            )}
+            {badgeTags.map((tag) => (
+              <span
+                key={tag.id}
+                className="inline-flex max-w-full items-center break-words rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+              >
+                {tag.name}
+              </span>
+            ))}
+            {conversation.status === "pending" && (
+              <span
+                className="inline-flex items-center rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-medium text-destructive"
+                title={t("pendingReply")}
+              >
+                {t("pendingReply")}
+              </span>
+            )}
           </div>
         )}
       </div>
