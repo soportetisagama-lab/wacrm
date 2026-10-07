@@ -213,8 +213,8 @@
       "noMessagesYet": "Todavía no hay mensajes",
       "sendTemplateHint": "Enviá una plantilla para iniciar la conversación",
       "sendTemplateHintNoTemplates": "Pide a ATC que inicie la conversación con una plantilla",
-      "selectConversation": "Seleccioná una conversación",
-      "selectConversationHint": "Elegí una conversación de la izquierda para empezar a chatear",
+      "selectConversation": "Selecciona una conversación",
+      "selectConversationHint": "Elige una conversación de la izquierda para empezar a chatear",
       "today": "Hoy",
       "yesterday": "Ayer",
       "waitForSend": "Esperá a que el mensaje termine de enviarse",
@@ -281,7 +281,7 @@
       "quickReplyCancel": "Cancelar",
       "quickReplySave": "Guardar",
       "quickReplyNameRequired": "Ponele un nombre a la respuesta rápida.",
-      "quickReplyTextRequired": "Escribí el texto de la respuesta rápida.",
+      "quickReplyTextRequired": "Escribe el texto de la respuesta rápida.",
       "quickReplyDeleteConfirm": "¿Eliminar la respuesta rápida «{title}»?",
       "quickReplyDeleteError": "No se pudo eliminar la respuesta rápida.",
       "quickReplyMine": "Mía",
@@ -376,7 +376,7 @@
     "templatePicker": {
       "sendTemplate": "Enviar plantilla",
       "fillPlaceholders": "Completá los marcadores de posición para generar esta plantilla. Meta requiere que todas las variables estén definidas.",
-      "pickTemplate": "Elegí una plantilla aprobada de WhatsApp para enviar a este contacto.",
+      "pickTemplate": "Elige una plantilla aprobada de WhatsApp para enviar a este contacto.",
       "noApprovedTemplates": "No hay plantillas aprobadas",
       "noApprovedTemplatesHint": "Aprobá una plantilla en Meta WhatsApp Manager y luego sincronizala desde Configuración → Plantillas.",
       "preview": "Vista previa",
@@ -404,7 +404,7 @@
       "tagDeleteConfirm": "¿Eliminar la etiqueta «{name}»? Se quitará de todos los contactos que la tengan.",
       "tagCreateError": "No se pudo crear la etiqueta.",
       "tagDeleteError": "No se pudo eliminar la etiqueta.",
-      "tagEmpty": "Todavía no hay etiquetas. Escribí un nombre para crear la tuya.",
+      "tagEmpty": "Todavía no hay etiquetas. Escribe un nombre para crear la tuya.",
       "tagHintMine": "Las etiquetas que creás solo las ves vos.",
       "tagHintAdmin": "Como administrador, las etiquetas que creás las ve todo el equipo.",
       "noDeals": "Sin negocios",
@@ -545,7 +545,7 @@
       },
       "notesTab": {
         "title": "Notas internas",
-        "placeholder": "Escribí una nota...",
+        "placeholder": "Escribe una nota...",
         "save": "Agregar nota",
         "noNotes": "Todavía no hay notas."
       },
@@ -553,7 +553,7 @@
         "noDeals": "Todavía no hay negocios"
       },
       "tagsTab": {
-        "clickTagDesc": "Hacé clic en una etiqueta para agregarla o quitarla de este contacto.",
+        "clickTagDesc": "Haz clic en una etiqueta para agregarla o quitarla de este contacto.",
         "noTagsAvailable": "No hay etiquetas disponibles. Crea etiquetas en Configuración."
       },
       "sendTemplateBtn": "Enviar plantilla",
