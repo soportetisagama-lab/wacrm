@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { ContactTagPicker } from "./contact-tag-picker";
+import { CONTACT_TAGS_CHANGED_EVENT } from "@/lib/inbox/conversations";
 import { useTranslations } from "next-intl";
 
 interface ContactSidebarProps {
@@ -203,6 +204,19 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   // no more leaving the conversation to go tag someone in Contacts.
   // `contact_tags` has no account/user column (migration 001), so the
   // insert/delete only need contact_id + tag_id.
+  // Lets the conversation list show the contact's tags right away
+  // (an Asesor's own rows show tags instead of their name — see
+  // conversation-list.tsx) without waiting for a reload.
+  const publishTags = useCallback(
+    (next: Tag[]) => {
+      if (!contact) return;
+      window.dispatchEvent(
+        new CustomEvent(CONTACT_TAGS_CHANGED_EVENT, { detail: { contactId: contact.id, tags: next } }),
+      );
+    },
+    [contact]
+  );
+
   const handleToggleTag = useCallback(
     async (tag: Tag) => {
       if (!contact) return;
@@ -212,6 +226,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
       if (existing) {
         // Optimistic remove, roll back on failure.
         setTags((prev) => prev.filter((t) => t.id !== tag.id));
+        publishTags(tags.filter((t) => t.id !== tag.id));
         const { error } = await supabase
           .from("contact_tags")
           .delete()
@@ -219,6 +234,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
         if (error) {
           console.error("Failed to remove tag:", error);
           setTags((prev) => [...prev, existing]);
+          publishTags(tags);
         }
         return;
       }
@@ -232,9 +248,11 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
         console.error("Failed to add tag:", error);
         return;
       }
-      setTags((prev) => [...prev, { ...tag, contact_tag_id: data.id as string }]);
+      const added = { ...tag, contact_tag_id: data.id as string };
+      setTags((prev) => [...prev, added]);
+      publishTags([...tags, added]);
     },
-    [contact, tags]
+    [contact, tags, publishTags]
   );
 
   if (!contact) {
@@ -416,6 +434,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                 onDeleted={(tagId) => {
                   setAllTags((prev) => prev.filter((t) => t.id !== tagId));
                   setTags((prev) => prev.filter((t) => t.id !== tagId));
+                  publishTags(tags.filter((t) => t.id !== tagId));
                 }}
               />
             </div>

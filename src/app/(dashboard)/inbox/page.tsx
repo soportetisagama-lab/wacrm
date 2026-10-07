@@ -5,10 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import {
+  CONTACT_TAGS_CHANGED_EVENT,
   CONVERSATION_SELECT,
   normalizeConversation,
 } from "@/lib/inbox/conversations";
-import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
+import type { Conversation, Message, Contact, ConversationStatus, Tag } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
@@ -55,6 +56,20 @@ function InboxPageInner() {
   }, []);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
+
+  // Tags edited in the contact panel show up in the list right away.
+  useEffect(() => {
+    const onTagsChanged = (e: Event) => {
+      const { contactId, tags } = (e as CustomEvent<{ contactId: string; tags: Tag[] }>).detail;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.contact?.id === contactId ? { ...c, contact: { ...c.contact, tags } } : c,
+        ),
+      );
+    };
+    window.addEventListener(CONTACT_TAGS_CHANGED_EVENT, onTagsChanged);
+    return () => window.removeEventListener(CONTACT_TAGS_CHANGED_EVENT, onTagsChanged);
+  }, []);
   const [activeConversation, setActiveConversation] =
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
