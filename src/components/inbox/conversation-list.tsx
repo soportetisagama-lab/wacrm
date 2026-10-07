@@ -832,9 +832,14 @@ export function ConversationList({
                 isPinned={pinnedAt.has(conv.id)}
                 onTogglePin={handleTogglePin}
                 assignedAgentName={
-                  conv.assigned_agent_id
+                  // An Asesor already knows their own chats are theirs —
+                  // their rows show the contact's tags instead.
+                  conv.assigned_agent_id && !(isAgent && conv.assigned_agent_id === user?.id)
                     ? (agentsById.get(conv.assigned_agent_id)?.full_name ?? null)
                     : null
+                }
+                badgeTags={
+                  isAgent && conv.assigned_agent_id === user?.id ? (conv.contact?.tags ?? []) : []
                 }
               />
             ))}
@@ -855,6 +860,8 @@ interface ConversationItemProps {
   onTogglePin: (conversationId: string) => void;
   /** Web only (see the render call) — null when unassigned. */
   assignedAgentName: string | null;
+  /** Shown where the assignee badge would be — an Asesor's own rows. */
+  badgeTags: Tag[];
 }
 
 function ConversationItem({
@@ -866,6 +873,7 @@ function ConversationItem({
   isPinned,
   onTogglePin,
   assignedAgentName,
+  badgeTags,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName =
@@ -1010,6 +1018,16 @@ function ConversationItem({
                 {assignedAgentName}
               </span>
             )}
+            {badgeTags.map((tag) => (
+              <span
+                key={tag.id}
+                className="max-w-24 shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                title={tag.name}
+              >
+                {tag.name}
+              </span>
+            ))}
           </div>
           <span className="flex shrink-0 items-center gap-1">
             <button

@@ -308,6 +308,7 @@
       "micBusy": "다른 앱에서 마이크를 사용 중입니다. 해당 앱을 닫고 다시 시도하세요.",
       "micDenied": "마이크 접근이 거부되었거나 사용할 수 없습니다.",
       "recordVoiceNote": "음성 메시지 녹음",
+      "emoji": "이모지",
       "sendVoiceNote": "음성 메시지 보내기",
       "holdToRecord": "길게 눌러 녹음하고 손을 떼면 전송됩니다",
       "slideToCancel": "밀어서 취소",
