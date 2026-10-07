@@ -138,6 +138,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
 
 import { GET } from './route'
 import { DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
+import { internalCronState } from '@/lib/cron/internal'
 
 const SECRET = 'test-cron-secret'
 
@@ -199,10 +200,20 @@ describe('GET /api/flows/cron — auth', () => {
     expect(h.runAutoReplyNow).not.toHaveBeenCalled()
   })
 
-  it('503s when AUTOMATION_CRON_SECRET is not configured', async () => {
+  it('without AUTOMATION_CRON_SECRET, rejects outside callers but still runs for the in-process scheduler', async () => {
     delete process.env.AUTOMATION_CRON_SECRET
-    const res = await GET(request())
-    expect(res.status).toBe(503)
+    expect((await GET(request())).status).toBe(401)
+    expect((await GET(request(internalCronState().secret))).status).toBe(200)
+  })
+
+  it('skips instead of overlapping a run already in progress', async () => {
+    internalCronState().flowsRunning = true
+    try {
+      const body = await (await GET(request())).json()
+      expect(body).toEqual({ skipped: 'busy' })
+    } finally {
+      internalCronState().flowsRunning = false
+    }
   })
 })
 
