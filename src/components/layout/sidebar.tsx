@@ -248,13 +248,13 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
       <li key={item.href}>
         <Link
           href={item.href}
-          title={collapsed ? t(item.labelKey as string) : undefined}
+          title={t(item.labelKey as string)}
           className={cn(
             'group relative mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
             isActive || childActive
               ? 'bg-sidebar-primary text-white shadow-[0_6px_14px_color-mix(in_oklab,var(--sidebar-primary)_35%,transparent)]'
               : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-            collapsed && 'lg:mx-2 lg:justify-center lg:px-0'
+            collapsed ? 'lg:mx-2 lg:justify-center lg:px-0' : 'lg:max-xl:mx-2 lg:max-xl:justify-center lg:max-xl:px-0'
           )}
         >
           <item.icon
@@ -265,7 +265,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
                 : 'text-sidebar-foreground/60 group-hover:text-sidebar-foreground'
             )}
           />
-          <span className={cn('flex-1 truncate', collapsed && 'lg:hidden')}>
+          <span className={cn('flex-1 truncate', collapsed ? 'lg:hidden' : 'lg:max-xl:hidden')}>
             {t(item.labelKey as string)}
           </span>
           {item.beta && (
@@ -273,7 +273,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               aria-label={t('beta')}
               className={cn(
                 'rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-300 normal-case',
-                collapsed && 'lg:hidden'
+                collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
               )}
             >
               {t('beta')}
@@ -302,7 +302,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
           )}
         </Link>
         {item.children && item.children.length > 0 && (
-          <ul className={cn('bg-[var(--sidebar-sub)]', collapsed && 'lg:hidden')}>
+          <ul className={cn('bg-[var(--sidebar-sub)]', collapsed ? 'lg:hidden' : 'lg:max-xl:hidden')}>
             {item.children.map((child) => {
               const isChildActive =
                 pathname === child.href || pathname.startsWith(child.href);
@@ -357,7 +357,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
           // (permanently disabled at lg) transform above.
           'lg:static lg:z-0 lg:translate-x-0 lg:transition-[width] lg:duration-200',
           'lg:my-3 lg:ml-3 lg:h-auto lg:overflow-hidden lg:rounded-3xl lg:border-r-0 lg:shadow-[0_8px_24px_rgb(0_0_0/0.18)]',
-          collapsed ? 'lg:w-20' : 'lg:w-[276px]'
+          collapsed ? 'lg:w-20' : 'lg:w-20 xl:w-[276px]'
         )}
         aria-label={t('primaryNav')}
       >
@@ -369,7 +369,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
         <div
           className={cn(
             'border-sidebar-border relative flex shrink-0 items-center justify-center border-b pt-6 pb-4',
-            collapsed ? 'px-5 lg:px-2' : 'px-5'
+            collapsed ? 'px-5 lg:px-2' : 'px-5 lg:max-xl:px-2'
           )}
         >
           <Link href="/dashboard" className="flex items-center justify-center">
@@ -381,7 +381,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               priority
               className={cn(
                 'h-auto w-full max-w-[228px]',
-                collapsed && 'lg:max-w-10'
+                collapsed ? 'lg:max-w-10' : 'lg:max-xl:max-w-10'
               )}
             />
           </Link>
@@ -423,7 +423,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
             <div
               className={cn(
                 'text-sidebar-foreground/60 mb-2 flex items-center gap-2 px-1 text-xs',
-                collapsed && 'lg:hidden'
+                collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
               )}
             >
               <UsersRound className="size-3.5 shrink-0" />
@@ -461,13 +461,13 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               title={collapsed ? (profile?.full_name ?? t('defaultUser')) : undefined}
               className={cn(
                 'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-2xl border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2',
-                collapsed && 'lg:gap-0 lg:px-0 lg:py-2'
+                collapsed ? 'lg:gap-0 lg:px-0 lg:py-2' : 'lg:max-xl:gap-0 lg:max-xl:px-0 lg:max-xl:py-2'
               )}
             >
               <Avatar
                 className={cn(
                   'after:rounded-xl size-16 shrink-0 rounded-xl',
-                  collapsed && 'lg:size-9'
+                  collapsed ? 'lg:size-9' : 'lg:max-xl:size-9'
                 )}
               >
                 {profile?.avatar_url ? (
@@ -483,7 +483,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
                     'U'}
                 </AvatarFallback>
               </Avatar>
-              <div className={cn('min-w-0 w-full', collapsed && 'lg:hidden')}>
+              <div className={cn('min-w-0 w-full', collapsed ? 'lg:hidden' : 'lg:max-xl:hidden')}>
                 <p className="flex min-w-0 items-center justify-center gap-1.5">
                   <span className="text-sidebar-foreground min-w-0 truncate text-sm font-semibold">
                     {profile?.full_name ?? t('defaultUser')}
