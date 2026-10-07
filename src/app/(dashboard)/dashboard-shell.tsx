@@ -11,6 +11,7 @@ import { ModeToggle } from "@/components/layout/mode-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 import { AssignedMessageNotifier } from "@/components/presence/assigned-message-notifier";
+import { PendingRepliesReminder } from "@/components/presence/pending-replies-reminder";
 import { IncomingCallManager } from "@/components/calls/incoming-call-manager";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
@@ -143,6 +144,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
               signed in. Headless — renders nothing. */}
           <PresenceHeartbeat />
           <AssignedMessageNotifier />
+          <PendingRepliesReminder />
           <IncomingCallManager />
           <Sidebar
             open={sidebarOpen}
