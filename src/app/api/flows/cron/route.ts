@@ -16,6 +16,7 @@ import { loadAiConfig } from '@/lib/ai/config'
 import { buildConversationContext } from '@/lib/ai/context'
 import { generateNudge } from '@/lib/ai/nudge'
 import { logAiUsage } from '@/lib/ai/usage'
+import { remindPendingReplies } from '@/lib/notifications/pending-replies'
 
 /**
  * Sweep abandoned active flow runs, nudge collect_ai runs that have gone
@@ -97,6 +98,9 @@ export async function GET(request: Request) {
 
   const admin = supabaseAdmin()
   const now = new Date()
+
+  // Rides on this cron's schedule; throttles itself to every 10 min.
+  await remindPendingReplies(admin, now)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
