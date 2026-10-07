@@ -73,7 +73,7 @@ export function Header({
     "U";
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 lg:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 lg:mx-3 lg:mt-3 lg:rounded-2xl lg:border-0 lg:px-4 lg:shadow-[0_8px_20px_color-mix(in_oklab,var(--header-bg)_35%,transparent)]">
       <div className="flex min-w-0 items-center gap-2">
         {/* Hamburger — mobile only. 44×44 hit target per Apple HIG. */}
         <button
@@ -91,12 +91,12 @@ export function Header({
             header's secondary controls; the mobile header is already
             tight with the hamburger + title. */}
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
-          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+          <FullscreenToggle className="h-10 w-10 shrink-0 rounded-full border-0 bg-white/20 text-white transition-all duration-300 hover:scale-[1.07] hover:bg-white/30" />
           {onToggleSidebarCollapsed && (
             <SidebarCollapseToggle
               collapsed={sidebarCollapsed}
               onToggle={onToggleSidebarCollapsed}
-              className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white"
+              className="h-10 w-10 shrink-0 rounded-full border-0 bg-white/20 text-white transition-all duration-300 hover:scale-[1.07] hover:bg-white/30"
             />
           )}
         </div>
@@ -107,7 +107,7 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5">
-        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-2 border-white/15 bg-white text-[#f59612] shadow-[0_3px_10px_rgba(0,0,0,0.25)] transition-all duration-300 hover:scale-[1.07] hover:border-white/30 hover:bg-[#162028] hover:text-white" />
+        <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-0 bg-white/20 text-white transition-all duration-300 hover:scale-[1.07] hover:bg-white/30" />
 
         {/* Notifications — same unread count the sidebar's nav item
             surfaces, mirrored here as a quick-glance bell. */}
@@ -119,7 +119,7 @@ export function Header({
               : t("notifications")
           }
           title={t("notifications")}
-          className="relative flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border-2 border-white/40 bg-white/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/30 hover:shadow-[0_6px_18px_rgba(0,0,0,0.2)]"
+          className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/30 hover:shadow-[0_6px_18px_rgba(0,0,0,0.2)]"
         >
           {hasUnread && (
             <span
@@ -147,7 +147,7 @@ export function Header({
 
         <DropdownMenu>
         <DropdownMenuTrigger
-          className="flex shrink-0 items-center gap-2 rounded-full border border-white/40 bg-white/15 px-2 py-1.5 backdrop-blur-md transition-all duration-200 hover:bg-white/25 hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)] focus:outline-none data-popup-open:bg-white/25 sm:gap-3 sm:px-3.5"
+          className="flex shrink-0 items-center gap-2 rounded-full bg-white px-1.5 py-1 shadow-[0_2px_8px_rgba(0,0,0,0.12)] transition-all duration-200 hover:bg-white/90 focus:outline-none data-popup-open:bg-white/90 sm:gap-2.5 sm:pr-4"
           aria-label={t("openAccountMenu")}
         >
           <Avatar className="size-8 border-2 border-white/90 shadow-[0_2px_8px_rgba(0,0,0,0.15)] after:border-white/70">
@@ -157,11 +157,11 @@ export function Header({
                 alt={profile.full_name ?? t("defaultAvatar")}
               />
             ) : null}
-            <AvatarFallback className="bg-white text-sm font-medium text-[#f59612]">
+            <AvatarFallback className="bg-[var(--header-bg)] text-sm font-semibold text-white">
               {initial}
             </AvatarFallback>
           </Avatar>
-          <span className="hidden text-sm font-semibold text-white sm:inline">
+          <span className="hidden text-sm font-semibold text-neutral-900 sm:inline">
             {profile?.full_name ?? t("defaultUser")}
           </span>
         </DropdownMenuTrigger>
@@ -219,9 +219,9 @@ export function Header({
           onClick={signOut}
           aria-label={t("menuSignOut")}
           title={t("menuSignOut")}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/15 backdrop-blur-md transition-all duration-200 hover:bg-[#ff4757]/25 hover:shadow-[0_4px_12px_rgba(255,71,87,0.3)] sm:h-12 sm:w-12"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 transition-all duration-200 hover:bg-[#ff4757]/40"
         >
-          <LogOut className="h-4 w-4 text-white/95 sm:h-[18px] sm:w-[18px]" />
+          <LogOut className="h-[18px] w-[18px] text-white" />
         </button>
       </div>
     </header>
