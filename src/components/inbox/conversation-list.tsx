@@ -8,6 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
+import { avatarTintStyle } from "@/lib/inbox/avatar-tint";
 import { TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Conversation, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X, Pin, MailOpen, Mail } from "lucide-react";
@@ -473,20 +474,20 @@ export function ConversationList({
     // row with the thread + contact sidebar.
     <div
       className={cn(
-        "flex h-full w-full min-w-0 flex-col border-r border-border lg:w-80",
+        "flex h-full w-full min-w-0 flex-col lg:w-[300px] 2xl:w-[340px]",
         // The card rows below are bg-card on an otherwise near-identical
         // bg-background (both ~white in light mode) — with no canvas
         // behind them a "card" has nothing to contrast against and reads
         // as flat/unstyled. A visibly darker muted canvas here is what
         // makes the elevated white cards actually look elevated.
-        embedded ? "bg-muted/60" : "bg-card"
+        "bg-inbox-canvas"
       )}
     >
       {/* Search + Filter */}
       <div
         className={cn(
-          "min-w-0 space-y-2 border-b border-border p-3",
-          embedded && "space-y-3 bg-card pb-3 pt-5"
+          "min-w-0 space-y-2 p-3",
+          embedded && "space-y-3 border-b border-border bg-card pb-3 pt-5"
         )}
       >
         <div className="relative min-w-0">
@@ -501,7 +502,7 @@ export function ConversationList({
             onChange={handleSearchChange}
             placeholder={t("searchPlaceholder")}
             className={cn(
-              "border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50",
+              "h-11 rounded-2xl border-transparent bg-card pl-9 text-sm text-foreground shadow-sm placeholder-muted-foreground focus:border-primary/50",
               embedded && "h-12 rounded-full bg-muted/80 pl-11 text-[15px]"
             )}
           />
@@ -544,7 +545,7 @@ export function ConversationList({
           {/* Replaced by the chip row above when embedded — the tags/
               company filters just below stay available either way. */}
           <DropdownMenu>
-            <DropdownMenuTrigger className={cn("inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted", embedded && "hidden")}>
+            <DropdownMenuTrigger className={cn("inline-flex items-center justify-center h-8 gap-1 px-3 text-xs font-medium text-muted-foreground hover:text-foreground rounded-full bg-card shadow-sm hover:bg-card/70", embedded && "hidden")}>
                 {activeFilter?.label ?? t("filterAll")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
@@ -573,7 +574,8 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex items-center justify-center h-8 gap-1 px-3 text-xs font-medium rounded-full",
+                  embedded ? "hover:bg-muted" : "bg-card shadow-sm hover:bg-card/70",
                   selectedTagIds.length > 0
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -615,7 +617,8 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex max-w-40 items-center justify-center h-8 gap-1 px-3 text-xs font-medium rounded-full",
+                  embedded ? "hover:bg-muted" : "bg-card shadow-sm hover:bg-card/70",
                   selectedCompany
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -668,7 +671,8 @@ export function ConversationList({
             <DropdownMenu onOpenChange={(open) => { if (!open) setAgentSearch(""); }}>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex max-w-40 items-center justify-center h-8 gap-1 px-3 text-xs font-medium rounded-full",
+                  embedded ? "hover:bg-muted" : "bg-card shadow-sm hover:bg-card/70",
                   selectedAgentId
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -820,7 +824,7 @@ export function ConversationList({
             <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
           </div>
         ) : (
-          <div className={cn("flex flex-col", embedded && "gap-2 p-3")}>
+          <div className={cn("flex flex-col gap-2", embedded ? "p-3" : "px-3 pb-3")}>
             {sorted.map((conv) => (
               <ConversationItem
                 key={conv.id}
@@ -964,8 +968,10 @@ function ConversationItem({
                         : "border-border/40 bg-card active:bg-muted/40"
                   )
                 : cn(
-                    "px-3 py-3 hover:bg-muted/50",
-                    isActive && "border-l-2 border-primary bg-muted/70"
+                    "rounded-2xl px-3 py-3 transition-shadow",
+                    isActive
+                      ? "bg-card shadow-md ring-2 ring-primary"
+                      : "bg-inbox-row hover:bg-card hover:shadow-sm"
                   )
             )}
           />
@@ -976,8 +982,9 @@ function ConversationItem({
         className={cn(
           "flex shrink-0 items-center justify-center rounded-full text-sm font-medium",
           avatarSize,
-          embedded ? "bg-primary/15 text-primary" : "bg-muted text-foreground"
+          "font-semibold"
         )}
+        style={contact?.avatar_url ? undefined : avatarTintStyle(contact?.id ?? displayName)}
       >
         {contact?.avatar_url ? (
           <img
@@ -1076,7 +1083,7 @@ function ConversationItem({
                   // it was barely legible at the old 18px/no-border size.
                   embedded
                     ? "h-5 min-w-5 px-1.5 text-xs shadow-sm ring-2 ring-card"
-                    : "h-4 min-w-4 px-1 text-[10px]"
+                    : "h-5 min-w-5 px-1.5 text-[11px]"
                 )}
               >
                 {conversation.unread_count}

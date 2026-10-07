@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { avatarTintStyle } from "@/lib/inbox/avatar-tint";
 import { CONTACT_DATA_CHANGED_EVENT, TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Contact, Deal, ContactNote, Tag, ConversationReferral } from "@/types";
 import {
@@ -257,7 +258,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
 
   if (!contact) {
     return (
-      <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
+      <div className="flex h-full w-64 items-center justify-center bg-card 2xl:w-70">
         <p className="text-sm text-muted-foreground">{tThread("selectConversation")}</p>
       </div>
     );
@@ -268,14 +269,17 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const initials = displayName.charAt(0).toUpperCase();
 
   return (
-    <div className="flex h-full w-70 flex-col border-l border-border bg-card">
+    <div className="flex h-full w-64 flex-col bg-card 2xl:w-70">
       {/* min-h-0: without it the flex child grows to fit its content, so
           a long note pushed the panel past the screen with no scrollbar. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
+            <div
+              className="flex h-16 w-16 items-center justify-center rounded-full text-lg font-semibold"
+              style={contact.avatar_url ? undefined : avatarTintStyle(contact.id)}
+            >
               {contact.avatar_url ? (
                 <img
                   src={contact.avatar_url}

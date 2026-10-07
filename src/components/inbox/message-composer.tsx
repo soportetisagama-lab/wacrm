@@ -1042,7 +1042,7 @@ export function MessageComposer({
   return (
     <div
       className={cn(
-        "border-t border-border bg-card p-3",
+        "border-t border-border/60 bg-card p-3",
         // The fixed-width send button was sitting flush against the
         // screen edge on devices with a rounded corner / camera cutout
         // on that side — safe-area-inset makes sure it isn't, and the
@@ -1167,7 +1167,7 @@ export function MessageComposer({
                       ? undefined
                       : t("attachMedia")
                 }
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-inbox-field p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1203,7 +1203,7 @@ export function MessageComposer({
                       ? undefined
                       : t("moreActions")
                 }
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-inbox-field p-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-4 w-4" />
               </DropdownMenuTrigger>
@@ -1415,7 +1415,7 @@ export function MessageComposer({
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "w-full resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
+              "w-full resize-none rounded-2xl border border-transparent bg-inbox-field px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
               (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
@@ -1436,7 +1436,7 @@ export function MessageComposer({
               disabled={!text.trim() || sessionExpired || sending}
               onClick={handleSend}
               aria-label={t("send")}
-              className="h-10 w-10 shrink-0 rounded-full bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
+              className="h-10 w-10 shrink-0 rounded-2xl bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
             >
               <Send className="h-4 w-4" />
             </GatedButton>
@@ -1478,7 +1478,7 @@ export function MessageComposer({
                     : t("recordVoiceNote")
               }
               className={cn(
-                "inline-flex h-10 w-10 shrink-0 touch-none select-none items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40",
+                "inline-flex h-10 w-10 shrink-0 touch-none select-none items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm transition-transform duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40",
                 recording && recordMode === "hold" && "scale-[1.35] shadow-lg"
               )}
             >

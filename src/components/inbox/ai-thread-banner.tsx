@@ -222,11 +222,9 @@ function Banner({
   return (
     <div
       className={cn(
-        "flex gap-3 border-b px-3 py-2 text-xs sm:px-4",
+        "mx-3 mb-2 flex gap-3 rounded-2xl px-3 py-2.5 text-xs sm:px-4",
         align === "start" ? "items-start" : "items-center",
-        tone === "primary"
-          ? "border-primary/20 bg-primary/5"
-          : "border-border bg-muted/40",
+        tone === "primary" ? "bg-primary/10" : "bg-card shadow-sm",
       )}
     >
       {children}

@@ -9,6 +9,7 @@ import { usePresence } from '@/hooks/use-presence';
 import { PresenceDot } from '@/components/presence/presence-dot';
 import { presenceLabel } from '@/lib/presence';
 import { cn } from '@/lib/utils';
+import { avatarTintStyle } from '@/lib/inbox/avatar-tint';
 import type {
   Conversation,
   Message,
@@ -182,16 +183,11 @@ const STATUS_OPTIONS: {
 ];
 
 /**
- * WhatsApp-style doodle background applied to the chat area (both the
- * active thread and the empty state). The SVG tile lives at
- * `/public/inbox-doodle.svg`; the slate-950 colour sits underneath so
- * the doodles read as a subtle pattern rather than a stark grid.
- *
- * Defined once at module scope so the two render paths can't drift —
- * if we ever switch the asset, both spots update together.
+ * Chat-area surface (both the active thread and the empty state): the
+ * soft --inbox-thread token from globals.css, light and dark. Defined
+ * once so the two render paths can't drift.
  */
-const DOODLE_BG_CLASSES =
-  "bg-background bg-[url('/inbox-doodle.svg')] bg-repeat";
+const DOODLE_BG_CLASSES = "bg-inbox-thread";
 
 export function MessageThread({
   conversation,
@@ -1155,9 +1151,10 @@ export function MessageThread({
           )}
           <div
             className={cn(
-              'bg-muted text-foreground flex flex-shrink-0 items-center justify-center rounded-full font-medium',
-              embedded ? 'h-11 w-11 text-base' : 'h-9 w-9 text-sm'
+              'flex flex-shrink-0 items-center justify-center rounded-full font-semibold',
+              embedded ? 'h-11 w-11 text-base' : 'h-10 w-10 text-sm'
             )}
+            style={avatarTintStyle(contact.id)}
           >
             {displayName.charAt(0).toUpperCase()}
           </div>
@@ -1179,12 +1176,12 @@ export function MessageThread({
           <Badge
             variant="outline"
             className={cn(
-              'border-border ml-1 hidden gap-1 text-[10px] sm:ml-2 sm:inline-flex',
+              'ml-1 hidden h-7 gap-1 rounded-full border-transparent px-2.5 text-[11px] font-semibold sm:ml-2 sm:inline-flex',
               sessionInfo.awaitingCustomer
-                ? 'text-amber-500'
+                ? 'bg-amber-500/15 text-amber-600'
                 : sessionInfo.expired
-                  ? 'text-red-400'
-                  : 'text-primary'
+                  ? 'bg-red-500/15 text-red-500'
+                  : 'bg-primary/12 text-primary'
             )}
           >
             <Clock className="h-3 w-3" />
@@ -1204,7 +1201,7 @@ export function MessageThread({
               onClick={onOpenContactMobile}
               aria-label={t('showContact')}
               title={t('showContact')}
-              className="hover:bg-muted hover:text-foreground text-muted-foreground hidden h-7 w-7 items-center justify-center rounded-md transition-colors sm:inline-flex lg:hidden"
+              className="hover:bg-muted hover:text-foreground text-muted-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors sm:inline-flex xl:hidden"
             >
               <PanelRightOpen className="h-4 w-4" />
             </button>
@@ -1219,7 +1216,7 @@ export function MessageThread({
               title={contactPanelOpen ? t('hideContact') : t('showContact')}
               aria-pressed={contactPanelOpen}
               className={cn(
-                'hover:bg-muted hover:text-foreground hidden h-7 w-7 items-center justify-center rounded-md transition-colors lg:inline-flex',
+                'hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors xl:inline-flex',
                 contactPanelOpen ? 'text-primary' : 'text-muted-foreground'
               )}
             >
@@ -1254,7 +1251,7 @@ export function MessageThread({
               aria-label={t('refreshConversation')}
               title={t('refresh')}
               className={cn(
-                'text-muted-foreground hover:bg-muted hover:text-foreground hidden h-7 w-7 items-center justify-center rounded-md transition-colors disabled:opacity-60 sm:inline-flex'
+                'text-muted-foreground hover:bg-muted hover:text-foreground hidden h-8 w-8 items-center justify-center rounded-xl transition-colors disabled:opacity-60 sm:inline-flex'
               )}
             >
               <RefreshCw
@@ -1318,7 +1315,7 @@ export function MessageThread({
           <DropdownMenu>
             <DropdownMenuTrigger
               className={cn(
-                'hover:bg-muted inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs',
+                'bg-inbox-field hover:bg-muted inline-flex h-8 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold',
                 currentStatus?.color ?? 'text-muted-foreground'
               )}
             >
@@ -1350,7 +1347,7 @@ export function MessageThread({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  'hover:bg-muted inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs',
+                  'bg-inbox-field hover:bg-muted inline-flex h-8 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold',
                   assignedAgentId ? 'text-primary' : 'text-muted-foreground'
                 )}
               >
@@ -1418,7 +1415,7 @@ export function MessageThread({
           ) : (
             <span
               className={cn(
-                'inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs',
+                'bg-inbox-field inline-flex h-8 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold',
                 assignedAgentId ? 'text-primary' : 'text-muted-foreground'
               )}
             >
@@ -1430,7 +1427,7 @@ export function MessageThread({
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="border-primary h-5 w-5 animate-spin rounded-full border-2 border-t-transparent" />
