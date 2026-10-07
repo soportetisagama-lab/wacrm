@@ -69,3 +69,8 @@ export function matchesContactFilters(
 
   return true;
 }
+
+/** Window event the contact panel fires after tagging/untagging a
+ *  contact; detail: `{ contactId: string; tags: Tag[] }`. The inbox page
+ *  applies it to its conversation list. */
+export const CONTACT_TAGS_CHANGED_EVENT = "wacrm:contact-tags-changed";

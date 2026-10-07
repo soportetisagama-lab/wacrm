@@ -75,6 +75,7 @@ import {
 } from "@/lib/inbox/slash-quick-replies";
 import type { InteractiveMessagePayload, QuickReply } from "@/types";
 import { QuickReplyPicker } from "./quick-reply-picker";
+import { EmojiButton } from "./emoji-button";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 
 /** Media content types an agent can send from the composer. */
@@ -553,6 +554,26 @@ export function MessageComposer({
       });
     },
     [openInteractiveBuilder, adjustHeight],
+  );
+
+  // Emoji picker: insert at the cursor (or replace the selection), like
+  // WhatsApp, and keep the caret right after it.
+  const insertEmoji = useCallback(
+    (emoji: string) => {
+      const el = textareaRef.current;
+      const start = el?.selectionStart ?? text.length;
+      const end = el?.selectionEnd ?? text.length;
+      setText((prev) => prev.slice(0, start) + emoji + prev.slice(end));
+      requestAnimationFrame(() => {
+        adjustHeight();
+        if (el) {
+          el.focus();
+          const caret = start + emoji.length;
+          el.setSelectionRange(caret, caret);
+        }
+      });
+    },
+    [text.length, adjustHeight],
   );
 
   const openQuickReplyPicker = useCallback((createTitle: string | null = null) => {
@@ -1400,6 +1421,10 @@ export function MessageComposer({
           />
           </div>
           </>
+          )}
+
+          {!recording && (
+            <EmojiButton disabled={inputsDisabled} onPick={insertEmoji} label={t("emoji")} />
           )}
 
           {/* WhatsApp-style: empty composer → mic, typed text → send. */}

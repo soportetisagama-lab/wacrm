@@ -308,6 +308,7 @@
       "micBusy": "El micrófono está siendo usado por otra aplicación. Ciérrala e inténtalo de nuevo.",
       "micDenied": "Acceso al micrófono denegado o no disponible.",
       "recordVoiceNote": "Grabar nota de voz",
+      "emoji": "Emojis",
       "sendVoiceNote": "Enviar nota de voz",
       "holdToRecord": "Mantén presionado para grabar y suelta para enviar",
       "slideToCancel": "Desliza para cancelar",
