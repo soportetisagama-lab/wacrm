@@ -6,11 +6,17 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import styles from '@/components/auth/auth-visuals.module.css';
 
-// How long the splash holds fully visible before it starts fading, and how
-// long that fade transition takes — mirrors the timing of the original
-// reference design (2.8s hold, 0.7s exit).
+const LOGO_SRC = '/branding/SAGAMA-Retail.png';
+const LINE_NAME = 'Sagama Retail';
+// Same photo the login screen uses behind its card (AuthShell), so the
+// curtain opening reveals the form on the very same background.
+const BACKGROUND_SRC = '/branding/loginfondo-retail.png';
+
+// How long the splash holds fully visible before it starts its exit,
+// and how long the exit takes (card fade 0.35s, then the 0.9s curtain
+// starting 0.15s in — see .splashHalf in auth-visuals.module.css).
 const SPLASH_HOLD_MS = 2500;
-const SPLASH_EXIT_MS = 700;
+const SPLASH_EXIT_MS = 1050;
 
 export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
   const [exiting, setExiting] = useState(false);
@@ -24,36 +30,45 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
     };
   }, [onFinish]);
 
+  const half = (position: string) => (
+    <div className={cn(styles.splashHalf, position)} aria-hidden="true">
+      <div className={styles.splashPhoto}>
+        <Image
+          src={BACKGROUND_SRC}
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-center"
+        />
+      </div>
+      <div className={styles.splashTint} />
+    </div>
+  );
+
   return (
     <div
       className={cn(
-        'bg-background fixed inset-0 z-50 flex flex-col items-center justify-center overflow-hidden text-center',
-        styles.splash,
+        'fixed inset-0 z-50 flex items-center justify-center overflow-hidden px-6',
         exiting && styles.splashExit
       )}
       role="status"
       aria-live="polite"
-      aria-label="Cargando Sagama Inox CRM"
+      aria-label={`Cargando ${LINE_NAME} CRM`}
     >
-      <div className={styles.splashBg} />
-      <div className={styles.splashGlow} />
+      {half(styles.splashHalfTop)}
+      {half(styles.splashHalfBottom)}
 
-      <div className="relative z-10 flex flex-col items-center">
+      <div className={cn('relative z-10', styles.splashCard)}>
         <Image
-          src="/branding/SAGAMA-Retail.png"
-          alt="Sagama Inox"
+          src={LOGO_SRC}
+          alt={LINE_NAME}
           width={300}
           height={93}
           priority
-          className={cn('h-auto w-[220px] sm:w-[280px]', styles.splashLogo)}
+          className="h-auto w-[200px] sm:w-[260px]"
         />
-        <div className={styles.splashLine} />
-      </div>
-
-      <div className={cn('relative z-10 mt-6 flex gap-2', styles.splashDots)}>
-        <span className={styles.splashDot} />
-        <span className={styles.splashDot} />
-        <span className={styles.splashDot} />
+        <div className={styles.splashProgress} />
       </div>
     </div>
   );
