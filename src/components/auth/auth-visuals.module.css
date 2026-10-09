@@ -285,7 +285,7 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  transition: transform 0.9s cubic-bezier(0.7, 0, 0.2, 1) 0.15s;
+  transition: transform 0.6s cubic-bezier(0.7, 0, 0.2, 1) 0.1s;
 }
 
 .splashHalfTop {
@@ -338,10 +338,10 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   -webkit-backdrop-filter: blur(16px) saturate(1.2);
   /* `backwards`, not `both`: a held end state would pin opacity and
    * block the exit fade below. */
-  animation: splashCardIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s backwards;
+  animation: splashCardIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
+    opacity 0.25s ease,
+    transform 0.25s ease;
 }
 
 .splashExit .splashCard {
