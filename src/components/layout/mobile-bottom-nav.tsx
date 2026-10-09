@@ -8,6 +8,7 @@ import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import { useTranslations } from "next-intl";
 import { isInboxThreadRoute } from "@/lib/mobile-app";
+import { useMobileThreadOpen } from "@/hooks/use-mobile-thread-open";
 
 /**
  * Bottom tab bar for the Android WebView wrapper (see dashboard-shell.tsx's
@@ -32,13 +33,14 @@ export function MobileBottomNav() {
   const searchParams = useSearchParams();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+  const threadOpen = useMobileThreadOpen(isInboxThreadRoute(pathname, searchParams));
 
   // Inside an open conversation thread (/inbox?c=<id>) the thread takes
   // over the whole screen, like a real chat app — a persistent tab bar
   // here would sit on top of (or steal height from) the message
   // composer. Hide it entirely and give the thread the full viewport;
   // its own back arrow returns to the list, where the bar reappears.
-  if (isInboxThreadRoute(pathname, searchParams)) return null;
+  if (threadOpen) return null;
 
   return (
     <nav

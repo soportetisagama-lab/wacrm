@@ -16,6 +16,7 @@ import { IncomingCallManager } from "@/components/calls/incoming-call-manager";
 import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
 import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
+import { useMobileThreadOpen } from "@/hooks/use-mobile-thread-open";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { ROLE_CHIP } from "@/components/layout/sidebar";
 import { UpdateBanner } from "@/components/layout/update-banner";
@@ -184,7 +185,7 @@ function EmbeddedShell({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const isThreadOpen = isInboxThreadRoute(pathname, searchParams);
+  const isThreadOpen = useMobileThreadOpen(isInboxThreadRoute(pathname, searchParams));
   const tSidebar = useTranslations("Sidebar");
   const { profile, profileLoading, account, accountRole } = useAuth();
   // "ASESOR · LINEA RETAIL" — account name only when it differs from the
