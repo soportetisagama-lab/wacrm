@@ -270,168 +270,116 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   }
 }
 
-/* ---- Welcome splash ---- */
-
-.splash {
-  transition:
-    opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.7s cubic-bezier(0.4, 0, 0.2, 1),
-    filter 0.7s cubic-bezier(0.4, 0, 0.2, 1);
-}
+/* ---- Welcome splash ----
+ * "Glass + curtain": the line's login photo (blurred, tinted with the
+ * line colour --header-bg) fills the screen in two halves, with the
+ * logo on a frosted-glass card and a loading bar. On exit the card
+ * fades, then the halves slide apart (up / down) like a curtain to
+ * uncover the login form already rendered underneath. */
 
 .splashExit {
-  opacity: 0;
-  transform: scale(1.06);
-  filter: blur(6px);
   pointer-events: none;
 }
 
-.splashBg {
+.splashHalf {
   position: absolute;
   inset: 0;
-  background: radial-gradient(
-    ellipse 80% 70% at 50% 50%,
-    color-mix(in srgb, var(--primary) 16%, transparent) 0%,
-    transparent 65%
-  );
+  overflow: hidden;
+  transition: transform 0.9s cubic-bezier(0.7, 0, 0.2, 1) 0.15s;
 }
 
-.splashGlow {
+.splashHalfTop {
+  clip-path: inset(0 0 50% 0);
+}
+
+.splashHalfBottom {
+  clip-path: inset(50% 0 0 0);
+}
+
+/* Each half is clipped to its own 50%, so moving it by half its own
+ * height takes the visible part fully off-screen. */
+.splashExit .splashHalfTop {
+  transform: translateY(-50%);
+}
+
+.splashExit .splashHalfBottom {
+  transform: translateY(50%);
+}
+
+/* Oversized so the blur doesn't show soft edges at the viewport. */
+.splashPhoto {
   position: absolute;
-  width: 320px;
-  height: 320px;
-  border-radius: 9999px;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--primary) 34%, transparent) 0%,
-    transparent 70%
-  );
-  filter: blur(35px);
-  opacity: 0;
-  animation:
-    splashGlowIn 0.6s ease 0.8s forwards,
-    splashGlowPulse 2s ease-in-out 1.4s infinite alternate;
+  inset: -32px;
+  filter: blur(14px) saturate(1.05);
 }
 
-@keyframes splashGlowIn {
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes splashGlowPulse {
-  from {
-    transform: scale(0.9);
-  }
-  to {
-    transform: scale(1.25);
-  }
-}
-
-.splashLogo {
-  opacity: 0;
-  filter: drop-shadow(
-    0 6px 22px color-mix(in srgb, var(--primary) 40%, transparent)
-  );
-  animation: splashLogoIn 0.8s cubic-bezier(0.34, 1.46, 0.64, 1) 0.7s forwards;
-}
-
-@keyframes splashLogoIn {
-  0% {
-    opacity: 0;
-    transform: scale(0.6);
-    filter: blur(8px)
-      drop-shadow(0 0 30px color-mix(in srgb, var(--primary) 70%, transparent));
-  }
-  60% {
-    opacity: 1;
-    filter: blur(0)
-      drop-shadow(
-        0 6px 22px color-mix(in srgb, var(--primary) 40%, transparent)
-      );
-  }
-  82% {
-    transform: scale(1.06);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.splashLine {
-  height: 3px;
-  width: 0;
-  margin-top: 16px;
-  border-radius: 3px;
+.splashTint {
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
-    90deg,
-    transparent,
-    var(--primary),
-    var(--primary-hover),
-    var(--primary),
-    transparent
+    180deg,
+    rgb(255 255 255 / 0.12) 0%,
+    color-mix(in srgb, var(--header-bg) 30%, transparent) 100%
   );
-  background-size: 300% 100%;
-  box-shadow: 0 0 14px color-mix(in srgb, var(--primary) 70%, transparent);
-  animation:
-    splashLineGrow 0.5s ease 1.2s forwards,
-    splashLineShimmer 1.5s linear 1.7s infinite;
 }
 
-@keyframes splashLineGrow {
-  to {
-    width: 200px;
-  }
+.splashCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding: 34px 40px 26px;
+  border-radius: 28px;
+  background: rgb(255 255 255 / 0.62);
+  border: 1px solid rgb(255 255 255 / 0.8);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.18);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  /* `backwards`, not `both`: a held end state would pin opacity and
+   * block the exit fade below. */
+  animation: splashCardIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s backwards;
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
 }
 
-@keyframes splashLineShimmer {
-  from {
-    background-position: 0% 0;
-  }
-  to {
-    background-position: 300% 0;
-  }
-}
-
-.splashDots {
+.splashExit .splashCard {
   opacity: 0;
-  animation: splashDotsIn 0.4s ease 1.3s forwards;
+  transform: scale(0.96);
 }
 
-@keyframes splashDotsIn {
+@keyframes splashCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
   to {
     opacity: 1;
+    transform: none;
   }
 }
 
-.splashDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--primary) 30%, transparent);
-  animation: splashDotPulse 1s ease-in-out infinite;
+.splashProgress {
+  width: 180px;
+  height: 4px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgb(0 0 0 / 0.08);
 }
 
-.splashDot:nth-child(2) {
-  animation-delay: 0.2s;
+.splashProgress::after {
+  content: '';
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--header-bg);
+  animation: splashFill 2.1s cubic-bezier(0.6, 0, 0.2, 1) 0.4s forwards;
 }
 
-.splashDot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes splashDotPulse {
-  0%,
-  100% {
-    background: color-mix(in srgb, var(--primary) 25%, transparent);
-    transform: scale(1);
-    box-shadow: none;
-  }
-  50% {
-    background: var(--primary);
-    transform: scale(1.5);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 70%, transparent);
+@keyframes splashFill {
+  to {
+    width: 100%;
   }
 }
 
@@ -439,17 +387,25 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   .orb,
   .dotGrid,
   .geo,
-  .splashGlow,
-  .splashLogo,
-  .splashLine,
-  .splashDots,
-  .splashDot,
+  .splashCard,
+  .splashProgress::after,
   .cardEntrance,
   .shake {
     animation: none !important;
   }
 
-  .splash {
+  .splashProgress::after {
+    width: 100%;
+  }
+
+  /* No curtain: the halves fade out instead of sliding. */
+  .splashHalf {
     transition: opacity 0.3s ease !important;
+  }
+
+  .splashExit .splashHalfTop,
+  .splashExit .splashHalfBottom {
+    transform: none;
+    opacity: 0;
   }
 }
