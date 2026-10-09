@@ -62,7 +62,7 @@ export function Header({
   const t = useTranslations("Header");
   const tSidebar = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, signOut, isAgent } = useAuth();
+  const { profile, signOut, canEditSettings } = useAuth();
   const titleKey = getPageTitleKey(pathname);
   const unreadNotifications = useUnreadNotifications();
   const hasUnread = unreadNotifications > 0;
@@ -178,8 +178,9 @@ export function Header({
               {profile?.email ?? ""}
             </p>
           </div>
-          {/* Asesores only get "Cerrar sesión" — no profile/settings. */}
-          {!isAgent && (
+          {/* Only admins (owner/admin) get profile/settings; every
+              other role just gets "Cerrar sesión". */}
+          {canEditSettings && (
             <>
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem

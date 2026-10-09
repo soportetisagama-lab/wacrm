@@ -153,7 +153,7 @@ import { useTranslations } from 'next-intl';
 export function Sidebar({ open = false, onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('Sidebar');
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountRole, signOut, canEditSettings } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
@@ -195,8 +195,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
   // same convention as useCan/RequireRole — so an admin-only item
   // never flashes visible before we actually know the role.
   const isNavItemVisible = (item: NavItem) => {
-    // Analista gets Panel + Mensajes only (plus Settings for their profile,
-    // reachable from the user menu, not the nav).
+    // Analista gets Panel + Mensajes only.
     if (accountRole === 'analista' && !ANALISTA_ROUTES.includes(item.href)) {
       return false;
     }
@@ -506,8 +505,9 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               sideOffset={8}
               className="bg-popover text-popover-foreground ring-border min-w-56"
             >
-              {/* Asesores only get "Cerrar sesión" — no profile/settings. */}
-              {accountRole !== 'agent' && (
+              {/* Only admins (owner/admin) get profile/settings; every
+                  other role just gets "Cerrar sesión". */}
+              {canEditSettings && (
                 <>
               <DropdownMenuItem
                 render={
