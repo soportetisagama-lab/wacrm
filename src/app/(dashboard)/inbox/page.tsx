@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
@@ -21,10 +21,13 @@ import { cn } from "@/lib/utils";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 import { showBrowserNotification } from "@/lib/notifications/browser-push";
 import { useAuth } from "@/hooks/use-auth";
+import { reportInboxThreadOpen } from "@/hooks/use-mobile-thread-open";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
 const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
+/** How many chats keep their last-seen messages for an instant reopen. */
+const MESSAGES_CACHE_SIZE = 20;
 
 // `useSearchParams` (the `?c=<id>` deep link below) requires a Suspense
 // boundary or the production build bails to CSR and errors out. Thin
@@ -74,6 +77,7 @@ function InboxPageInner() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const messagesCacheRef = useRef(new Map<string, Message[]>());
   const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
     null
   );
@@ -566,7 +570,9 @@ function InboxPageInner() {
       if (activeConversation?.id === conv.id) return;
       setActiveConversation(conv);
       setActiveContact(conv.contact ?? null);
-      setMessages([]);
+      // Show what we already had for this chat instantly (WhatsApp-style)
+      // while MessageThread refetches in the background.
+      setMessages(messagesCacheRef.current.get(conv.id) ?? []);
       // Optimistically clear the unread badge for this conv. The
       // server-side reset is fired by the unread-reset effect inside
       // MessageThread (which reads activeConversation.unread_count, not
@@ -703,6 +709,27 @@ function InboxPageInner() {
   // it back to the list. On lg+ both panes render side-by-side as
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
+
+  // Tell the phone shell (brand header + tab bar) right away, before
+  // paint, instead of letting it wait for the ?c= URL — see
+  // use-mobile-thread-open.ts.
+  useLayoutEffect(() => {
+    reportInboxThreadOpen(hasActiveConv);
+  }, [hasActiveConv]);
+  useLayoutEffect(() => () => reportInboxThreadOpen(null), []);
+
+  // Last-seen messages per chat, so reopening one shows it instantly.
+  // Bounded so a long session doesn't keep every chat in memory.
+  const activeConversationId = activeConversation?.id ?? null;
+  useEffect(() => {
+    if (!activeConversationId || messages.length === 0) return;
+    const cache = messagesCacheRef.current;
+    cache.delete(activeConversationId);
+    cache.set(activeConversationId, messages);
+    while (cache.size > MESSAGES_CACHE_SIZE) {
+      cache.delete(cache.keys().next().value as string);
+    }
+  }, [activeConversationId, messages]);
 
   return (
     <div
