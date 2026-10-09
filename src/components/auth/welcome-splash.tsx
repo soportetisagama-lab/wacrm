@@ -5,6 +5,7 @@ import Image from 'next/image';
 
 import { cn } from '@/lib/utils';
 import styles from '@/components/auth/auth-visuals.module.css';
+import { SplashScene } from '@/components/auth/splash-scene';
 
 const LOGO_SRC = '/branding/SAGAMA_CASTOR.png';
 const LINE_NAME = 'Sagama Castor';
@@ -15,7 +16,8 @@ const BACKGROUND_SRC = '/branding/loginfondo_castor.png';
 // How long the splash holds fully visible before it starts its exit,
 // and how long the exit takes (card fade 0.25s, then the 0.6s curtain
 // starting 0.1s in — see .splashHalf in auth-visuals.module.css).
-const SPLASH_HOLD_MS = 800;
+// Long enough for the animated scene (splash-scene.tsx) to play out.
+const SPLASH_HOLD_MS = 2000;
 const SPLASH_EXIT_MS = 700;
 
 export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
@@ -60,14 +62,7 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
       {half(styles.splashHalfBottom)}
 
       <div className={cn('relative z-10', styles.splashCard)}>
-        <Image
-          src={LOGO_SRC}
-          alt={LINE_NAME}
-          width={300}
-          height={93}
-          priority
-          className="h-auto w-[200px] sm:w-[260px]"
-        />
+        <SplashScene line="castor" logoSrc={LOGO_SRC} alt={LINE_NAME} />
       </div>
     </div>
   );
