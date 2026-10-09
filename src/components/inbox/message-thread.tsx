@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { attentionFields } from '@/lib/conversations/attention';
 import { useAuth } from '@/hooks/use-auth';
@@ -190,6 +190,11 @@ const STATUS_OPTIONS: {
  */
 const DOODLE_BG_CLASSES = "bg-inbox-thread";
 
+/** Newest messages loaded when a chat opens; older ones load in pages of
+ *  the same size as the agent scrolls up (WhatsApp-style), instead of the
+ *  whole history at once — long chats were slow to open on low-end phones. */
+const MESSAGES_PAGE_SIZE = 50;
+
 export function MessageThread({
   conversation,
   contact,
@@ -298,14 +303,40 @@ export function MessageThread({
     };
   }, []);
 
+  // Paging (see MESSAGES_PAGE_SIZE). `messagesRef` is the latest prop
+  // for the async loaders below.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  });
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+  // Set right before older messages are prepended, so the auto-scroll
+  // effect keeps the reader's place instead of jumping to the bottom.
+  const prependAnchorRef = useRef<{ height: number; top: number } | null>(null);
+  // Newest customer message of the conversation, fetched with the first
+  // page — the 24h window must not depend on how far back is loaded.
+  const [lastCustomer, setLastCustomer] = useState<{ conversationId: string; at: string } | null>(null);
+
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
     if (!messages.length) return { expired: false, awaitingCustomer: false, remaining: '' };
 
-    // Find last customer message
-    const lastCustomerMsg = [...messages]
+    // Last customer message: the newest loaded one, or — when the loaded
+    // page is all our own messages — the one fetched alongside it.
+    const loadedCustomerAt = [...messages]
       .reverse()
-      .find((m) => m.sender_type === 'customer');
+      .find((m) => m.sender_type === 'customer')?.created_at;
+    const fetchedCustomerAt =
+      lastCustomer && lastCustomer.conversationId === conversation?.id ? lastCustomer.at : null;
+    const lastCustomerAt =
+      loadedCustomerAt && fetchedCustomerAt
+        ? Date.parse(loadedCustomerAt) >= Date.parse(fetchedCustomerAt)
+          ? loadedCustomerAt
+          : fetchedCustomerAt
+        : (loadedCustomerAt ?? fetchedCustomerAt);
+    const lastCustomerMsg = lastCustomerAt ? { created_at: lastCustomerAt } : null;
 
     // We wrote first (a template — e.g. a line transfer or a broadcast)
     // and the customer hasn't answered yet. Same send restriction as an
@@ -331,7 +362,7 @@ export function MessageThread({
         : tTimer('xmRemaining', { minutes: Math.floor(hoursLeft * 60) });
 
     return { expired, awaitingCustomer: false, remaining };
-  }, [messages, tTimer]);
+  }, [messages, tTimer, lastCustomer, conversation?.id]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -374,18 +405,50 @@ export function MessageThread({
     (async () => {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true });
+      const [{ data, error }, { data: lastCustomerRow }] = await Promise.all([
+        supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .order('created_at', { ascending: false })
+          .limit(MESSAGES_PAGE_SIZE),
+        supabase
+          .from('messages')
+          .select('created_at')
+          .eq('conversation_id', conversationId)
+          .eq('sender_type', 'customer')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
       if (cancelled) return;
 
       if (error) {
         console.error('Failed to fetch messages:', error);
       } else {
-        onMessagesLoadedRef.current(data ?? []);
+        const page = ((data ?? []) as Message[]).reverse();
+        // Keep older messages already on screen (a resync, or a chat
+        // reopened from the inbox cache) instead of dropping back to one
+        // page — only the newest page is replaced.
+        const firstAt = page[0] ? Date.parse(page[0].created_at) : null;
+        const pageIds = new Set(page.map((m) => m.id));
+        const olderKept =
+          firstAt === null
+            ? []
+            : messagesRef.current.filter(
+                (m) =>
+                  m.conversation_id === conversationId &&
+                  !pageIds.has(m.id) &&
+                  Date.parse(m.created_at) < firstAt
+              );
+        onMessagesLoadedRef.current([...olderKept, ...page]);
+        setHasOlder(page.length === MESSAGES_PAGE_SIZE);
+        setLastCustomer(
+          lastCustomerRow
+            ? { conversationId, at: lastCustomerRow.created_at as string }
+            : null
+        );
       }
 
       if (!cancelled) setLoading(false);
@@ -399,6 +462,49 @@ export function MessageThread({
     // realtime is best-effort and any message events sent while the WS
     // was disconnected or throttled are otherwise lost.
   }, [conversationId, resyncToken]);
+
+  // Next page of older messages, prepended. Resolves true when it added
+  // any (jumpToMessage keeps calling it until the quoted one shows up).
+  const loadOlder = useCallback(async (): Promise<boolean> => {
+    const oldest = messagesRef.current[0];
+    if (!conversationId || !oldest || loadingOlderRef.current) return false;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const { data, error } = await createClient()
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .lt('created_at', oldest.created_at)
+        .order('created_at', { ascending: false })
+        .limit(MESSAGES_PAGE_SIZE);
+      // Chat switched (or reloaded) while this was in flight.
+      if (messagesRef.current[0]?.id !== oldest.id) return false;
+      if (error) {
+        console.error('Failed to fetch older messages:', error);
+        return false;
+      }
+      const older = ((data ?? []) as Message[]).reverse();
+      setHasOlder(older.length === MESSAGES_PAGE_SIZE);
+      const known = new Set(messagesRef.current.map((m) => m.id));
+      const fresh = older.filter((m) => !known.has(m.id));
+      if (fresh.length === 0) return false;
+      const el = scrollRef.current;
+      prependAnchorRef.current = el ? { height: el.scrollHeight, top: el.scrollTop } : null;
+      onMessagesLoadedRef.current([...fresh, ...messagesRef.current]);
+      return true;
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [conversationId]);
+
+  const handleMessagesScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (hasOlder && e.currentTarget.scrollTop < 150) void loadOlder();
+    },
+    [hasOlder, loadOlder]
+  );
 
   // Reactions fetch — pulls the current state from the DB. Kept separate
   // from the channel subscription below so a `resyncToken` bump just
@@ -603,12 +709,19 @@ export function MessageThread({
       });
   }, [conversationId, user?.id]);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (scrollRef.current) {
-      const el = scrollRef.current;
-      el.scrollTop = el.scrollHeight;
+  // Auto-scroll to bottom on new messages — except right after older
+  // ones were prepended, where the reader's position is kept instead.
+  // Layout effect so neither case paints a frame at the wrong spot.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const anchor = prependAnchorRef.current;
+    if (anchor) {
+      prependAnchorRef.current = null;
+      el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
+      return;
     }
+    el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   const handleSend = useCallback(
@@ -888,11 +1001,52 @@ export function MessageThread({
     return map;
   }, [messages]);
 
+  // Quoted messages older than the loaded pages — fetched by id so the
+  // quote preview still shows (tapping it loads up to them, see
+  // jumpToMessage).
+  const [quotedParents, setQuotedParents] = useState<Map<string, Message>>(new Map());
+  useEffect(() => {
+    const missing = [
+      ...new Set(
+        messages
+          .map((m) => m.reply_to_message_id)
+          .filter((id): id is string => !!id && !messagesById.has(id) && !quotedParents.has(id))
+      ),
+    ];
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void createClient()
+      .from('messages')
+      .select('*')
+      .in('id', missing)
+      .then(({ data }) => {
+        if (cancelled || !data?.length) return;
+        setQuotedParents((prev) => {
+          const next = new Map(prev);
+          for (const m of data as Message[]) next.set(m.id, m);
+          return next;
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, messagesById, quotedParents]);
+
   // WhatsApp calls (migration 071), shown in time order between messages.
   const threadCalls = useConversationCalls(conversationId, resyncToken);
   const callsByAnchor = useMemo(
-    () => anchorCalls(messages, threadCalls),
-    [messages, threadCalls],
+    () =>
+      anchorCalls(
+        messages,
+        // Calls older than the loaded window belong with pages not loaded
+        // yet — don't pile them up above the first loaded message.
+        hasOlder && messages[0]
+          ? threadCalls.filter(
+              (c) => Date.parse(c.created_at) >= Date.parse(messages[0].created_at)
+            )
+          : threadCalls
+      ),
+    [messages, threadCalls, hasOlder],
   );
 
   // Images + videos in the thread, in order — the set the media viewer
@@ -930,16 +1084,22 @@ export function MessageThread({
   useEffect(() => () => {
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
   }, []);
-  const jumpToMessage = useCallback((messageId: string) => {
-    const el = scrollRef.current?.querySelector(
-      `[data-message-id="${CSS.escape(messageId)}"]`
-    );
+  const jumpToMessage = useCallback(async (messageId: string) => {
+    const find = () =>
+      scrollRef.current?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    let el = find();
+    // Quoted message not loaded yet: page back until it is (bounded).
+    for (let i = 0; !el && i < 20; i++) {
+      if (!(await loadOlder())) break;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      el = find();
+    }
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setHighlightedId(messageId);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => setHighlightedId(null), 1600);
-  }, []);
+  }, [loadOlder]);
 
   const handleStartReply = useCallback(
     (msg: Message) => {
@@ -1528,7 +1688,20 @@ export function MessageThread({
       )}
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
+      <div
+        ref={scrollRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 overflow-y-auto px-4 py-4 lg:px-6"
+      >
+        {/* Older page loading — zero-height sticky overlay, so it never
+            shifts the messages the reader is looking at. */}
+        {loadingOlder && (
+          <div className="sticky top-0 z-10 flex h-0 justify-center">
+            <div className="bg-card mt-1 rounded-full p-1.5 shadow-sm">
+              <div className="border-primary h-4 w-4 animate-spin rounded-full border-2 border-t-transparent" />
+            </div>
+          </div>
+        )}
         {/* Spinner only for a chat with nothing to show yet — a reopened
             one shows its cached messages while the refetch runs. */}
         {loading && messages.length === 0 ? (
@@ -1563,7 +1736,8 @@ export function MessageThread({
                 <div className="space-y-2">
                   {group.messages.map((msg) => {
                     const parent = msg.reply_to_message_id
-                      ? messagesById.get(msg.reply_to_message_id)
+                      ? (messagesById.get(msg.reply_to_message_id) ??
+                        quotedParents.get(msg.reply_to_message_id))
                       : null;
                     const reply = parent
                       ? {
@@ -1580,7 +1754,7 @@ export function MessageThread({
                             parent.content_type === 'image'
                               ? parent.media_url
                               : undefined,
-                          onJump: () => jumpToMessage(parent.id),
+                          onJump: () => void jumpToMessage(parent.id),
                         }
                       : null;
                     const msgReactions = reactionsByMessageId.get(msg.id);
