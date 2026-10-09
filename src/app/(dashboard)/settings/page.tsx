@@ -44,7 +44,7 @@ export default function SettingsPage() {
 function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency, isAgent } = useAuth();
+  const { defaultCurrency, profileLoading } = useAuth();
   const { mode } = useTheme();
   const t = useTranslations('Settings');
   const canEditSettings = useCan('edit-settings');
@@ -64,11 +64,14 @@ function SettingsPageInner() {
     ? requestedSection
     : (allowed[0] ?? 'profile');
 
-  // Asesores have no access to Settings (not even their profile) —
-  // bounce a typed/stale /settings URL back to the inbox.
+  // Settings is admin-only (owner/admin) — every other role, not even
+  // for their own profile. Bounce a typed/stale /settings URL back to
+  // the inbox once the role is known (never while it's still loading,
+  // or admins would get bounced on a cold load).
+  const blocked = !profileLoading && !canEditSettings;
   useEffect(() => {
-    if (isAgent) router.replace('/inbox');
-  }, [isAgent, router]);
+    if (blocked) router.replace('/inbox');
+  }, [blocked, router]);
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -101,7 +104,7 @@ function SettingsPageInner() {
     api: <ApiKeysSettings />,
   };
 
-  if (isAgent) return null;
+  if (profileLoading || blocked) return null;
 
   return (
     <div>
