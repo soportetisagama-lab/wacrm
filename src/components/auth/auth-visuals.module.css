@@ -273,7 +273,7 @@ html[data-mode='light'] .glassCard button[type='submit'] {
 /* ---- Welcome splash ----
  * "Glass + curtain": the line's login photo (blurred, tinted with the
  * line colour --header-bg) fills the screen in two halves, with the
- * logo on a frosted-glass card and a loading bar. On exit the card
+ * logo on a frosted-glass card. On exit the card
  * fades, then the halves slide apart (up / down) like a curtain to
  * uncover the login form already rendered underneath. */
 
@@ -289,7 +289,9 @@ html[data-mode='light'] .glassCard button[type='submit'] {
 }
 
 .splashHalfTop {
-  clip-path: inset(0 0 50% 0);
+  /* 1px overlap with the bottom half, so their seam never shows as a
+   * hairline across the photo. */
+  clip-path: inset(0 0 calc(50% - 1px) 0);
 }
 
 .splashHalfBottom {
@@ -327,8 +329,7 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 22px;
-  padding: 34px 40px 26px;
+  padding: 34px 40px;
   border-radius: 28px;
   background: rgb(255 255 255 / 0.62);
   border: 1px solid rgb(255 255 255 / 0.8);
@@ -359,43 +360,14 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   }
 }
 
-.splashProgress {
-  width: 180px;
-  height: 4px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: rgb(0 0 0 / 0.08);
-}
-
-.splashProgress::after {
-  content: '';
-  display: block;
-  width: 0;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--header-bg);
-  animation: splashFill 2.1s cubic-bezier(0.6, 0, 0.2, 1) 0.4s forwards;
-}
-
-@keyframes splashFill {
-  to {
-    width: 100%;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .orb,
   .dotGrid,
   .geo,
   .splashCard,
-  .splashProgress::after,
   .cardEntrance,
   .shake {
     animation: none !important;
-  }
-
-  .splashProgress::after {
-    width: 100%;
   }
 
   /* No curtain: the halves fade out instead of sliding. */
