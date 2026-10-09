@@ -36,7 +36,7 @@ import { ANALISTA_ROUTES, hasMinRole, type AccountRole } from '@/lib/auth/roles'
 // Per-role icon + label for the role chip on the sidebar profile
 // card. The chip's colour comes from the line (--header-bg), not
 // the role.
-const ROLE_CHIP: Record<
+export const ROLE_CHIP: Record<
   AccountRole,
   { icon: typeof Crown; labelKey: string }
 > = {
