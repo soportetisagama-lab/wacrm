@@ -395,6 +395,8 @@
       "deals": "딜",
       "noTags": "태그 없음",
       "removeTag": "태그 제거",
+      "tagShort": "태그",
+      "tagUpdateFailed": "태그를 업데이트하지 못했습니다",
       "tagAdd": "태그 추가",
       "tagSearch": "태그 검색 또는 만들기…",
       "tagCreate": "\"{name}\" 만들기",

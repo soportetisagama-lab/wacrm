@@ -12,7 +12,7 @@ import { isInboxThreadRoute } from "@/lib/mobile-app";
 /**
  * Bottom tab bar for the Android WebView wrapper (see dashboard-shell.tsx's
  * `embedded` branch) — a "liquid glass" floating pill, styled after the
- * reference mobile design: frosted/translucent background, rounded, a
+ * reference mobile design: solid card background, rounded, a
  * few icon tabs instead of the desktop sidebar's full list. Deliberately
  * NOT the same items as the (already role-filtered) desktop sidebar —
  * Panel doesn't belong in a phone-only field-agent tool; Bandeja is the
@@ -45,7 +45,10 @@ export function MobileBottomNav() {
       aria-label={t("primaryNav")}
       className="shrink-0 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
     >
-      <div className="border-border/40 bg-card/70 mx-auto flex max-w-sm items-center justify-around rounded-full border py-2 shadow-lg backdrop-blur-xl">
+      {/* Solid, not frosted: a backdrop blur gets recomputed on every
+          scroll frame of the list underneath — the costliest thing this
+          screen could paint on a low-end phone. */}
+      <div className="border-border/60 bg-card mx-auto flex max-w-sm items-center justify-around rounded-full border py-2 shadow-md">
         {TABS.map((tab) => {
           const isActive =
             pathname === tab.href || pathname.startsWith(`${tab.href}/`);
