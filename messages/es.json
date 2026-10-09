@@ -395,6 +395,8 @@
       "deals": "Negocios",
       "noTags": "Sin etiquetas",
       "removeTag": "Quitar etiqueta",
+      "tagShort": "Etiqueta",
+      "tagUpdateFailed": "No se pudo actualizar la etiqueta",
       "tagAdd": "Agregar etiqueta",
       "tagSearch": "Buscar o crear etiqueta…",
       "tagCreate": "Crear «{name}»",
