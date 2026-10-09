@@ -52,6 +52,23 @@ export function getLineTransferConfig(): LineTransferConfig | null {
   }
 }
 
+/**
+ * A Click-to-WhatsApp ad the customer came in through on the source
+ * line (a `conversation_referrals` row). Travels with the transfer so
+ * the receiving line sees the same "Origen del anuncio" card and ad id.
+ */
+export interface TransferredReferral {
+  source_id: string | null;
+  source_url: string | null;
+  headline: string | null;
+  body: string | null;
+  media_type: string | null;
+  image_url: string | null;
+  video_url: string | null;
+  ctwa_clid: string | null;
+  created_at: string;
+}
+
 export interface TranscriptMessage {
   sender_type: string;
   content_type: string;
@@ -88,8 +105,14 @@ export function buildTransferNote(args: {
   topic: string;
   agentName: string | null;
   messages: TranscriptMessage[];
+  /** Ad ids the customer came in through on the source line. On the
+   *  header line, since the sidebar shows only that line collapsed. */
+  adIds?: string[];
 }): string {
-  const header = `🔀 Derivado desde ${args.from}${args.agentName ? ` por ${args.agentName}` : ""} — tema: ${args.topic}`;
+  const ads = [...new Set(args.adIds ?? [])];
+  const header =
+    `🔀 Derivado desde ${args.from}${args.agentName ? ` por ${args.agentName}` : ""} — tema: ${args.topic}` +
+    (ads.length ? ` — ID del anuncio: ${ads.join(", ")}` : "");
   if (args.messages.length === 0) return header;
   const lines = args.messages.map((m) => {
     const when = limaTimestamp(m.created_at);
