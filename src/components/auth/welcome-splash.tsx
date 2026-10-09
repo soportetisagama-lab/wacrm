@@ -13,10 +13,10 @@ const LINE_NAME = 'Sagama Castor';
 const BACKGROUND_SRC = '/branding/loginfondo_castor.png';
 
 // How long the splash holds fully visible before it starts its exit,
-// and how long the exit takes (card fade 0.35s, then the 0.9s curtain
-// starting 0.15s in — see .splashHalf in auth-visuals.module.css).
-const SPLASH_HOLD_MS = 2500;
-const SPLASH_EXIT_MS = 1050;
+// and how long the exit takes (card fade 0.25s, then the 0.6s curtain
+// starting 0.1s in — see .splashHalf in auth-visuals.module.css).
+const SPLASH_HOLD_MS = 1300;
+const SPLASH_EXIT_MS = 700;
 
 export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
   const [exiting, setExiting] = useState(false);
