@@ -47,6 +47,14 @@ describe("buildTransferNote", () => {
     );
   });
 
+  it("puts the ad ids on the header line, deduplicated", () => {
+    expect(
+      buildTransferNote({ ...base, messages: [], adIds: ["120252928023570092", "120252928023570092", "999"] }),
+    ).toBe(
+      "🔀 Derivado desde Sagama Retail por Jimmy — tema: cocinas inox — ID del anuncio: 120252928023570092, 999",
+    );
+  });
+
   it("lists messages oldest first with sender, Lima time, and media links", () => {
     const note = buildTransferNote({
       ...base,
