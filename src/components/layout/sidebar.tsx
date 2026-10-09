@@ -33,57 +33,44 @@ import {
 } from 'lucide-react';
 import { ANALISTA_ROUTES, hasMinRole, type AccountRole } from '@/lib/auth/roles';
 
-// Per-role chip metadata used in the sidebar's account strip + the
-// Members tab roster. Keeping this near both consumers in a single
-// place avoids drift between the two surfaces — when a designer
-// wants to recolour "agent" rows, this is the one diff.
+// Per-role icon + label for the role chip on the sidebar profile
+// card. The chip's colour comes from the line (--header-bg), not
+// the role.
 const ROLE_CHIP: Record<
   AccountRole,
-  { icon: typeof Crown; labelKey: string; className: string }
+  { icon: typeof Crown; labelKey: string }
 > = {
   owner: {
     icon: Crown,
     labelKey: 'roleOwner',
-    // Amber: scarce, immutable, "the boss" — gets visual emphasis.
-    className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
   },
   admin: {
     icon: Shield,
     labelKey: 'roleAdmin',
-    // Brand-blue tinted: significant but not as scarce as owner.
-    className: 'border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary',
   },
   gerencia: {
     icon: Briefcase,
     labelKey: 'roleGerencia',
-    className: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300',
   },
   jefe_linea: {
     icon: UsersRound,
     labelKey: 'roleJefeLinea',
-    className: 'border-teal-500/40 bg-teal-500/10 text-teal-300',
   },
   atc: {
     icon: Headphones,
     labelKey: 'roleAtc',
-    className: 'border-orange-500/40 bg-orange-500/10 text-orange-300',
   },
   agent: {
     icon: UserCog,
     labelKey: 'roleAgent',
-    // Neutral: the operational default.
-    className: 'border-white/15 bg-white/5 text-sidebar-foreground/80',
   },
   analista: {
     icon: BarChart3,
     labelKey: 'roleAnalista',
-    className: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
   },
   viewer: {
     icon: User,
     labelKey: 'roleViewer',
-    // Muted: read-only role; visually quieter than agent.
-    className: 'border-white/10 bg-white/[0.03] text-sidebar-foreground/50',
   },
 };
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -413,78 +400,67 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
 
         {/* User section */}
         <div className="border-sidebar-border shrink-0 border-t p-3">
-          {/* Account name display — surfaced only when the account
-              name differs from the user's own name (see
-              `showAccountStrip`). For a default solo account the two
-              match, so we hide it to avoid duplicating the user name
-              below; for renamed or shared accounts it tells the user
-              which account they're acting in. */}
-          {showAccountStrip && account?.name ? (
-            <div
-              className={cn(
-                'text-sidebar-foreground/60 mb-2 flex items-center gap-2 px-1 text-xs',
-                collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
-              )}
-            >
-              <UsersRound className="size-3.5 shrink-0" />
-              {/* `title=` exposes the full name on hover when it
-                  gets truncated (long account names + narrow
-                  sidebars). Cheap a11y win. */}
-              <span className="truncate" title={account.name}>
-                {account.name}
-              </span>
-              {accountRole
-                ? // Always render the chip — owners used to be
-                  // invisible here, which made them indistinguishable
-                  // from admins at a glance. Now everyone sees their
-                  // role (with a colour cue) regardless of tier.
-                  (() => {
-                    const meta = ROLE_CHIP[accountRole];
-                    const Icon = meta.icon;
-                    return (
-                      <span
-                        className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase ${meta.className}`}
-                      >
-                        <Icon className="size-3" />
-                        {t(meta.labelKey as string)}
-                      </span>
-                    );
-                  })()
-                : null}
-            </div>
-          ) : null}
-          {/* Credential-card style trigger: avatar on top, name + email
-              centered below, inside a bordered card that reads as an
-              ID badge rather than a plain menu row. */}
+          {/* Profile card with a cover strip in the line's brand colour
+              (--header-bg, the same token the top bar uses — so each
+              line gets its own colour with no per-line code). Round
+              photo overlaps the strip; name + verified badge, email
+              and the role/account chip sit below, inside the card. */}
           <DropdownMenu>
             <DropdownMenuTrigger
               title={collapsed ? (profile?.full_name ?? t('defaultUser')) : undefined}
               className={cn(
-                'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center gap-2 rounded-2xl border px-3 py-4 text-center transition-colors focus:outline-none focus-visible:ring-2',
-                collapsed ? 'lg:gap-0 lg:px-0 lg:py-2' : 'lg:max-xl:gap-0 lg:max-xl:px-0 lg:max-xl:py-2'
+                'border-sidebar-border bg-white/[0.03] hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex w-full flex-col items-center overflow-hidden rounded-2xl border pb-3 text-center transition-colors focus:outline-none focus-visible:ring-2',
+                collapsed ? 'lg:py-2' : 'lg:max-xl:py-2'
               )}
             >
-              <Avatar
+              <div
+                aria-hidden
                 className={cn(
-                  'after:rounded-xl size-16 shrink-0 rounded-xl',
-                  collapsed ? 'lg:size-9' : 'lg:max-xl:size-9'
+                  'h-12 w-full shrink-0 bg-[linear-gradient(120deg,var(--header-bg)_0%,color-mix(in_oklab,var(--header-bg-2)_70%,white)_100%)]',
+                  collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
+                )}
+              />
+              <div
+                className={cn(
+                  'relative -mt-8 mb-2 shrink-0',
+                  collapsed ? 'lg:my-0' : 'lg:max-xl:my-0'
                 )}
               >
-                {profile?.avatar_url ? (
-                  <AvatarImage
-                    src={profile.avatar_url}
-                    alt={profile.full_name ?? t('defaultAvatar')}
-                    className="rounded-xl"
-                  />
-                ) : null}
-                <AvatarFallback className="bg-sidebar-primary/15 text-sidebar-primary rounded-xl text-lg font-semibold">
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ??
-                    profile?.email?.charAt(0)?.toUpperCase() ??
-                    'U'}
-                </AvatarFallback>
-              </Avatar>
-              <div className={cn('min-w-0 w-full', collapsed ? 'lg:hidden' : 'lg:max-xl:hidden')}>
-                <p className="flex min-w-0 items-center justify-center gap-1.5">
+                <Avatar
+                  className={cn(
+                    'ring-sidebar size-16 ring-4',
+                    collapsed ? 'lg:size-9 lg:ring-0' : 'lg:max-xl:size-9 lg:max-xl:ring-0'
+                  )}
+                >
+                  {profile?.avatar_url ? (
+                    <AvatarImage
+                      src={profile.avatar_url}
+                      alt={profile.full_name ?? t('defaultAvatar')}
+                    />
+                  ) : null}
+                  <AvatarFallback className="bg-[var(--header-bg)] text-lg font-semibold text-white">
+                    {profile?.full_name?.charAt(0)?.toUpperCase() ??
+                      profile?.email?.charAt(0)?.toUpperCase() ??
+                      'U'}
+                  </AvatarFallback>
+                </Avatar>
+                {/* Online dot — whoever is looking at their own card is
+                    by definition online. */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    'border-sidebar absolute right-0.5 bottom-0.5 size-4 rounded-full border-[3px] bg-emerald-500',
+                    collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
+                  )}
+                />
+              </div>
+              <div
+                className={cn(
+                  'flex w-full min-w-0 flex-col items-center gap-0.5 px-3',
+                  collapsed ? 'lg:hidden' : 'lg:max-xl:hidden'
+                )}
+              >
+                <p className="flex w-full min-w-0 items-center justify-center gap-1.5">
                   <span className="text-sidebar-foreground min-w-0 truncate text-sm font-semibold">
                     {profile?.full_name ?? t('defaultUser')}
                   </span>
@@ -496,9 +472,32 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
                     className="h-[18px] w-[18px] shrink-0"
                   />
                 </p>
-                <p className="text-sidebar-foreground/50 truncate text-xs">
+                <p className="text-sidebar-foreground/50 w-full truncate text-xs">
                   {profile?.email ?? ''}
                 </p>
+                {accountRole
+                  ? (() => {
+                      const meta = ROLE_CHIP[accountRole];
+                      const Icon = meta.icon;
+                      // Account name only when it differs from the
+                      // user's own name (see `showAccountStrip`) —
+                      // tells shared-account users which line they're in.
+                      const accountName =
+                        showAccountStrip && account?.name ? account.name : null;
+                      return (
+                        <span
+                          className="mt-2 inline-flex max-w-full min-w-0 items-center gap-1 rounded-full border border-[color-mix(in_oklab,var(--header-bg)_45%,transparent)] bg-[color-mix(in_oklab,var(--header-bg)_14%,transparent)] px-2 py-0.5 text-[10px] font-semibold tracking-wider text-[color-mix(in_oklab,var(--header-bg)_55%,white)] uppercase"
+                          title={accountName ?? undefined}
+                        >
+                          <Icon className="size-3 shrink-0" />
+                          <span className="truncate">
+                            {t(meta.labelKey as string)}
+                            {accountName ? ` · ${accountName}` : ''}
+                          </span>
+                        </span>
+                      );
+                    })()
+                  : null}
               </div>
             </DropdownMenuTrigger>
             <DropdownMenuContent
