@@ -62,7 +62,7 @@ export function Header({
   const t = useTranslations("Header");
   const tSidebar = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, isAgent } = useAuth();
   const titleKey = getPageTitleKey(pathname);
   const unreadNotifications = useUnreadNotifications();
   const hasUnread = unreadNotifications > 0;
@@ -178,6 +178,9 @@ export function Header({
               {profile?.email ?? ""}
             </p>
           </div>
+          {/* Asesores only get "Cerrar sesión" — no profile/settings. */}
+          {!isAgent && (
+            <>
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem
             render={
@@ -201,6 +204,8 @@ export function Header({
             <SettingsIcon className="size-4" />
             {t("menuSettings")}
           </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem
             onClick={signOut}

@@ -507,6 +507,9 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               sideOffset={8}
               className="bg-popover text-popover-foreground ring-border min-w-56"
             >
+              {/* Asesores only get "Cerrar sesión" — no profile/settings. */}
+              {accountRole !== 'agent' && (
+                <>
               <DropdownMenuItem
                 render={
                   <Link
@@ -532,6 +535,8 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
                 {t('menuSettings')}
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-border" />
+                </>
+              )}
               <DropdownMenuItem
                 onClick={signOut}
                 className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
