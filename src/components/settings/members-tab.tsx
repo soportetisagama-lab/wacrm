@@ -21,10 +21,11 @@
 //   the role anyway.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  Camera,
   Check,
   KeyRound,
   Loader2,
@@ -76,6 +77,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
 import type { AccountRole } from '@/lib/auth/roles';
 import { presenceLabel, summarize } from '@/lib/presence';
+import { cn } from '@/lib/utils';
 import {
   PRESENCE_DOT_CLASS,
   PresenceDot,
@@ -96,6 +98,10 @@ interface Member {
 
 // Accent/case-insensitive normalize so "linea" matches "Línea" and
 // "GERENCIA" matches "gerencia" — live search shouldn't punish accents.
+// Same limits as the Profile form and the /avatar API route.
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
 function normalize(value: string): string {
   return value
     .normalize('NFD')
@@ -189,6 +195,14 @@ export function MembersTab() {
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
 
+  // Admin photo change — one shared hidden file input; the clicked
+  // row's member is parked in a ref until the picker returns.
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const avatarTargetRef = useRef<Member | null>(null);
+  const [uploadingAvatarId, setUploadingAvatarId] = useState<string | null>(
+    null
+  );
+
   // Admin-set-password dialog.
   const [passwordMember, setPasswordMember] = useState<Member | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -246,6 +260,58 @@ export function MembersTab() {
   useEffect(() => {
     void loadEverything();
   }, [loadEverything]);
+
+  function startAvatarChange(member: Member) {
+    avatarTargetRef.current = member;
+    avatarInputRef.current?.click();
+  }
+
+  async function handleAvatarFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const member = avatarTargetRef.current;
+    // Reset so picking the same file again still fires onChange.
+    e.target.value = '';
+    if (!file || !member) return;
+
+    if (!AVATAR_TYPES.includes(file.type)) {
+      toast.error(t('avatarInvalidType'));
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      toast.error(t('avatarTooLarge'));
+      return;
+    }
+
+    setUploadingAvatarId(member.user_id);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch(`/api/account/members/${member.user_id}/avatar`, {
+        method: 'POST',
+        body,
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(payload.error || t('avatarUpdateFailed'));
+        return;
+      }
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id
+            ? { ...m, avatar_url: payload.avatar_url as string }
+            : m
+        )
+      );
+      toast.success(
+        t('avatarUpdatedToast', { name: member.full_name || t('unnamed') })
+      );
+    } catch (err) {
+      console.error('[MembersTab] avatar upload error:', err);
+      toast.error(tCommon('serverUnreachable'));
+    } finally {
+      setUploadingAvatarId(null);
+    }
+  }
 
   async function handleRoleChange(member: Member, nextRole: AccountRole) {
     if (member.role === nextRole) return;
@@ -551,6 +617,14 @@ export function MembersTab() {
         </div>
       )}
 
+      <input
+        ref={avatarInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={handleAvatarFile}
+      />
+
       {/* Roster */}
       <Card>
         <CardContent className="p-0">
@@ -573,6 +647,37 @@ export function MembersTab() {
                 presenceRow?.last_seen_at ?? null,
                 now
               );
+              const avatarNode = (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Avatar className="size-9 shrink-0">
+                        {member.avatar_url ? (
+                          <AvatarImage
+                            src={member.avatar_url}
+                            alt={member.full_name || t('unnamed')}
+                          />
+                        ) : null}
+                        <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
+                          {(member.full_name || member.email || 'U')
+                            .charAt(0)
+                            .toUpperCase()}
+                        </AvatarFallback>
+                        {/* role+label so screen readers announce
+                            presence — the hover tooltip alone isn't
+                            reachable by keyboard/AT on a non-focusable
+                            avatar. */}
+                        <AvatarBadge
+                          role="img"
+                          aria-label={presenceText}
+                          className={PRESENCE_DOT_CLASS[presence]}
+                        />
+                      </Avatar>
+                    }
+                  />
+                  <TooltipContent>{presenceText}</TooltipContent>
+                </Tooltip>
+              );
 
               return (
                 <li
@@ -585,35 +690,38 @@ export function MembersTab() {
                   className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-4">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Avatar className="size-9 shrink-0">
-                            {member.avatar_url ? (
-                              <AvatarImage
-                                src={member.avatar_url}
-                                alt={member.full_name || t('unnamed')}
-                              />
-                            ) : null}
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
-                              {(member.full_name || member.email || 'U')
-                                .charAt(0)
-                                .toUpperCase()}
-                            </AvatarFallback>
-                            {/* role+label so screen readers announce
-                                presence — the hover tooltip alone isn't
-                                reachable by keyboard/AT on a non-focusable
-                                avatar. */}
-                            <AvatarBadge
-                              role="img"
-                              aria-label={presenceText}
-                              className={PRESENCE_DOT_CLASS[presence]}
-                            />
-                          </Avatar>
-                        }
-                      />
-                      <TooltipContent>{presenceText}</TooltipContent>
-                    </Tooltip>
+                    {/* Admin+ can change the photo right here (same rule
+                        as the name edit: never the owner row or your own
+                        row). Click the avatar → file picker. */}
+                    {canManageMembers && !isOwnerRow && !isSelf ? (
+                      <button
+                        type="button"
+                        onClick={() => startAvatarChange(member)}
+                        disabled={uploadingAvatarId === member.user_id}
+                        aria-label={t('changePhotoTooltip')}
+                        title={t('changePhotoTooltip')}
+                        className="group relative shrink-0 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {avatarNode}
+                        <span
+                          aria-hidden
+                          className={cn(
+                            'absolute inset-0 flex items-center justify-center rounded-full bg-black/50 text-white transition-opacity',
+                            uploadingAvatarId === member.user_id
+                              ? 'opacity-100'
+                              : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'
+                          )}
+                        >
+                          {uploadingAvatarId === member.user_id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Camera className="size-4" />
+                          )}
+                        </span>
+                      </button>
+                    ) : (
+                      avatarNode
+                    )}
 
                     <div className="min-w-0 flex-1">
                       {editingNameId === member.user_id ? (
