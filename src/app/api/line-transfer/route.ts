@@ -7,6 +7,7 @@ import {
   TEMPLATE_GREETING,
   transferNoticeText,
   type TranscriptMessage,
+  type TransferredReferral,
 } from '@/lib/line-transfer'
 import { sendMessageToConversation } from '@/lib/whatsapp/send-message'
 
@@ -26,8 +27,9 @@ const TRANSFER_ROLES: readonly AccountRole[] = ['atc', 'admin', 'owner']
  * POST { conversationId, targetId, topic } → on the target line:
  *        find-or-create the contact (tagged "Derivado de <from>"), then
  *        send its transfer template. On success, tells the customer in
- *        this chat (transferNoticeText), sends the target the handover
- *        note + history, and leaves a note on the contact here.
+ *        this chat (transferNoticeText), sends the target the ad(s) the
+ *        customer came in through (its "Origen del anuncio" card) and the
+ *        handover note + history, and leaves a note on the contact here.
  */
 
 export async function GET() {
@@ -166,6 +168,28 @@ export async function POST(request: Request) {
       console.error('[line-transfer] customer notice failed:', err instanceof Error ? err.message : err)
     }
 
+    // The Click-to-WhatsApp ad(s) the customer came in through here, so
+    // the receiving line shows the same "Origen del anuncio" card and ad
+    // id. By contact, not just this conversation, in case the ad landed
+    // on an earlier one. Best-effort, like the history below.
+    const { data: referralRows, error: referralError } = await supabase
+      .from('conversation_referrals')
+      .select('source_id, source_url, headline, body, media_type, image_url, video_url, ctwa_clid, created_at')
+      .eq('contact_id', contact.id)
+      .order('created_at', { ascending: true })
+    if (referralError) console.error('[line-transfer] referral lookup failed:', referralError.message)
+    const referrals = (referralRows ?? []) as TransferredReferral[]
+    const targetConversationId = sent.data.conversation_id
+    if (referrals.length > 0 && typeof targetConversationId === 'string') {
+      const forwarded = await callTarget(
+        target.url,
+        target.apiKey,
+        `/api/v1/conversations/${targetConversationId}/referrals`,
+        { referrals },
+      )
+      if (!forwarded.ok) console.error('[line-transfer] referral forward failed:', forwarded.message)
+    }
+
     // Hand the receiving line the context + this chat's recent history as
     // a note on its contact. Best-effort: the customer already got the
     // template, so a failure here only costs the history, not the transfer.
@@ -187,6 +211,7 @@ export async function POST(request: Request) {
           topic,
           agentName: (profile?.full_name as string | undefined) ?? null,
           messages: ((recent ?? []) as TranscriptMessage[]).reverse(),
+          adIds: referrals.map((r) => r.source_id).filter((v): v is string => !!v),
         }),
       })
       historySent = noteSent.ok
