@@ -17,6 +17,7 @@ import { TotalUnreadProvider } from "@/hooks/use-total-unread";
 import { UnreadNotificationsProvider } from "@/hooks/use-unread-notifications";
 import { isEmbeddedApp, isInboxThreadRoute } from "@/lib/mobile-app";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
+import { ROLE_CHIP } from "@/components/layout/sidebar";
 import { UpdateBanner } from "@/components/layout/update-banner";
 import { App } from "@capacitor/app";
 import { ANALISTA_ROUTES } from "@/lib/auth/roles";
@@ -184,6 +185,17 @@ function EmbeddedShell({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const isThreadOpen = isInboxThreadRoute(pathname, searchParams);
+  const tSidebar = useTranslations("Sidebar");
+  const { profile, profileLoading, account, accountRole } = useAuth();
+  // "ASESOR · LINEA RETAIL" — account name only when it differs from the
+  // user's own name, same rule as the web sidebar's card.
+  const accountName =
+    !profileLoading && account?.name && account.name !== profile?.full_name
+      ? account.name
+      : null;
+  const roleLabel = accountRole
+    ? [tSidebar(ROLE_CHIP[accountRole].labelKey), accountName].filter(Boolean).join(" · ")
+    : null;
 
   // Keep the latest route in a ref so the back-button listener (set up
   // once below) always reads current state instead of the closure from
@@ -232,44 +244,60 @@ function EmbeddedShell({
           status, back arrow) and every pixel of height matters, same as
           WhatsApp never doubling up its chat-list header inside a chat. */}
       {!isThreadOpen && (
-        <div className="relative flex shrink-0 items-center justify-between gap-3 overflow-hidden border-b border-white/10 bg-[linear-gradient(135deg,var(--header-bg)_0%,var(--header-bg-2)_100%)] px-4 pb-6 pt-[max(1.25rem,env(safe-area-inset-top))] shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
-          {/* w-[116px] with h-auto only scales the logo's own box —
-              next/image's width/height attrs keep it at its real 882:283
-              ratio, so it can't stretch/distort no matter what width is
-              picked here. */}
-          <Image
-            src="/branding/SAGAMAMENU_MAXI.png"
-            alt="Sagama Maxi CRM"
-            width={882}
-            height={283}
-            priority
-            className="h-auto w-[116px] shrink-0 drop-shadow-sm"
-          />
-          <div className="flex min-w-0 items-center gap-2.5">
-            {advisorName && (
-              <>
-                <Avatar className="size-9 shrink-0 rounded-lg ring-1 ring-white/25">
-                  {avatarUrl ? (
-                    <AvatarImage src={avatarUrl} alt={advisorName} className="rounded-lg" />
-                  ) : null}
-                  <AvatarFallback className="rounded-lg bg-white/15 text-sm font-semibold text-white">
+        <div className="shrink-0">
+          {/* Cover strip in the line colour (--header-bg), same as the
+              web sidebar's profile card: logo + theme toggle. The
+              profile card below overlaps it. */}
+          <div className="flex items-center justify-between gap-3 bg-[linear-gradient(120deg,var(--header-bg)_0%,color-mix(in_oklab,var(--header-bg-2)_70%,white)_100%)] px-4 pb-10 pt-[max(1.25rem,env(safe-area-inset-top))]">
+            {/* w-[116px] with h-auto only scales the logo's own box —
+                next/image's width/height attrs keep it at its real 882:283
+                ratio, so it can't stretch/distort no matter what width is
+                picked here. */}
+            <Image
+              src="/branding/SAGAMAMENU_MAXI.png"
+              alt="Sagama Maxi CRM"
+              width={882}
+              height={283}
+              priority
+              className="h-auto w-[116px] shrink-0 drop-shadow-sm"
+            />
+            <ModeToggle className="h-9 w-9 shrink-0 rounded-full bg-white/15 text-white hover:bg-white/25 hover:text-white" />
+          </div>
+          {advisorName && (
+            <div className="bg-card ring-border/60 relative z-10 mx-3 -mt-7 flex items-center gap-3 rounded-2xl px-3 py-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.12)] ring-1">
+              <div className="relative shrink-0">
+                <Avatar className="ring-offset-card size-11 ring-2 ring-[var(--header-bg)] ring-offset-2">
+                  {avatarUrl ? <AvatarImage src={avatarUrl} alt={advisorName} /> : null}
+                  <AvatarFallback className="bg-[var(--header-bg)] text-base font-semibold text-white">
                     {advisorName.charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="flex min-w-0 max-w-[92px] items-center gap-1 truncate text-xs font-semibold text-white/95">
-                  <span className="truncate">{advisorName}</span>
+                {/* Online dot — whoever is looking at their own card is
+                    by definition online. */}
+                <span
+                  aria-hidden
+                  className="border-card absolute -right-0.5 -bottom-0.5 size-3.5 rounded-full border-2 bg-emerald-500"
+                />
+              </div>
+              <div className="flex min-w-0 flex-col items-start gap-1">
+                <span className="flex max-w-full min-w-0 items-center gap-1.5">
+                  <span className="text-foreground truncate text-sm font-bold">{advisorName}</span>
                   <Image
                     src="/branding/Verificado.png"
                     alt=""
                     width={18}
                     height={18}
-                    className="h-3.5 w-3.5 shrink-0"
+                    className="h-4 w-4 shrink-0"
                   />
                 </span>
-              </>
-            )}
-            <ModeToggle className="h-9 w-9 shrink-0 rounded-full text-white/90 hover:bg-white/15 hover:text-white" />
-          </div>
+                {roleLabel && (
+                  <span className="text-foreground/80 inline-flex max-w-full items-center rounded-full border border-[color-mix(in_oklab,var(--header-bg)_45%,transparent)] bg-[color-mix(in_oklab,var(--header-bg)_14%,transparent)] px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase">
+                    <span className="truncate">{roleLabel}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
       {!isThreadOpen && <UpdateBanner />}
