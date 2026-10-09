@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Check, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
@@ -47,6 +47,11 @@ interface ContactTagPickerProps {
   onCreated: (tag: Tag) => void;
   /** A tag was deleted here (it cascades off every contact). */
   onDeleted: (tagId: string) => void;
+  /** Custom trigger look (the phone chat header uses a labelled pill);
+   *  defaults to the small "+" of the contact panel. */
+  triggerClassName?: string;
+  triggerContent?: ReactNode;
+  align?: "start" | "end";
 }
 
 /**
@@ -62,6 +67,9 @@ export function ContactTagPicker({
   onToggle,
   onCreated,
   onDeleted,
+  triggerClassName,
+  triggerContent,
+  align = "end",
 }: ContactTagPickerProps) {
   const t = useTranslations("Inbox.sidebar");
   const { user, accountId, accountRole } = useAuth();
@@ -130,12 +138,15 @@ export function ContactTagPicker({
       }}
     >
       <PopoverTrigger
-        className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className={
+          triggerClassName ??
+          "rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        }
         aria-label={t("tagAdd")}
       >
-        <Plus className="h-3.5 w-3.5" />
+        {triggerContent ?? <Plus className="h-3.5 w-3.5" />}
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-64 gap-2 p-2">
+      <PopoverContent align={align} className="w-64 gap-2 p-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input

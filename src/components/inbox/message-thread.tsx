@@ -63,6 +63,7 @@ import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
 import { LineTransferButton } from './line-transfer-button';
 import { CallContactButton, callContact } from '@/components/calls/call-contact-button';
+import { MobileThreadTags } from './mobile-thread-tags';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
 import {
@@ -1121,6 +1122,104 @@ export function MessageThread({
           <p className="text-sm font-medium">{tComposer('dropHere')}</p>
         </div>
       )}
+      {embedded ? (
+        /* Phone app (Android wrapper) header: the line colour, like the
+           Bandeja's cover strip. Call instead of Assign (an Asesor can't
+           reassign anyway), and the contact's tags instead of the status
+           dropdown. Name/phone never wrap or get an ellipsis — the name
+           scales with the screen width and fades out at the edge if it
+           still doesn't fit; tags scroll sideways. No blur or shadow, so
+           it stays cheap to paint on low-end phones. */
+        <div className="shrink-0 rounded-b-2xl bg-[linear-gradient(120deg,var(--header-bg)_0%,color-mix(in_oklab,var(--header-bg-2)_70%,white)_100%)] px-1.5 pb-2.5 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
+          <div className="flex items-center gap-1.5">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label={t('backToConversations')}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full active:bg-white/20"
+              >
+                <ArrowLeft className="h-6 w-6" />
+              </button>
+            )}
+            <div
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-base font-semibold ring-2 ring-white/90"
+              style={avatarTintStyle(contact.id)}
+            >
+              {displayName.charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1 pl-1">
+              <h2 className="overflow-hidden text-[clamp(14px,4.3vw,17px)] leading-tight font-bold whitespace-nowrap [mask-image:linear-gradient(90deg,#000_85%,transparent)]">
+                {displayName}
+              </h2>
+              <p className="overflow-hidden text-[clamp(11px,3.4vw,13px)] whitespace-nowrap text-white/85">
+                {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => callContact(contact.id, contactDisplayName)}
+              aria-label={tCalls('callNow')}
+              title={tCalls('callNow')}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 active:bg-white/30"
+            >
+              <Phone className="h-5 w-5" />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={t('moreOptions')}
+                title={t('moreOptions')}
+                className="flex h-10 w-9 shrink-0 items-center justify-center rounded-full active:bg-white/20"
+              >
+                <MoreVertical className="h-5 w-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="border-border bg-popover">
+                {onOpenContactMobile && (
+                  <DropdownMenuItem onClick={onOpenContactMobile}>
+                    <PanelRightOpen className="mr-2 h-4 w-4" />
+                    {t('showContact')}
+                  </DropdownMenuItem>
+                )}
+                {onRefresh && (
+                  <DropdownMenuItem onClick={handleRefreshClick} disabled={isRefreshing}>
+                    <RefreshCw className={cn('mr-2 h-4 w-4', isRefreshing && 'animate-spin')} />
+                    {t('refresh')}
+                  </DropdownMenuItem>
+                )}
+                {canTransfer && (
+                  <DropdownMenuItem onClick={() => setTransferOpen(true)}>
+                    <ArrowRightLeft className="mr-2 h-4 w-4" />
+                    {tTransfer('button')}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="mt-2 flex min-w-0 items-center gap-1.5 pl-2.5">
+            {sessionInfo.remaining && (
+              <span
+                className={cn(
+                  'inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-bold whitespace-nowrap',
+                  sessionInfo.expired ? 'bg-black/25 text-white' : 'bg-white/20 text-white'
+                )}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                {sessionInfo.remaining}
+              </span>
+            )}
+            <MobileThreadTags contactId={contact.id} />
+          </div>
+          {/* Owns the transfer dialog (opened from the "⋮" menu). */}
+          <LineTransferButton
+            conversationId={conversation.id}
+            open={transferOpen}
+            onOpenChange={setTransferOpen}
+            onAvailableChange={setCanTransfer}
+            triggerClassName="hidden"
+          />
+        </div>
+      ) : (
+      <>
       {/* Header — solid card surface sits on top of the doodle so the
           name/avatar/dropdowns stay legible. */}
       <div
@@ -1425,6 +1524,8 @@ export function MessageThread({
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
