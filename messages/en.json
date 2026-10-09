@@ -395,6 +395,8 @@
       "deals": "Deals",
       "noTags": "No tags",
       "removeTag": "Remove tag",
+      "tagShort": "Tag",
+      "tagUpdateFailed": "Couldn't update the tag",
       "tagAdd": "Add tag",
       "tagSearch": "Search or create a tag…",
       "tagCreate": "Create “{name}”",
