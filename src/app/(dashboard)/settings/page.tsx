@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useMemo, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
@@ -44,7 +44,7 @@ export default function SettingsPage() {
 function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency } = useAuth();
+  const { defaultCurrency, isAgent } = useAuth();
   const { mode } = useTheme();
   const t = useTranslations('Settings');
   const canEditSettings = useCan('edit-settings');
@@ -63,6 +63,12 @@ function SettingsPageInner() {
   const section = allowed.includes(requestedSection)
     ? requestedSection
     : (allowed[0] ?? 'profile');
+
+  // Asesores have no access to Settings (not even their profile) —
+  // bounce a typed/stale /settings URL back to the inbox.
+  useEffect(() => {
+    if (isAgent) router.replace('/inbox');
+  }, [isAgent, router]);
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -94,6 +100,8 @@ function SettingsPageInner() {
     members: <MembersTab />,
     api: <ApiKeysSettings />,
   };
+
+  if (isAgent) return null;
 
   return (
     <div>
