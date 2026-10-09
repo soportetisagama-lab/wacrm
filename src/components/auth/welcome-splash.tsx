@@ -68,7 +68,6 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
           priority
           className="h-auto w-[200px] sm:w-[260px]"
         />
-        <div className={styles.splashProgress} />
       </div>
     </div>
   );
