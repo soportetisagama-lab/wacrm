@@ -81,12 +81,17 @@ export function ResponseSparkline({ days }: { days: { day: number; minutes: numb
   const vals = days.map((d) => d.minutes).filter((v): v is number => v !== null)
   if (vals.length === 0) return null
   const max = Math.max(...vals) * 1.15 || 1
-  const step = W / (days.length - 1)
+  const step = W / Math.max(1, days.length - 1)
   const pts = days
     .map((d, i) => (d.minutes === null ? null : ([i * step, H - (d.minutes / max) * (H - 6)] as const)))
     .filter((p): p is readonly [number, number] => p !== null)
   const poly = pts.map((p) => p.join(',')).join(' ')
-  const fmtDay = (ms: number) => new Date(ms).toLocaleDateString('es-PE', { weekday: 'narrow' })
+  // Up to ~8 labels: weekday initials for a week, day numbers for longer ranges.
+  const labelEvery = Math.max(1, Math.ceil(days.length / 8))
+  const fmtDay = (ms: number) =>
+    days.length <= 7
+      ? new Date(ms).toLocaleDateString('es-PE', { weekday: 'narrow' }).toUpperCase()
+      : new Date(ms).toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[70px] w-full overflow-visible" aria-hidden>
@@ -99,12 +104,14 @@ export function ResponseSparkline({ days }: { days: { day: number; minutes: numb
         {pts.length > 1 && <polygon points={`${pts[0][0]},${H} ${poly} ${pts[pts.length - 1][0]},${H}`} fill={`url(#${gradId})`} />}
         <polyline points={poly} fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
-      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground uppercase">
-        {days.map((d) => (
-          <span key={d.day} title={d.minutes === null ? undefined : `${Math.round(d.minutes)} min`}>
-            {fmtDay(d.day)}
-          </span>
-        ))}
+      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground tabular-nums">
+        {days
+          .filter((_, i) => i % labelEvery === 0 || i === days.length - 1)
+          .map((d) => (
+            <span key={d.day} title={d.minutes === null ? undefined : `${Math.round(d.minutes)} min`}>
+              {fmtDay(d.day)}
+            </span>
+          ))}
       </div>
     </div>
   )
