@@ -1,19 +1,31 @@
 'use client'
 
 import Link from 'next/link'
+import type { ComponentType } from 'react'
 import { useTranslations } from 'next-intl'
+import { CheckCheck, Clock, Hourglass, MessageCircleWarning } from 'lucide-react'
 import type { AccountRole } from '@/lib/auth/roles'
 import type { PanelSummary } from '@/lib/dashboard/panel-queries'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/dashboard/skeleton'
 
-// The centered welcome band at the top of the Panel, painted in the
-// line's own color (--primary), with the summary strip every role sees.
+// The welcome card at the top of the Panel. Kept on the neutral card
+// surface — the header bar above is already the line's color — with the
+// line color only as an accent (avatar ring, glow, icons).
 
 function greetingKey(hour: number) {
   if (hour < 12) return 'morning'
   if (hour < 19) return 'afternoon'
   return 'evening'
+}
+
+type KpiTone = 'critical' | 'warning' | 'brand' | 'good'
+
+const KPI_TONE: Record<KpiTone, string> = {
+  critical: 'bg-red-500/12 text-red-500',
+  warning: 'bg-amber-500/15 text-amber-600',
+  brand: 'bg-primary/12 text-primary',
+  good: 'bg-emerald-500/12 text-emerald-600',
 }
 
 export function PanelHero({
@@ -22,12 +34,14 @@ export function PanelHero({
   lineName,
   summary,
   scope,
+  rangeLabel,
 }: {
   name: string | null
   role: AccountRole | null
   lineName: string | null
   summary: PanelSummary | null
   scope: 'own' | 'line'
+  rangeLabel: string
 }) {
   const t = useTranslations('Dashboard.panel.hero')
   const now = new Date()
@@ -35,45 +49,47 @@ export function PanelHero({
   const date = now.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' })
 
   return (
-    <section
-      className="relative isolate overflow-hidden rounded-3xl px-5 pt-9 pb-6 text-center text-white shadow-lg sm:px-8 sm:pt-11"
-      style={{
-        background:
-          'radial-gradient(90% 120% at 50% -10%, color-mix(in oklab, var(--primary) 65%, white) 0%, transparent 60%),' +
-          'linear-gradient(140deg, var(--primary) 0%, color-mix(in oklab, var(--primary) 58%, #0b1220) 100%)',
-      }}
-    >
-      {/* Soft rings behind the greeting */}
-      <span aria-hidden className="pointer-events-none absolute -top-40 -left-24 -z-10 h-80 w-80 rounded-full bg-white/8" />
-      <span aria-hidden className="pointer-events-none absolute -right-16 -bottom-36 -z-10 h-72 w-72 rounded-full bg-white/7" />
-      <span aria-hidden className="pointer-events-none absolute top-6 right-[18%] -z-10 h-24 w-24 rounded-full border border-white/15" />
+    <section className="relative isolate overflow-hidden rounded-3xl border border-border bg-card px-5 pt-8 pb-5 shadow-sm sm:px-8">
+      {/* A faint wash of the line color behind the greeting */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-40"
+        style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 75%)' }}
+      />
 
-      <div className="mx-auto flex max-w-2xl flex-col items-center gap-2">
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-          {role ? t(`roles.${role}`) : null}
-          {lineName ? <span className="opacity-80">· {lineName}</span> : null}
+      <div className="flex flex-col items-center gap-1.5 text-center">
+        <span
+          className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-xl font-black text-primary-foreground ring-4 ring-primary/20"
+          aria-hidden
+        >
+          {firstName?.[0]?.toUpperCase() ?? '·'}
         </span>
-        <h1 className="text-[28px] leading-tight font-extrabold tracking-tight text-balance sm:text-4xl">
+        <h1 className="text-[26px] leading-tight font-extrabold tracking-tight text-balance text-foreground sm:text-3xl">
           {firstName ? t(`greeting.${greetingKey(now.getHours())}`, { name: firstName }) : t('greetingNoName')}
         </h1>
-        <p className="text-sm capitalize opacity-85">{date}</p>
-        <p className="text-sm opacity-90">{scope === 'own' ? t('scopeOwn') : t('scopeLine')}</p>
+        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          {role && <span className="rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-bold text-primary">{t(`roles.${role}`)}</span>}
+          {lineName && <span className="font-semibold text-foreground/80">{lineName}</span>}
+          <span aria-hidden>·</span>
+          <span className="capitalize">{date}</span>
+        </p>
+        <p className="text-xs text-muted-foreground">{scope === 'own' ? t('scopeOwn') : t('scopeLine')}</p>
       </div>
 
-      <div className="mx-auto mt-7 grid max-w-5xl grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {summary ? (
           <>
-            <Kpi label={t('unanswered')} value={summary.unanswered} hint={t('conversations')} alert={summary.unanswered > 0 ? t('urgent') : null} />
-            <Kpi label={t('waitingLong')} value={summary.waitingLong} hint={t('customers')} alert={summary.waitingLong > 0 ? t('attention') : null} />
-            <Kpi label={t('windowsSoon')} value={summary.windowsSoon} hint={t('windowsHint')} alert={summary.windowsSoon > 0 ? t('lessThan3h') : null} />
-            <Kpi label={t('closedToday')} value={summary.closedToday} hint={t('closedYesterday', { n: summary.closedYesterday })} />
-            <AnsweredRing pct={summary.answeredTodayPct} label={t('answeredToday')} hint={t('answeredHint')} empty={t('noMessagesToday')} />
+            <Kpi icon={MessageCircleWarning} tone="critical" label={t('unanswered')} value={summary.unanswered} hint={t('conversations')} when={t('now')} />
+            <Kpi icon={Hourglass} tone="warning" label={t('waitingLong')} value={summary.waitingLong} hint={t('customers')} when={t('now')} />
+            <Kpi icon={Clock} tone="brand" label={t('windowsSoon')} value={summary.windowsSoon} hint={t('windowsHint')} when={t('now')} />
+            <Kpi icon={CheckCheck} tone="good" label={t('closed')} value={summary.closed} hint={t('conversations')} when={rangeLabel} />
+            <AnsweredRing pct={summary.answeredPct} label={t('answered')} hint={t('answeredHint')} empty={t('noMessages')} when={rangeLabel} />
           </>
         ) : (
           Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className={cn('rounded-2xl border border-white/20 bg-white/12 p-4', i === 4 && 'col-span-2 lg:col-span-1')}>
-              <Skeleton className="mx-auto h-3 w-20 bg-white/25" />
-              <Skeleton className="mx-auto mt-3 h-8 w-12 bg-white/25" />
+            <div key={i} className={cn('rounded-2xl bg-muted/50 p-4', i === 4 && 'col-span-2 lg:col-span-1')}>
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="mt-3 h-8 w-14" />
             </div>
           ))
         )}
@@ -82,37 +98,57 @@ export function PanelHero({
   )
 }
 
-function Kpi({ label, value, hint, alert }: { label: string; value: number; hint: string; alert?: string | null }) {
+function Kpi({
+  icon: Icon,
+  tone,
+  label,
+  value,
+  hint,
+  when,
+}: {
+  icon: ComponentType<{ className?: string }>
+  tone: KpiTone
+  label: string
+  value: number
+  hint: string
+  when: string
+}) {
   return (
     <Link
       href="/inbox"
-      className="group flex flex-col items-center gap-1 rounded-2xl border border-white/20 bg-white/12 px-3 py-4 backdrop-blur-sm transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+      className="group flex flex-col gap-2 rounded-2xl border border-transparent bg-muted/50 p-4 transition-colors hover:border-border hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
-      <span className="text-xs font-semibold opacity-90">{label}</span>
-      <span className="text-4xl leading-none font-black tabular-nums">{value}</span>
-      <span className="text-[11px] opacity-80">{hint}</span>
-      {alert && <span className="mt-1 rounded-full bg-white px-2 py-0.5 text-[10px] font-extrabold text-red-500">{alert}</span>}
+      <span className="flex items-center justify-between gap-2">
+        <span className={cn('flex h-8 w-8 items-center justify-center rounded-lg', KPI_TONE[tone])}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="truncate text-[10px] font-bold tracking-wider text-muted-foreground uppercase">{when}</span>
+      </span>
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      <span className="text-3xl leading-none font-black text-foreground tabular-nums">{value}</span>
+      <span className="text-[11px] text-muted-foreground">{hint}</span>
     </Link>
   )
 }
 
-function AnsweredRing({ pct, label, hint, empty }: { pct: number | null; label: string; hint: string; empty: string }) {
+function AnsweredRing({ pct, label, hint, empty, when }: { pct: number | null; label: string; hint: string; empty: string; when: string }) {
   const r = 30
   const c = 2 * Math.PI * r
   return (
-    <div className="col-span-2 flex items-center justify-center gap-4 rounded-2xl border border-white/20 bg-white/12 px-3 py-3 backdrop-blur-sm lg:col-span-1">
-      <svg viewBox="0 0 76 76" className="h-[76px] w-[76px] shrink-0" role="img" aria-label={pct === null ? empty : `${label}: ${pct}%`}>
-        <circle cx="38" cy="38" r={r} fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="8" />
+    <div className="col-span-2 flex items-center gap-4 rounded-2xl bg-muted/50 p-4 lg:col-span-1">
+      <svg viewBox="0 0 76 76" className="h-[72px] w-[72px] shrink-0" role="img" aria-label={pct === null ? empty : `${label}: ${pct}%`}>
+        <circle cx="38" cy="38" r={r} fill="none" stroke="var(--border)" strokeWidth="8" />
         {pct !== null && pct > 0 && (
-          <circle cx="38" cy="38" r={r} fill="none" stroke="#fff" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${(c * pct) / 100} ${c}`} transform="rotate(-90 38 38)" />
+          <circle cx="38" cy="38" r={r} fill="none" stroke="var(--primary)" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${(c * pct) / 100} ${c}`} transform="rotate(-90 38 38)" />
         )}
-        <text x="38" y="43" textAnchor="middle" fill="#fff" fontSize="16" fontWeight="900">
+        <text x="38" y="43" textAnchor="middle" fill="var(--foreground)" fontSize="16" fontWeight="900">
           {pct === null ? '—' : `${pct}%`}
         </text>
       </svg>
-      <span className="text-left">
-        <span className="block text-sm font-bold">{label}</span>
-        <span className="block text-[11px] opacity-80">{pct === null ? empty : hint}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-[10px] font-bold tracking-wider text-muted-foreground uppercase">{when}</span>
+        <span className="block text-sm font-bold text-foreground">{label}</span>
+        <span className="block text-[11px] text-muted-foreground">{pct === null ? empty : hint}</span>
       </span>
     </div>
   )

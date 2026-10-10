@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  answeredTodayPct,
+  answeredPct,
   agentRanking,
   callsByAgent,
   coldConversations,
   hourlyActivity,
   openWindows,
   responseSamples,
+  responseTrend,
   threadStates,
   transfersByLine,
   unreturnedMissedCalls,
@@ -17,6 +18,7 @@ import {
 } from './panel-compute'
 
 const NOW = new Date(2026, 9, 10, 15, 0, 0).getTime() // Oct 10 2026, 15:00 local
+const TODAY = { from: new Date(2026, 9, 10).getTime(), to: NOW + 1 }
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString()
 
 const conv = (id: string, over: Partial<PanelConversation> = {}): PanelConversation => ({
@@ -71,11 +73,11 @@ describe('coldConversations', () => {
   })
 })
 
-describe('answeredTodayPct', () => {
-  it('counts chats with a customer message today that got any reply after it', () => {
+describe('answeredPct', () => {
+  it('counts chats with a customer message in the range that got any reply after it', () => {
     const messages = [msg('a', 'customer', 100), msg('a', 'bot', 99), msg('b', 'customer', 50), msg('c', 'agent', 40), msg('c', 'customer', 30)]
-    expect(answeredTodayPct(messages, NOW)).toBe(33)
-    expect(answeredTodayPct([], NOW)).toBeNull()
+    expect(answeredPct(messages, TODAY)).toBe(33)
+    expect(answeredPct([], TODAY)).toBeNull()
   })
 })
 
@@ -90,7 +92,7 @@ describe('responseSamples / agentRanking', () => {
       msg('a', 'customer', 30), msg('a', 'agent', 20, 'u1'),
       msg('b', 'customer', 30), msg('b', 'agent', 25, 'u2'), msg('c', 'agent', 10, 'u2'),
     ]
-    const res = agentRanking(['u1', 'u2'], messages, new Map([['u1', 4]]), NOW - 3600_000)
+    const res = agentRanking(['u1', 'u2'], messages, new Map([['u1', 4]]), { from: NOW - 3600_000, to: NOW + 1 })
     expect(res.map((r) => [r.userId, r.attended, r.sent, r.closed, r.medianResponse])).toEqual([
       ['u2', 2, 2, 0, 5],
       ['u1', 1, 1, 4, 10],
@@ -98,9 +100,24 @@ describe('responseSamples / agentRanking', () => {
   })
 })
 
+describe('responseTrend', () => {
+  it('gives one bucket per day of the range plus the previous period', () => {
+    const range = { from: new Date(2026, 9, 1).getTime(), to: NOW + 1 }
+    const samples = [
+      { at: new Date(2026, 9, 2, 10).getTime(), minutes: 10, responderId: null },
+      { at: new Date(2026, 9, 9, 10).getTime(), minutes: 4, responderId: null },
+      { at: new Date(2026, 8, 25, 10).getTime(), minutes: 20, responderId: null },
+    ]
+    const res = responseTrend(samples, range)
+    expect(res.days).toHaveLength(10)
+    expect(res.current).toBe(7)
+    expect(res.previous).toBe(20)
+  })
+})
+
 describe('hourlyActivity', () => {
   it('buckets today by local hour', () => {
-    const res = hourlyActivity([msg('a', 'customer', 30), msg('a', 'agent', 20), msg('a', 'agent', 24 * 60)], NOW)
+    const res = hourlyActivity([msg('a', 'customer', 30), msg('a', 'agent', 20), msg('a', 'agent', 24 * 60)], TODAY)
     expect(res[14]).toEqual({ hour: 14, sent: 1, received: 1 })
   })
 })
@@ -120,6 +137,7 @@ describe('calls', () => {
       call('5', { contact_id: 'k3', status: 'ended', answered_at: at(20), created_at: at(20) }),
     ]
     expect(unreturnedMissedCalls(calls).map((c) => c.id)).toEqual(['3'])
+    expect(unreturnedMissedCalls(calls, { from: NOW - 45 * 60_000, to: NOW })).toEqual([])
   })
 
   it('counts answered vs missed per agent', () => {

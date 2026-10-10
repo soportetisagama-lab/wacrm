@@ -13,6 +13,14 @@ export const WAIT_ALERT_MS = 15 * 60 * 1000
 /** Open chats whose last message is ours and older than this are "dejaron de responder". */
 export const COLD_AFTER_MS = 3 * 24 * 60 * 60 * 1000
 
+/** A date range in epoch ms: `from` inclusive, `to` exclusive. */
+export interface PanelRange {
+  from: number
+  to: number
+}
+
+const inRange = (ts: number, r: PanelRange) => ts >= r.from && ts < r.to
+
 export interface ContactRef {
   name: string | null
   phone: string | null
@@ -135,17 +143,16 @@ export function coldConversations(
 }
 
 /**
- * Share of today's conversations (any status) where a customer wrote
- * today and someone answered after that first message. Null when no
- * customer wrote today.
+ * Share of conversations (any status) where a customer wrote inside the
+ * range and someone answered after that first message, also inside the
+ * range. Null when no customer wrote in the range.
  */
-export function answeredTodayPct(messages: PanelMessage[], now: number): number | null {
-  const today = startOfLocalDay(new Date(now)).getTime()
+export function answeredPct(messages: PanelMessage[], range: PanelRange): number | null {
   const firstCustomer = new Map<string, number>()
   const answered = new Set<string>()
   for (const m of messages) {
     const ts = new Date(m.created_at).getTime()
-    if (ts < today) continue
+    if (!inRange(ts, range)) continue
     if (m.sender_type === 'customer') {
       if (!firstCustomer.has(m.conversation_id)) firstCustomer.set(m.conversation_id, ts)
     } else if (firstCustomer.has(m.conversation_id)) {
@@ -195,39 +202,39 @@ export function median(values: number[]): number | null {
 }
 
 export interface ResponseTrend {
-  /** Median minutes for each of the last 7 local days, oldest first. */
+  /** Median minutes for each local day of the range, oldest first. */
   days: { day: number; minutes: number | null }[]
-  thisWeek: number | null
-  lastWeek: number | null
+  current: number | null
+  /** Same-length period right before the range. */
+  previous: number | null
 }
 
-export function responseTrend(samples: ResponseSample[], now: number): ResponseTrend {
-  const today = startOfLocalDay(new Date(now)).getTime()
-  const DAY = 24 * 60 * 60 * 1000
-  const weekStart = today - 6 * DAY
-  const prevStart = weekStart - 7 * DAY
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const from = weekStart + i * DAY
-    const vals = samples.filter((s) => s.at >= from && s.at < from + DAY).map((s) => s.minutes)
-    return { day: from, minutes: median(vals) }
-  })
+export function responseTrend(samples: ResponseSample[], range: PanelRange): ResponseTrend {
+  const days: ResponseTrend['days'] = []
+  for (let d = startOfLocalDay(new Date(range.from)); d.getTime() < range.to; d.setDate(d.getDate() + 1)) {
+    const from = d.getTime()
+    const next = new Date(d)
+    next.setDate(next.getDate() + 1)
+    const vals = samples.filter((s) => s.at >= from && s.at < next.getTime()).map((s) => s.minutes)
+    days.push({ day: from, minutes: median(vals) })
+  }
+  const len = range.to - range.from
   return {
     days,
-    thisWeek: median(samples.filter((s) => s.at >= weekStart).map((s) => s.minutes)),
-    lastWeek: median(samples.filter((s) => s.at >= prevStart && s.at < weekStart).map((s) => s.minutes)),
+    current: median(samples.filter((s) => inRange(s.at, range)).map((s) => s.minutes)),
+    previous: median(samples.filter((s) => inRange(s.at, { from: range.from - len, to: range.from })).map((s) => s.minutes)),
   }
 }
 
-/** Sent (agent) vs received (customer) messages per local hour today. */
+/** Sent (agent) vs received (customer) messages per local hour, summed over the range. */
 export function hourlyActivity(
   messages: PanelMessage[],
-  now: number,
+  range: PanelRange,
 ): { hour: number; sent: number; received: number }[] {
-  const today = startOfLocalDay(new Date(now)).getTime()
   const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, sent: 0, received: 0 }))
   for (const m of messages) {
     const d = new Date(m.created_at)
-    if (d.getTime() < today) continue
+    if (!inRange(d.getTime(), range)) continue
     const h = hours[d.getHours()]
     if (m.sender_type === 'customer') h.received += 1
     else if (m.sender_type === 'agent') h.sent += 1
@@ -235,13 +242,13 @@ export function hourlyActivity(
   return hours
 }
 
-/** Customer messages per [mondayIndex][hour] since `since`. */
-export function messageHeatmap(messages: PanelMessage[], since: number): number[][] {
+/** Customer messages per [mondayIndex][hour] inside the range. */
+export function messageHeatmap(messages: PanelMessage[], range: PanelRange): number[][] {
   const grid = Array.from({ length: 7 }, () => Array<number>(24).fill(0))
   for (const m of messages) {
     if (m.sender_type !== 'customer') continue
     const d = new Date(m.created_at)
-    if (d.getTime() < since) continue
+    if (!inRange(d.getTime(), range)) continue
     grid[mondayIndex(d)][d.getHours()] += 1
   }
   return grid
@@ -255,14 +262,14 @@ export interface AgentRanking {
   medianResponse: number | null
 }
 
-/** Per-agent month stats: chats they wrote in, messages sent, chats closed, median first reply. */
+/** Per-agent stats for the range: chats they wrote in, messages sent, chats closed, median first reply. */
 export function agentRanking(
   agentIds: string[],
   messages: PanelMessage[],
   closedByAgent: Map<string, number>,
-  since: number,
+  range: PanelRange,
 ): AgentRanking[] {
-  const recent = messages.filter((m) => new Date(m.created_at).getTime() >= since)
+  const recent = messages.filter((m) => inRange(new Date(m.created_at).getTime(), range))
   const samples = responseSamples(recent)
   return agentIds
     .map((userId) => {
@@ -299,7 +306,7 @@ const isMissedInbound = (c: PanelCall) =>
  * or from that contact was answered, and no one tried calling back.
  * One row per contact (the latest miss), newest first.
  */
-export function unreturnedMissedCalls(calls: PanelCall[]): PanelCall[] {
+export function unreturnedMissedCalls(calls: PanelCall[], range?: PanelRange): PanelCall[] {
   const sorted = [...calls].sort((a, b) => a.created_at.localeCompare(b.created_at))
   const latestMiss = new Map<string, PanelCall>()
   for (const c of sorted) {
@@ -307,7 +314,9 @@ export function unreturnedMissedCalls(calls: PanelCall[]): PanelCall[] {
     if (isMissedInbound(c)) latestMiss.set(key, c)
     else if (c.direction === 'outbound' || c.answered_at) latestMiss.delete(key)
   }
-  return [...latestMiss.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
+  return [...latestMiss.values()]
+    .filter((c) => !range || inRange(new Date(c.created_at).getTime(), range))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
 /** Answered vs missed calls per agent; missed calls with no ring target go under `null`. */
