@@ -152,16 +152,16 @@ function HourlyCard({ hours, className }: { hours: AdvisorPanelData['hourly']; c
 function ResponseCard({ trend }: { trend: AdvisorPanelData['response'] }) {
   const t = useTranslations('Dashboard.panel.response')
   const fmt = (m: number) => (m < 60 ? t('minutes', { n: Math.round(m) }) : t('hours', { n: (m / 60).toFixed(1) }))
-  const diff = trend.thisWeek !== null && trend.lastWeek !== null ? trend.thisWeek - trend.lastWeek : null
+  const diff = trend.current !== null && trend.previous !== null ? trend.current - trend.previous : null
   return (
     <PanelCard icon={Zap} title={t('title')} subtitle={t('subtitle')}>
-      {trend.thisWeek === null ? (
+      {trend.current === null ? (
         <EmptyLine text={t('empty')} />
       ) : (
         <>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-4xl leading-none font-black text-foreground tabular-nums">{fmt(trend.thisWeek)}</p>
+              <p className="text-4xl leading-none font-black text-foreground tabular-nums">{fmt(trend.current)}</p>
               <p className="mt-1 text-xs text-muted-foreground">{t('thisWeek')}</p>
             </div>
             {diff !== null && Math.abs(diff) >= 0.5 && (
