@@ -1,0 +1,98 @@
+/* "Escáner de luz" entrance for the BIENVENIDO wordmark: a bar of
+ * light in the line's primary color sweeps left to right and reveals
+ * the wordmark behind it, then a brief glow in the same color fades
+ * out. Plays once per mount.
+ *
+ * On /login the WelcomeSplash covers the card at first; it sets
+ * html[data-splash="on"] until its curtain starts opening, and the
+ * animation stays paused until then so the sweep isn't spent behind
+ * the splash. */
+
+.wordmark {
+  position: relative;
+  animation: afterglow 1.4s ease-out 1.65s both;
+}
+
+.wordmarkImage {
+  animation: reveal 1.5s cubic-bezier(0.65, 0, 0.35, 1) 0.25s both;
+}
+
+.bar {
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  left: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow:
+    0 0 10px 2px var(--primary),
+    0 0 34px 10px var(--primary);
+  opacity: 0;
+  pointer-events: none;
+  animation: bar 1.5s cubic-bezier(0.65, 0, 0.35, 1) 0.25s both;
+}
+
+/* Soft trail behind the bar. */
+.bar::before {
+  content: '';
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  right: 3px;
+  width: 90px;
+  background: linear-gradient(90deg, transparent, var(--primary));
+  opacity: 0.35;
+}
+
+:global(html[data-splash='on']) .wordmark,
+:global(html[data-splash='on']) .wordmarkImage,
+:global(html[data-splash='on']) .bar {
+  animation-play-state: paused;
+}
+
+@keyframes reveal {
+  from {
+    clip-path: inset(-20% 100% -20% 0);
+  }
+  to {
+    clip-path: inset(-20% 0 -20% 0);
+  }
+}
+
+@keyframes bar {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes afterglow {
+  0% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  30% {
+    filter: drop-shadow(0 0 14px var(--primary));
+  }
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wordmark,
+  .wordmarkImage,
+  .bar {
+    animation: none;
+  }
+}
