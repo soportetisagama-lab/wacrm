@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Image from 'next/image';
 
 import { cn } from '@/lib/utils';
@@ -19,18 +19,34 @@ const BACKGROUND_SRC = '/branding/loginfondo_maxi.png';
 // Long enough for the animated scene (splash-scene.tsx) to play out.
 const SPLASH_HOLD_MS = 2000;
 const SPLASH_EXIT_MS = 700;
+// On a cold first load the background photo and the scene's images take
+// a moment to download. The hold timer only starts once both are in, so
+// the scene plays complete; this cap keeps a very slow connection from
+// sitting on the splash forever.
+const SPLASH_MAX_WAIT_MS = 4000;
 
 export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
   const [exiting, setExiting] = useState(false);
+  const [photoReady, setPhotoReady] = useState(false);
+  const [sceneReady, setSceneReady] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
+  const ready = (photoReady && sceneReady) || timedOut;
+  const handleSceneReady = useCallback(() => setSceneReady(true), []);
 
   useEffect(() => {
+    const cap = setTimeout(() => setTimedOut(true), SPLASH_MAX_WAIT_MS);
+    return () => clearTimeout(cap);
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
     const startExit = setTimeout(() => setExiting(true), SPLASH_HOLD_MS);
     const finish = setTimeout(onFinish, SPLASH_HOLD_MS + SPLASH_EXIT_MS);
     return () => {
       clearTimeout(startExit);
       clearTimeout(finish);
     };
-  }, [onFinish]);
+  }, [ready, onFinish]);
 
   const half = (position: string) => (
     <div className={cn(styles.splashHalf, position)} aria-hidden="true">
@@ -42,6 +58,7 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
           priority
           sizes="100vw"
           className="object-cover object-center"
+          onLoad={() => setPhotoReady(true)}
         />
       </div>
       <div className={styles.splashTint} />
@@ -61,8 +78,8 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
       {half(styles.splashHalfTop)}
       {half(styles.splashHalfBottom)}
 
-      <div className={cn('relative z-10', styles.splashCard)}>
-        <SplashScene line="maxi" logoSrc={LOGO_SRC} alt={LINE_NAME} />
+      <div className={cn('relative z-10', styles.splashCard, !ready && styles.splashWaiting)}>
+        <SplashScene onReady={handleSceneReady} line="maxi" logoSrc={LOGO_SRC} alt={LINE_NAME} />
       </div>
     </div>
   );

@@ -386,21 +386,43 @@ const CSS = `
 @keyframes ss-n2load{0%{transform:translate(-330px,30px)}40%{transform:translate(0,30px)}62%{transform:translate(0,-6px)}72%,100%{transform:translate(0,0)}}
 `;
 
+// Waits for every image URL to finish (or fail) loading.
+function preload(urls: string[]): Promise<void> {
+  return Promise.all(
+    urls.map(
+      (url) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = img.onerror = () => resolve();
+          img.src = url;
+        })
+    )
+  ).then(() => undefined);
+}
+
 /**
  * One of the line's two scenes, picked at random per mount (client-only,
  * so server and first client render agree: nothing until the pick).
  * Reduced motion → the plain logo.
+ *
+ * The SVG only mounts once its images are downloaded: its CSS animations
+ * start on mount, so on a cold first load they used to play (and end)
+ * before the logo had arrived. `onReady` fires at that moment so the
+ * splash can start its own hold timer then, not on page load.
  */
 export function SplashScene({
   line,
   logoSrc,
   alt,
+  onReady,
 }: {
   line: SplashLine;
   logoSrc: string;
   alt: string;
+  onReady?: () => void;
 }) {
   const [pick, setPick] = useState<0 | 1 | 'still' | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -408,9 +430,28 @@ export function SplashScene({
     setPick(reduce ? 'still' : Math.random() < 0.5 ? 0 : 1);
   }, []);
 
+  useEffect(() => {
+    if (pick === null) return;
+    const urls =
+      pick === 'still'
+        ? [logoSrc]
+        : [...new Set(Array.from(SCENES[line][pick].svg().matchAll(/href="([^"]+)"/g), (m) => m[1]))];
+    let cancelled = false;
+    preload(urls).then(() => {
+      if (!cancelled) setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pick, line, logoSrc]);
+
+  useEffect(() => {
+    if (loaded) onReady?.();
+  }, [loaded, onReady]);
+
   // Reserve the 2:1 box while the scene is being picked, so the card
   // doesn't collapse for a frame.
-  if (pick === null) return <div className="aspect-[2/1] w-full" aria-hidden="true" />;
+  if (pick === null || !loaded) return <div className="aspect-[2/1] w-full" aria-hidden="true" />;
   if (pick === 'still') {
     return (
       <div className="flex aspect-[2/1] w-full items-center justify-center p-6">
