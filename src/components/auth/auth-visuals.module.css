@@ -285,6 +285,9 @@ html[data-mode='light'] .glassCard button[type='submit'] {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* Opaque stand-in while the photo is still downloading (cold first
+   * load), so the login form underneath never shows through. */
+  background: color-mix(in srgb, var(--header-bg) 22%, #f4f5f7);
   transition: transform 0.6s cubic-bezier(0.7, 0, 0.2, 1) 0.1s;
 }
 
@@ -349,6 +352,13 @@ html[data-mode='light'] .glassCard button[type='submit'] {
 .splashExit .splashCard {
   opacity: 0;
   transform: scale(0.96);
+}
+
+/* Card stays hidden until the photo and the scene's images are loaded;
+ * dropping this class then plays splashCardIn. */
+.splashWaiting {
+  opacity: 0;
+  animation: none;
 }
 
 @keyframes splashCardIn {
