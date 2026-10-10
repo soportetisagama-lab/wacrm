@@ -202,6 +202,19 @@ describe("extractTypedPhone", () => {
     expect(extractTypedPhone("974710551 o 987654321")).toBeNull();
     expect(extractTypedPhone("974710551 somos 3")).toBeNull();
   });
+
+  it("accepts a number alone on its own line inside a longer message", () => {
+    expect(
+      extractTypedPhone("Gracias.\n943570890\nA partir de las 3:30pm podría ser."),
+    ).toBe("51943570890");
+    expect(extractTypedPhone("Hola buenas tardes\r\nmi cel: 943 570 890\r\nsaludos")).toBe(
+      "51943570890",
+    );
+  });
+
+  it("rejects two numbers on separate lines", () => {
+    expect(extractTypedPhone("974710551\n987654321")).toBeNull();
+  });
 });
 
 describe("classifyTypedPhone", () => {
@@ -223,6 +236,7 @@ describe("classifyTypedPhone", () => {
   it("flags two or more mobile numbers as multiple", () => {
     expect(classifyTypedPhone("974710551 o 987654321")).toEqual({ kind: "multiple" });
     expect(classifyTypedPhone("974 710 551 / 987 654 321")).toEqual({ kind: "multiple" });
+    expect(classifyTypedPhone("974710551\n987654321")).toEqual({ kind: "multiple" });
   });
 
   it("stays silent on things that aren't a phone attempt", () => {
