@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { RefreshCw } from 'lucide-react'
 
@@ -16,6 +16,13 @@ import { PanelHero } from '@/components/dashboard/panel/panel-hero'
 import { AdvisorPanel } from '@/components/dashboard/panel/advisor-panel'
 import { SupervisorPanel } from '@/components/dashboard/panel/supervisor-panel'
 import { CardSkeleton } from '@/components/dashboard/panel/panel-ui'
+import {
+  DateRangeFilter,
+  presetRange,
+  rangeLabel,
+  toPanelRange,
+  type DayRange,
+} from '@/components/dashboard/panel/date-range-filter'
 
 // Role-based Panel, built only from inbox data. An Asesor (agent) gets
 // "Mi día" for their own chats; every other role gets "Supervisión" for
@@ -35,25 +42,35 @@ export default function DashboardPage() {
   const [panel, setPanel] = useState<PanelState | null>(null)
   const [error, setError] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  // Always opens on the current month so far (1st → today).
+  const [days, setDays] = useState<DayRange>(() => presetRange('month'))
+
+  // Only the newest request may write state, so a slow load for an old
+  // range can't overwrite the one the user just picked.
+  const requestId = useRef(0)
 
   const load = useCallback(async () => {
     if (!user || !accountRole) return
+    const id = ++requestId.current
     setRefreshing(true)
     try {
       const db = createClient()
-      setPanel(
+      const range = toPanelRange(days)
+      const next: PanelState =
         accountRole === 'agent'
-          ? { kind: 'advisor', data: await loadAdvisorPanel(db, user.id) }
-          : { kind: 'supervisor', data: await loadSupervisorPanel(db) },
-      )
+          ? { kind: 'advisor', data: await loadAdvisorPanel(db, user.id, range) }
+          : { kind: 'supervisor', data: await loadSupervisorPanel(db, range) }
+      if (id !== requestId.current) return
+      setPanel(next)
       setError(false)
     } catch (err) {
+      if (id !== requestId.current) return
       console.error('[dashboard] panel failed:', err)
       setError(true)
     } finally {
-      setRefreshing(false)
+      if (id === requestId.current) setRefreshing(false)
     }
-  }, [user, accountRole])
+  }, [user, accountRole, days])
 
   useEffect(() => {
     if (profileLoading) return
@@ -75,13 +92,14 @@ export default function DashboardPage() {
   const summary = panel?.data.summary ?? null
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6">
+    <div className="flex w-full flex-col gap-6">
       <PanelHero
         name={profile?.full_name ?? null}
         role={accountRole}
         lineName={account?.name ?? null}
         summary={summary}
         scope={isAdvisor ? 'own' : 'line'}
+        rangeLabel={rangeLabel(days)}
       />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -89,6 +107,8 @@ export default function DashboardPage() {
           <h2 className="text-xl font-extrabold text-foreground">{isAdvisor ? t('advisorTitle') : t('supervisorTitle')}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{isAdvisor ? t('advisorSubtitle') : t('supervisorSubtitle')}</p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        <DateRangeFilter value={days} onChange={setDays} />
         <button
           type="button"
           onClick={() => void load()}
@@ -98,6 +118,7 @@ export default function DashboardPage() {
           <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
           {t('refresh')}
         </button>
+        </div>
       </div>
 
       {error && !panel ? (

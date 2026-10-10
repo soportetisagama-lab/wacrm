@@ -181,35 +181,32 @@
         "scopeLine": "Estos números son de toda la línea.",
         "unanswered": "Sin responder",
         "conversations": "conversaciones",
-        "urgent": "Urgente",
         "waitingLong": "Esperando +15 min",
         "customers": "clientes",
-        "attention": "Atención",
         "windowsSoon": "Ventanas por vencer",
-        "windowsHint": "de 24 h, en menos de 3 h",
-        "lessThan3h": "< 3 h",
-        "closedToday": "Cerradas hoy",
-        "closedYesterday": "ayer: {n}",
-        "answeredToday": "Respondidas hoy",
-        "answeredHint": "de los clientes que escribieron hoy",
-        "noMessagesToday": "Aún no escriben clientes hoy"
+        "windowsHint": "de 24 h, quedan menos de 3 h",
+        "answeredHint": "de los clientes que escribieron",
+        "now": "Ahora",
+        "closed": "Cerradas",
+        "answered": "Respondidas",
+        "noMessages": "Ningún cliente escribió en el periodo"
       },
       "hourly": {
-        "title": "Actividad de hoy por hora",
-        "subtitle": "Mensajes que enviaste y recibiste en cada hora.",
+        "title": "Actividad por hora",
+        "subtitle": "Mensajes enviados y recibidos en cada hora del día, en el periodo.",
         "aria": "Mensajes enviados y recibidos por hora",
         "sentN": "enviados {n}",
         "receivedN": "recibidos {n}",
-        "sentToday": "enviados hoy",
-        "receivedToday": "recibidos hoy",
-        "empty": "Todavía no hay mensajes hoy.",
+        "sentToday": "enviados",
+        "receivedToday": "recibidos",
+        "empty": "No hay mensajes en el periodo.",
         "sent": "Enviados",
         "received": "Recibidos"
       },
       "heatmap": {
         "title": "Horas con más mensajes",
-        "subtitle": "Mensajes de clientes en los últimos 30 días, por día y hora.",
-        "empty": "No hay mensajes de clientes en los últimos 30 días.",
+        "subtitle": "Mensajes de clientes en el periodo, por día y hora.",
+        "empty": "No hay mensajes de clientes en el periodo.",
         "days": "Lun,Mar,Mié,Jue,Vie,Sáb,Dom",
         "cell": "{day} {hour}:00 · {n} mensajes",
         "less": "Menos",
@@ -228,19 +225,19 @@
       },
       "missedCalls": {
         "title": "Llamadas perdidas por devolver",
-        "subtitle": "Llamadas de WhatsApp sin contestar de los últimos 7 días.",
-        "empty": "No tienes llamadas pendientes de devolver.",
+        "subtitle": "Llamadas de WhatsApp sin contestar en el periodo que nadie devolvió.",
+        "empty": "No tienes llamadas pendientes de devolver en el periodo.",
         "today": "Hoy {time}",
         "callBack": "Devolver"
       },
       "response": {
         "title": "Tiempo de primera respuesta",
-        "subtitle": "Cuánto tardas en contestar cuando un cliente escribe (mediana).",
-        "empty": "Aún no hay respuestas esta semana.",
+        "subtitle": "Cuánto tardas en contestar cuando un cliente escribe (mediana del periodo).",
+        "empty": "No hay respuestas en el periodo.",
         "minutes": "{n} min",
         "hours": "{n} h",
-        "thisWeek": "últimos 7 días",
-        "vsLastWeek": "{time} vs semana anterior"
+        "thisWeek": "en el periodo",
+        "vsLastWeek": "{time} vs periodo anterior"
       },
       "cold": {
         "title": "Clientes que dejaron de responder",
@@ -262,7 +259,7 @@
       },
       "ranking": {
         "title": "Ranking de asesores",
-        "subtitle": "Este mes: conversaciones atendidas, primera respuesta, cerradas y mensajes enviados.",
+        "subtitle": "En el periodo: conversaciones atendidas, primera respuesta, cerradas y mensajes enviados.",
         "empty": "Todavía no hay asesores en esta línea.",
         "agent": "Asesor",
         "attended": "Atendidas",
@@ -293,10 +290,10 @@
       },
       "calls": {
         "title": "Llamadas del equipo",
-        "subtitle": "Llamadas de WhatsApp de los últimos 7 días por asesor.",
+        "subtitle": "Llamadas de WhatsApp del periodo por asesor.",
         "answered": "Contestadas",
         "missed": "Perdidas",
-        "empty": "No hubo llamadas en los últimos 7 días.",
+        "empty": "No hubo llamadas en el periodo.",
         "otherMember": "Otro miembro",
         "unassigned": "Sin asesor",
         "answeredN": "{n} contestadas",
@@ -304,12 +301,23 @@
       },
       "transfers": {
         "title": "Transferencias entre líneas",
-        "subtitle": "Clientes enviados a otras líneas y recibidos de ellas este mes.",
-        "empty": "No hubo transferencias este mes.",
+        "subtitle": "Clientes enviados a otras líneas y recibidos de ellas en el periodo.",
+        "empty": "No hubo transferencias en el periodo.",
         "sentN": "{n} enviados",
         "receivedN": "{n} recibidos",
         "sent": "Enviados a esa línea",
         "received": "Recibidos de esa línea"
+      },
+      "filter": {
+        "presets": "Periodo",
+        "from": "Desde",
+        "to": "Hasta",
+        "preset": {
+          "month": "Este mes",
+          "week": "Últimos 7 días",
+          "today": "Hoy",
+          "lastMonth": "Mes anterior"
+        }
       }
     }
   },
