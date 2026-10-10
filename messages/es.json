@@ -144,6 +144,173 @@
     },
     "emptyState": {
       "title": "Todavía no hay suficientes datos"
+    },
+    "panel": {
+      "seeMore": "Ver {count} más en la bandeja",
+      "advisorTitle": "Mi día",
+      "advisorSubtitle": "Lo que necesitas para atender mejor a tus clientes hoy.",
+      "supervisorTitle": "Supervisión",
+      "supervisorSubtitle": "Cómo va el equipo y qué falta asignar.",
+      "refresh": "Actualizar",
+      "errorTitle": "No se pudo cargar el panel",
+      "errorBody": "Revisa tu conexión y presiona Actualizar.",
+      "duration": {
+        "minutes": "{n} min",
+        "hoursMinutes": "{h} h {m} min",
+        "hours": "{h} h",
+        "days": "{n, plural, =1 {# día} other {# días}}"
+      },
+      "hero": {
+        "roles": {
+          "owner": "Administrador",
+          "admin": "Administrador",
+          "gerencia": "Gerencia",
+          "jefe_linea": "Jefe de línea",
+          "atc": "ATC",
+          "agent": "Asesor",
+          "viewer": "Observador",
+          "analista": "Analista"
+        },
+        "greeting": {
+          "morning": "Buenos días, {name}",
+          "afternoon": "Buenas tardes, {name}",
+          "evening": "Buenas noches, {name}"
+        },
+        "greetingNoName": "Bienvenido",
+        "scopeOwn": "Estos números son solo de tus conversaciones.",
+        "scopeLine": "Estos números son de toda la línea.",
+        "unanswered": "Sin responder",
+        "conversations": "conversaciones",
+        "urgent": "Urgente",
+        "waitingLong": "Esperando +15 min",
+        "customers": "clientes",
+        "attention": "Atención",
+        "windowsSoon": "Ventanas por vencer",
+        "windowsHint": "de 24 h, en menos de 3 h",
+        "lessThan3h": "< 3 h",
+        "closedToday": "Cerradas hoy",
+        "closedYesterday": "ayer: {n}",
+        "answeredToday": "Respondidas hoy",
+        "answeredHint": "de los clientes que escribieron hoy",
+        "noMessagesToday": "Aún no escriben clientes hoy"
+      },
+      "hourly": {
+        "title": "Actividad de hoy por hora",
+        "subtitle": "Mensajes que enviaste y recibiste en cada hora.",
+        "aria": "Mensajes enviados y recibidos por hora",
+        "sentN": "enviados {n}",
+        "receivedN": "recibidos {n}",
+        "sentToday": "enviados hoy",
+        "receivedToday": "recibidos hoy",
+        "empty": "Todavía no hay mensajes hoy.",
+        "sent": "Enviados",
+        "received": "Recibidos"
+      },
+      "heatmap": {
+        "title": "Horas con más mensajes",
+        "subtitle": "Mensajes de clientes en los últimos 30 días, por día y hora.",
+        "empty": "No hay mensajes de clientes en los últimos 30 días.",
+        "days": "Lun,Mar,Mié,Jue,Vie,Sáb,Dom",
+        "cell": "{day} {hour}:00 · {n} mensajes",
+        "less": "Menos",
+        "more": "Más"
+      },
+      "windows": {
+        "title": "Ventanas de 24 h por vencer",
+        "subtitle": "Escríbeles antes de que se cierre; después solo con plantilla.",
+        "empty": "No hay ventanas abiertas ahora.",
+        "left": "quedan {time}"
+      },
+      "waiting": {
+        "title": "Clientes esperando respuesta",
+        "subtitle": "El cliente escribió último. Los que más esperan van primero.",
+        "empty": "Nadie está esperando respuesta. ¡Buen trabajo!"
+      },
+      "missedCalls": {
+        "title": "Llamadas perdidas por devolver",
+        "subtitle": "Llamadas de WhatsApp sin contestar de los últimos 7 días.",
+        "empty": "No tienes llamadas pendientes de devolver.",
+        "today": "Hoy {time}",
+        "callBack": "Devolver"
+      },
+      "response": {
+        "title": "Tiempo de primera respuesta",
+        "subtitle": "Cuánto tardas en contestar cuando un cliente escribe (mediana).",
+        "empty": "Aún no hay respuestas esta semana.",
+        "minutes": "{n} min",
+        "hours": "{n} h",
+        "thisWeek": "últimos 7 días",
+        "vsLastWeek": "{time} vs semana anterior"
+      },
+      "cold": {
+        "title": "Clientes que dejaron de responder",
+        "subtitle": "Tú escribiste último y no contestan hace 3 días o más.",
+        "empty": "No hay clientes sin responder hace 3 días o más.",
+        "last": "Último: {text}"
+      },
+      "pinned": {
+        "title": "Fijadas y no leídas",
+        "subtitle": "Conversaciones que fijaste y las que tienen mensajes sin leer.",
+        "empty": "No tienes conversaciones fijadas ni mensajes sin leer.",
+        "pinnedChip": "Fijada",
+        "unread": "{n} sin leer"
+      },
+      "tags": {
+        "title": "Etiquetas de la bandeja",
+        "subtitle": "Cuántos de tus clientes tienen cada etiqueta.",
+        "empty": "Tus clientes aún no tienen etiquetas."
+      },
+      "ranking": {
+        "title": "Ranking de asesores",
+        "subtitle": "Este mes: conversaciones atendidas, primera respuesta, cerradas y mensajes enviados.",
+        "empty": "Todavía no hay asesores en esta línea.",
+        "agent": "Asesor",
+        "attended": "Atendidas",
+        "firstReply": "1ª respuesta",
+        "closed": "Cerradas",
+        "sent": "Enviados"
+      },
+      "queue": {
+        "title": "Cola sin asignar",
+        "subtitle": "Conversaciones abiertas que aún no tienen asesor.",
+        "count": "sin asesor ahora",
+        "oldest": "La más antigua: {time}",
+        "empty": "Todo está asignado.",
+        "since": "Esperando asesor hace {time}",
+        "assign": "Asignar"
+      },
+      "load": {
+        "title": "Carga y estado del equipo",
+        "subtitle": "Conversaciones abiertas de cada asesor y si está conectado.",
+        "online": "{n} en línea",
+        "empty": "Todavía no hay asesores en esta línea.",
+        "openN": "{n} abiertas",
+        "presence": {
+          "online": "En línea",
+          "away": "Ausente",
+          "offline": "Desconectado"
+        }
+      },
+      "calls": {
+        "title": "Llamadas del equipo",
+        "subtitle": "Llamadas de WhatsApp de los últimos 7 días por asesor.",
+        "answered": "Contestadas",
+        "missed": "Perdidas",
+        "empty": "No hubo llamadas en los últimos 7 días.",
+        "otherMember": "Otro miembro",
+        "unassigned": "Sin asesor",
+        "answeredN": "{n} contestadas",
+        "missedN": "{n} perdidas"
+      },
+      "transfers": {
+        "title": "Transferencias entre líneas",
+        "subtitle": "Clientes enviados a otras líneas y recibidos de ellas este mes.",
+        "empty": "No hubo transferencias este mes.",
+        "sentN": "{n} enviados",
+        "receivedN": "{n} recibidos",
+        "sent": "Enviados a esa línea",
+        "received": "Recibidos de esa línea"
+      }
     }
   },
   "Inbox": {
