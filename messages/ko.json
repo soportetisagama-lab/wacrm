@@ -181,35 +181,32 @@
         "scopeLine": "These numbers cover the whole line.",
         "unanswered": "Unanswered",
         "conversations": "conversations",
-        "urgent": "Urgent",
         "waitingLong": "Waiting 15+ min",
         "customers": "customers",
-        "attention": "Attention",
         "windowsSoon": "Windows closing",
         "windowsHint": "24 h windows, under 3 h left",
-        "lessThan3h": "< 3 h",
-        "closedToday": "Closed today",
-        "closedYesterday": "yesterday: {n}",
-        "answeredToday": "Answered today",
-        "answeredHint": "of customers who wrote today",
-        "noMessagesToday": "No customer messages yet today"
+        "answeredHint": "of customers who wrote",
+        "now": "Now",
+        "closed": "Closed",
+        "answered": "Answered",
+        "noMessages": "No customer wrote in this period"
       },
       "hourly": {
-        "title": "Today's activity by hour",
-        "subtitle": "Messages sent and received each hour.",
+        "title": "Activity by hour",
+        "subtitle": "Messages sent and received at each hour of the day, in the period.",
         "aria": "Messages sent and received per hour",
         "sentN": "sent {n}",
         "receivedN": "received {n}",
-        "sentToday": "sent today",
-        "receivedToday": "received today",
-        "empty": "No messages yet today.",
+        "sentToday": "sent",
+        "receivedToday": "received",
+        "empty": "No messages in this period.",
         "sent": "Sent",
         "received": "Received"
       },
       "heatmap": {
         "title": "Busiest hours",
-        "subtitle": "Customer messages over the last 30 days, by day and hour.",
-        "empty": "No customer messages in the last 30 days.",
+        "subtitle": "Customer messages in the period, by day and hour.",
+        "empty": "No customer messages in this period.",
         "days": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
         "cell": "{day} {hour}:00 · {n} messages",
         "less": "Less",
@@ -228,19 +225,19 @@
       },
       "missedCalls": {
         "title": "Missed calls to return",
-        "subtitle": "Unanswered WhatsApp calls from the last 7 days.",
-        "empty": "No calls waiting to be returned.",
+        "subtitle": "Unanswered WhatsApp calls in the period that nobody returned.",
+        "empty": "No calls waiting to be returned in this period.",
         "today": "Today {time}",
         "callBack": "Call back"
       },
       "response": {
         "title": "First reply time",
-        "subtitle": "How long it takes to answer when a customer writes (median).",
-        "empty": "No replies yet this week.",
+        "subtitle": "How long it takes to answer when a customer writes (median for the period).",
+        "empty": "No replies in this period.",
         "minutes": "{n} min",
         "hours": "{n} h",
-        "thisWeek": "last 7 days",
-        "vsLastWeek": "{time} vs previous week"
+        "thisWeek": "in the period",
+        "vsLastWeek": "{time} vs previous period"
       },
       "cold": {
         "title": "Customers who stopped replying",
@@ -262,7 +259,7 @@
       },
       "ranking": {
         "title": "Advisor ranking",
-        "subtitle": "This month: conversations handled, first reply, closed and messages sent.",
+        "subtitle": "In the period: conversations handled, first reply, closed and messages sent.",
         "empty": "No advisors on this line yet.",
         "agent": "Advisor",
         "attended": "Handled",
@@ -293,10 +290,10 @@
       },
       "calls": {
         "title": "Team calls",
-        "subtitle": "WhatsApp calls over the last 7 days per advisor.",
+        "subtitle": "WhatsApp calls in the period per advisor.",
         "answered": "Answered",
         "missed": "Missed",
-        "empty": "No calls in the last 7 days.",
+        "empty": "No calls in this period.",
         "otherMember": "Other member",
         "unassigned": "No advisor",
         "answeredN": "{n} answered",
@@ -304,12 +301,23 @@
       },
       "transfers": {
         "title": "Transfers between lines",
-        "subtitle": "Customers sent to and received from other lines this month.",
-        "empty": "No transfers this month.",
+        "subtitle": "Customers sent to and received from other lines in the period.",
+        "empty": "No transfers in this period.",
         "sentN": "{n} sent",
         "receivedN": "{n} received",
         "sent": "Sent to that line",
         "received": "Received from that line"
+      },
+      "filter": {
+        "presets": "Period",
+        "from": "From",
+        "to": "To",
+        "preset": {
+          "month": "This month",
+          "week": "Last 7 days",
+          "today": "Today",
+          "lastMonth": "Last month"
+        }
       }
     }
   },

@@ -1,9 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AccountRole } from '@/lib/auth/roles'
-import { daysAgoStart, startOfLocalDay } from './date-utils'
+import { daysAgoStart } from './date-utils'
 import {
   agentRanking,
-  answeredTodayPct,
+  answeredPct,
   callsByAgent,
   coldConversations,
   hourlyActivity,
@@ -23,6 +23,7 @@ import {
   type PanelCall,
   type PanelConversation,
   type PanelMessage,
+  type PanelRange,
   type ResponseTrend,
   type TransferRow,
   type WaitingItem,
@@ -111,14 +112,13 @@ function loadMessages(db: DB, since: Date): Promise<PanelMessage[]> {
   )
 }
 
-async function countClosed(db: DB, from: Date, to?: Date): Promise<number> {
-  let q = db
+async function countClosed(db: DB, range: PanelRange): Promise<number> {
+  const { count, error } = await db
     .from('conversations')
     .select('id', { count: 'exact', head: true })
     .eq('status', 'closed')
-    .gte('updated_at', from.toISOString())
-  if (to) q = q.lt('updated_at', to.toISOString())
-  const { count, error } = await q
+    .gte('updated_at', new Date(range.from).toISOString())
+    .lt('updated_at', new Date(range.to).toISOString())
   if (error) throw error
   return count ?? 0
 }
@@ -137,32 +137,34 @@ function loadCalls(db: DB, since: Date): Promise<PanelCall[]> {
   ).then((rows) => rows.map((r) => ({ ...r, contact: one(r.contact) })))
 }
 
+/** Live chat state (waiting, windows, gone quiet) needs ~30 days of history whatever the range. */
+const messagesSince = (from: number) => new Date(Math.min(from, daysAgoStart(30).getTime()))
+
 // ── Summary strip (both views) ─────────────────────────────
 
 export interface PanelSummary {
+  /** Live counts — always "right now", whatever the range. */
   unanswered: number
   waitingLong: number
   windowsSoon: number
-  closedToday: number
-  closedYesterday: number
-  answeredTodayPct: number | null
+  /** Range counts. */
+  closed: number
+  answeredPct: number | null
 }
 
 function summarize(
   waiting: WaitingItem[],
   windows: WindowItem[],
   messages: PanelMessage[],
-  closedToday: number,
-  closedYesterday: number,
-  now: number,
+  closed: number,
+  range: PanelRange,
 ): PanelSummary {
   return {
     unanswered: waiting.length,
     waitingLong: waiting.filter((w) => w.waitingMs >= WAIT_ALERT_MS).length,
     windowsSoon: windows.filter((w) => w.remainingMs <= WINDOW_SOON_MS).length,
-    closedToday,
-    closedYesterday,
-    answeredTodayPct: answeredTodayPct(messages, now),
+    closed,
+    answeredPct: answeredPct(messages, range),
   }
 }
 
@@ -233,28 +235,28 @@ async function loadPinnedOrUnread(db: DB, userId: string, open: PanelConversatio
   return [...pinned.map((conversation) => ({ conversation, pinned: true })), ...unread.map((conversation) => ({ conversation, pinned: false }))]
 }
 
-export async function loadAdvisorPanel(db: DB, userId: string): Promise<AdvisorPanelData> {
+export async function loadAdvisorPanel(db: DB, userId: string, range: PanelRange): Promise<AdvisorPanelData> {
   const now = Date.now()
-  const today = startOfLocalDay()
-  const [open, messages, closedToday, closedYesterday, calls, tags] = await Promise.all([
+  // The response card compares against the same-length period before the range.
+  const previousFrom = range.from - (range.to - range.from)
+  const [open, messages, closed, calls, tags] = await Promise.all([
     loadOpenConversations(db),
-    loadMessages(db, daysAgoStart(30)),
-    countClosed(db, today),
-    countClosed(db, daysAgoStart(1), today),
-    loadCalls(db, daysAgoStart(7)),
+    loadMessages(db, messagesSince(previousFrom)),
+    countClosed(db, range),
+    loadCalls(db, new Date(range.from)),
     loadTagCounts(db),
   ])
   const states = threadStates(messages)
   const waiting = waitingConversations(open, states, now)
   const windows = openWindows(open, states, now)
   return {
-    summary: summarize(waiting, windows, messages, closedToday, closedYesterday, now),
+    summary: summarize(waiting, windows, messages, closed, range),
     windows,
     waiting,
-    missedCalls: unreturnedMissedCalls(calls),
+    missedCalls: unreturnedMissedCalls(calls, range),
     cold: coldConversations(open, states, now),
-    response: responseTrend(responseSamples(messages), now),
-    hourly: hourlyActivity(messages, now),
+    response: responseTrend(responseSamples(messages), range),
+    hourly: hourlyActivity(messages, range),
     tags,
     pinnedOrUnread: await loadPinnedOrUnread(db, userId, open),
   }
@@ -282,34 +284,33 @@ export interface SupervisorPanelData {
   transfers: TransferRow[]
 }
 
-export async function loadSupervisorPanel(db: DB): Promise<SupervisorPanelData> {
+export async function loadSupervisorPanel(db: DB, range: PanelRange): Promise<SupervisorPanelData> {
   const now = Date.now()
-  const today = startOfLocalDay()
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-  const since30 = daysAgoStart(29)
-  const since = monthStart < since30 ? monthStart : since30
+  const fromIso = new Date(range.from).toISOString()
+  const toIso = new Date(range.to).toISOString()
 
-  const [open, messages, closedToday, closedYesterday, closedMonth, calls, profiles, notes] = await Promise.all([
+  const [open, messages, closed, closedRows, calls, profiles, notes] = await Promise.all([
     loadOpenConversations(db),
-    loadMessages(db, since),
-    countClosed(db, today),
-    countClosed(db, daysAgoStart(1), today),
+    loadMessages(db, messagesSince(range.from)),
+    countClosed(db, range),
     fetchAll<{ assigned_agent_id: string | null }>(() =>
       db
         .from('conversations')
         .select('assigned_agent_id')
         .eq('status', 'closed')
-        .gte('updated_at', monthStart.toISOString())
+        .gte('updated_at', fromIso)
+        .lt('updated_at', toIso)
         .order('id'),
     ),
-    loadCalls(db, daysAgoStart(6)),
+    loadCalls(db, new Date(range.from)),
     db.from('profiles').select('user_id, full_name, account_role, avatar_url'),
     fetchAll<{ note_text: string }>(() =>
       db
         .from('contact_notes')
         .select('note_text')
         .like('note_text', '🔀 Derivado%')
-        .gte('created_at', monthStart.toISOString())
+        .gte('created_at', fromIso)
+        .lt('created_at', toIso)
         .order('created_at'),
     ),
   ])
@@ -320,7 +321,7 @@ export async function loadSupervisorPanel(db: DB): Promise<SupervisorPanelData> 
   const agents = members.filter((m) => m.role === 'agent').sort((a, b) => a.name.localeCompare(b.name, 'es'))
 
   const closedByAgent = new Map<string, number>()
-  for (const r of closedMonth) {
+  for (const r of closedRows) {
     if (r.assigned_agent_id) closedByAgent.set(r.assigned_agent_id, (closedByAgent.get(r.assigned_agent_id) ?? 0) + 1)
   }
   const openByAgent = new Map<string, number>()
@@ -333,15 +334,15 @@ export async function loadSupervisorPanel(db: DB): Promise<SupervisorPanelData> 
   const windows = openWindows(open, states, now)
   return {
     loadedAt: now,
-    summary: summarize(waiting, windows, messages, closedToday, closedYesterday, now),
+    summary: summarize(waiting, windows, messages, closed, range),
     agents,
-    ranking: agentRanking(agents.map((a) => a.userId), messages, closedByAgent, monthStart.getTime()),
+    ranking: agentRanking(agents.map((a) => a.userId), messages, closedByAgent, range),
     queue: open
       .filter((c) => !c.assigned_agent_id)
       .sort((a, b) => a.created_at.localeCompare(b.created_at)),
     openByAgent,
-    heatmap: messageHeatmap(messages, since30.getTime()),
-    calls: callsByAgent(calls),
+    heatmap: messageHeatmap(messages, range),
+    calls: callsByAgent(calls.filter((c) => c.created_at < toIso)),
     transfers: transfersByLine(notes),
   }
 }
