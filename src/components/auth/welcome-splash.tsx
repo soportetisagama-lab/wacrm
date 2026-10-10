@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import Image from 'next/image';
 
 import { cn } from '@/lib/utils';
@@ -37,6 +37,17 @@ export function WelcomeSplash({ onFinish }: { onFinish: () => void }) {
     const cap = setTimeout(() => setTimedOut(true), SPLASH_MAX_WAIT_MS);
     return () => clearTimeout(cap);
   }, []);
+
+  // Holds the card's BIENVENIDO entrance (auth-logo-header.module.css)
+  // paused while the splash covers it, so it plays as the curtain
+  // opens. Layout effect so the flag is set before the first paint.
+  useLayoutEffect(() => {
+    if (exiting) return;
+    document.documentElement.dataset.splash = 'on';
+    return () => {
+      delete document.documentElement.dataset.splash;
+    };
+  }, [exiting]);
 
   useEffect(() => {
     if (!ready) return;
