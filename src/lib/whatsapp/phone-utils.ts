@@ -132,8 +132,29 @@ export type TypedPhoneResult =
  *                  message that merely contains digits).
  * The caller uses 'incomplete' / 'multiple' only to word the re-ask
  * so the customer understands what went wrong.
+ *
+ * Multi-line messages get a second look line by line: a number alone
+ * on its own line is accepted even when the other lines carry more
+ * chat or digits ("Gracias.\n943570890\nA partir de las 3:30pm").
+ * Two lines that each hold a phone count as 'multiple'.
  */
 export function classifyTypedPhone(text: string): TypedPhoneResult {
+  const whole = classifyTypedPhoneChunk(text)
+  if (whole.kind === 'phone' || whole.kind === 'multiple') return whole
+
+  const lines = (text ?? '').split(/\r?\n/).filter((l) => l.trim())
+  if (lines.length < 2) return whole
+  const phones = new Set<string>()
+  for (const line of lines) {
+    const r = classifyTypedPhoneChunk(line)
+    if (r.kind === 'phone') phones.add(r.phone)
+  }
+  if (phones.size === 1) return { kind: 'phone', phone: [...phones][0] }
+  if (phones.size > 1) return { kind: 'multiple' }
+  return whole
+}
+
+function classifyTypedPhoneChunk(text: string): TypedPhoneResult {
   if (!text) return { kind: 'none' }
   const candidates = (text.match(/\+?\d[\d\s\-().]{4,}\d/g) ?? []).filter(
     (c) => normalizePhone(c).length >= 7
