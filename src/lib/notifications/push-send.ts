@@ -43,7 +43,13 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
       tokens,
       notification: { title: payload.title, body: payload.body },
       data: payload.data,
-      android: { priority: "high" },
+      // "sagama_alerts" is created by the APK (1.6+) with the Sagama
+      // chime (res/raw/sagama.mp3); older APKs don't have it and Android
+      // falls back to the default channel and sound.
+      android: {
+        priority: "high",
+        notification: { channelId: "sagama_alerts", sound: "sagama" },
+      },
     });
 
     // Prune tokens FCM says are dead (app uninstalled, token rotated
