@@ -138,6 +138,7 @@ export function IncomingCallManager() {
       showBrowserNotification(t("incoming"), {
         body: name || t("whatsappCall"),
         tag: `call-${row.id}`,
+        sound: false,
       });
     },
     [t],

@@ -8,6 +8,7 @@ import type { AccountRole } from '@/lib/auth/roles'
 import type { PanelSummary } from '@/lib/dashboard/panel-queries'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/dashboard/skeleton'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 // The welcome card at the top of the Panel. Kept on the neutral card
 // surface — the header bar above is already the line's color — with the
@@ -30,6 +31,7 @@ const KPI_TONE: Record<KpiTone, string> = {
 
 export function PanelHero({
   name,
+  avatarUrl,
   role,
   lineName,
   summary,
@@ -37,6 +39,7 @@ export function PanelHero({
   rangeLabel,
 }: {
   name: string | null
+  avatarUrl: string | null
   role: AccountRole | null
   lineName: string | null
   summary: PanelSummary | null
@@ -58,12 +61,13 @@ export function PanelHero({
       />
 
       <div className="flex flex-col items-center gap-1.5 text-center">
-        <span
-          className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-xl font-black text-primary-foreground ring-4 ring-primary/20"
-          aria-hidden
-        >
-          {firstName?.[0]?.toUpperCase() ?? '·'}
-        </span>
+        {/* Same photo as the sidebar card; the initial when there's none. */}
+        <Avatar className="mb-1 h-14 w-14 ring-4 ring-primary/20" aria-hidden>
+          {avatarUrl ? <AvatarImage src={avatarUrl} alt="" className="object-cover" /> : null}
+          <AvatarFallback className="bg-primary text-xl font-black text-primary-foreground">
+            {firstName?.[0]?.toUpperCase() ?? '·'}
+          </AvatarFallback>
+        </Avatar>
         <h1 className="text-[26px] leading-tight font-extrabold tracking-tight text-balance text-foreground sm:text-3xl">
           {firstName ? t(`greeting.${greetingKey(now.getHours())}`, { name: firstName }) : t('greetingNoName')}
         </h1>
