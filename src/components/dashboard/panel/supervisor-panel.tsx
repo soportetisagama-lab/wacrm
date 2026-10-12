@@ -51,7 +51,8 @@ function RankingCard({ data, className }: { data: SupervisorPanelData; className
             </thead>
             <tbody>
               {data.ranking.map((r, i) => {
-                const name = agents.get(r.userId)?.name ?? '—'
+                const agent = agents.get(r.userId)
+                const name = agent?.name ?? '—'
                 return (
                   <tr key={r.userId} className="border-t border-border">
                     <td className="px-2 py-2.5">
@@ -61,7 +62,7 @@ function RankingCard({ data, className }: { data: SupervisorPanelData; className
                         >
                           {i + 1}
                         </span>
-                        <Initials seed={r.userId} name={name} className="h-8 w-8" />
+                        <Initials seed={r.userId} name={name} avatarUrl={agent?.avatarUrl} className="h-8 w-8" />
                         <span className="truncate">{name}</span>
                       </span>
                     </td>

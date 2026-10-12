@@ -12,6 +12,8 @@
  * re-prompting.
  */
 
+import { playNotificationSound } from "./sound";
+
 const STORAGE_KEY = "wacrm:notifications:enabled";
 
 export function isBrowserNotificationSupported(): boolean {
@@ -59,11 +61,15 @@ interface ShowNotificationOptions {
   body?: string;
   tag?: string;
   onClick?: () => void;
+  /** Play the notification chime (default true). Off for incoming
+   *  calls, which already ring with their own tone. */
+  sound?: boolean;
 }
 
 /** No-ops silently if unsupported, not permitted, or the user has the toggle off — callers never need to check first. */
-export function showBrowserNotification(title: string, { body, tag, onClick }: ShowNotificationOptions = {}): void {
+export function showBrowserNotification(title: string, { body, tag, onClick, sound = true }: ShowNotificationOptions = {}): void {
   if (!isNotificationEnabled()) return;
+  if (sound) playNotificationSound();
   try {
     const n = new Notification(title, {
       body,

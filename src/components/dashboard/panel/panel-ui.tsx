@@ -67,7 +67,29 @@ export function PanelCard({
   )
 }
 
-export function Initials({ seed, name, className }: { seed: string; name: string; className?: string }) {
+export function Initials({
+  seed,
+  name,
+  avatarUrl,
+  className,
+}: {
+  seed: string
+  name: string
+  /** Profile photo — shown instead of the initials when set. */
+  avatarUrl?: string | null
+  className?: string
+}) {
+  if (avatarUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatarUrl}
+        alt=""
+        className={cn('h-9 w-9 shrink-0 rounded-full object-cover', className)}
+        aria-hidden
+      />
+    )
+  }
   const initials = name
     .split(/\s+/)
     .filter(Boolean)
