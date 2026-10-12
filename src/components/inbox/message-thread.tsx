@@ -1708,7 +1708,7 @@ export function MessageThread({
           <div className="flex items-center justify-center py-12">
             <div className="border-primary h-5 w-5 animate-spin rounded-full border-2 border-t-transparent" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && threadCalls.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <p className="text-muted-foreground text-sm">
               {t('noMessagesYet')}
@@ -1721,6 +1721,15 @@ export function MessageThread({
           </div>
         ) : (
           <div className="space-y-4">
+            {/* A chat that so far is only calls (a customer who called and
+                never wrote) gets its own date separator. */}
+            {messages.length === 0 && threadCalls[0] && (
+              <div className="flex items-center justify-center">
+                <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-[10px] font-medium">
+                  {formatDateSeparator(threadCalls[0].created_at, t, embedded)}
+                </span>
+              </div>
+            )}
             {callsByAnchor.get(CALLS_START)?.map((c) => (
               <CallLogChip key={c.id} call={c} />
             ))}

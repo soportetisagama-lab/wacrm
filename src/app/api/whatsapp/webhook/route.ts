@@ -492,7 +492,7 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
     if (call.event === 'terminate') {
       const { data: row } = await admin
         .from('whatsapp_calls')
-        .select('id, status')
+        .select('id, status, direction, conversation_id, created_at')
         .eq('wa_call_id', call.id)
         .maybeSingle()
       if (!row) continue
@@ -513,6 +513,19 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
           ...(call.duration != null ? { duration_seconds: call.duration } : {}),
         })
         .eq('id', row.id)
+      // A customer who only called (never wrote) would otherwise sit in
+      // the inbox as "no messages yet" — show the call as the preview.
+      if (row.direction === 'inbound' && row.conversation_id) {
+        await admin
+          .from('conversations')
+          .update({
+            last_message_text: status === 'ended' ? '📞 Llamada de voz' : '📞 Llamada perdida',
+            last_message_at: row.created_at,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', row.conversation_id)
+          .or(`last_message_at.is.null,last_message_at.lte."${row.created_at}"`)
+      }
       continue
     }
 
