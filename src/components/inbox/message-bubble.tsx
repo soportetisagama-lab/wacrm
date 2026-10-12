@@ -7,13 +7,13 @@ import {
   Check,
   CheckCheck,
   XCircle,
-  MapPin,
   LayoutTemplate,
   CornerDownLeft,
   Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
+import { LocationBubble } from "./location-bubble";
 import { MessageReactions } from "./message-reactions";
 import {
   MediaAudioBubble,
@@ -157,12 +157,7 @@ function MessageContent({
       );
 
     case "location":
-      return (
-        <div className="flex items-center gap-2 text-sm">
-          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span>{message.content_text || t("locationShared")}</span>
-        </div>
-      );
+      return <LocationBubble text={message.content_text} t={t} />;
 
     case "interactive": {
       // Three cases share content_type='interactive':
