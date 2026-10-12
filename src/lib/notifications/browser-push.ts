@@ -12,6 +12,7 @@
  * re-prompting.
  */
 
+import { isEmbeddedApp } from "@/lib/mobile-app";
 import { playNotificationSound } from "./sound";
 
 const STORAGE_KEY = "wacrm:notifications:enabled";
@@ -68,6 +69,12 @@ interface ShowNotificationOptions {
 
 /** No-ops silently if unsupported, not permitted, or the user has the toggle off — callers never need to check first. */
 export function showBrowserNotification(title: string, { body, tag, onClick, sound = true }: ShowNotificationOptions = {}): void {
+  // The Android wrapper's WebView has no Notification API (native push
+  // covers the closed app), but with the app open the chime still plays.
+  if (isEmbeddedApp()) {
+    if (sound) playNotificationSound();
+    return;
+  }
   if (!isNotificationEnabled()) return;
   if (sound) playNotificationSound();
   try {
