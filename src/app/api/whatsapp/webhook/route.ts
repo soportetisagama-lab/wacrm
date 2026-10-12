@@ -570,8 +570,10 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
     const conversation = convResult?.conversation
     const ringUserId: string | null = conversation?.assigned_agent_id ?? null
 
-    const { error } = await admin.from('whatsapp_calls').upsert(
+    const callAt = new Date().toISOString()
+    const { data: inserted, error } = await admin.from('whatsapp_calls').upsert(
       {
+        created_at: callAt,
         account_id: config.account_id,
         conversation_id: conversation?.id ?? null,
         contact_id: outcome.contact.id,
@@ -583,10 +585,25 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
         ring_user_id: ringUserId,
       },
       { onConflict: 'wa_call_id', ignoreDuplicates: true },
-    )
+    ).select('id')
     if (error) {
       console.error('[webhook] call: failed to record incoming call:', error)
       continue
+    }
+    // Ringing shows in the inbox right away, on top of the list — a
+    // customer who calls without writing first would otherwise sit at the
+    // bottom with no preview until the call ends. Skipped on a replayed
+    // connect (nothing inserted). The terminate below swaps the text for
+    // the outcome; it matches on this same timestamp.
+    if (conversation && inserted && inserted.length > 0) {
+      await admin
+        .from('conversations')
+        .update({
+          last_message_text: '📞 Llamada entrante…',
+          last_message_at: callAt,
+          updated_at: callAt,
+        })
+        .eq('id', conversation.id)
     }
 
     // Phone in a pocket / app in the background: the assignee still
