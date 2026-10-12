@@ -498,6 +498,7 @@
       "unavailable": "{label} unavailable",
       "document": "Document",
       "locationShared": "Location shared",
+      "openInMaps": "Open in Google Maps",
       "template": "Template",
       "buttonReply": "Button reply",
       "interactiveReply": "[Interactive reply]",
