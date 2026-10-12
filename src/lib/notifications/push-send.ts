@@ -16,6 +16,12 @@ interface PushPayload {
   data?: Record<string, string>;
 }
 
+// The line's full-colour logo, shown on the right of each notification
+// (Android only allows a one-colour silhouette for the small left icon).
+// FCM fetches it, so it must be a public absolute URL.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
+const NOTIFICATION_IMAGE_URL = SITE_URL ? `${SITE_URL}/branding/icon-square.png` : undefined;
+
 const RECIPIENT_UNREGISTERED_CODES = new Set([
   "messaging/registration-token-not-registered",
   "messaging/invalid-registration-token",
@@ -48,7 +54,11 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
       // falls back to the default channel and sound.
       android: {
         priority: "high",
-        notification: { channelId: "sagama_alerts", sound: "sagama" },
+        notification: {
+          channelId: "sagama_alerts",
+          sound: "sagama",
+          ...(NOTIFICATION_IMAGE_URL ? { imageUrl: NOTIFICATION_IMAGE_URL } : {}),
+        },
       },
     });
 
