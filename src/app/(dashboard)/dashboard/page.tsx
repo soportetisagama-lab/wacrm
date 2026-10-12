@@ -95,6 +95,7 @@ export default function DashboardPage() {
     <div className="flex w-full flex-col gap-6">
       <PanelHero
         name={profile?.full_name ?? null}
+        avatarUrl={profile?.avatar_url ?? null}
         role={accountRole}
         lineName={account?.name ?? null}
         summary={summary}
