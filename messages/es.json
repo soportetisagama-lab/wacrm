@@ -341,6 +341,7 @@
       "unpinFailed": "No se pudo desanclar la conversación",
       "markAsUnread": "Marcar como no leído",
       "markAsRead": "Marcar como leído",
+      "manageTags": "Etiquetas",
       "markUnreadFailed": "No se pudo marcar la conversación",
       "pendingReply": "Falta responder",
       "agent": "Asesor",
