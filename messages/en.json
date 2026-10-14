@@ -341,6 +341,7 @@
       "unpinFailed": "Couldn't unpin the conversation",
       "markAsUnread": "Mark as unread",
       "markAsRead": "Mark as read",
+      "manageTags": "Tags",
       "markUnreadFailed": "Couldn't mark the conversation",
       "pendingReply": "Needs reply",
       "agent": "Agent",
