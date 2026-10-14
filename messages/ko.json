@@ -341,6 +341,7 @@
       "unpinFailed": "대화 고정을 해제하지 못했습니다",
       "markAsUnread": "읽지 않음으로 표시",
       "markAsRead": "읽음으로 표시",
+      "manageTags": "태그",
       "markUnreadFailed": "대화 상태를 변경하지 못했습니다",
       "pendingReply": "답장 필요",
       "agent": "상담원",

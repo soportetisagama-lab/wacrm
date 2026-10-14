@@ -54,27 +54,25 @@ interface ContactTagPickerProps {
   align?: "start" | "end";
 }
 
+type TagPickerPanelProps = Pick<
+  ContactTagPickerProps,
+  "allTags" | "selectedIds" | "onToggle" | "onCreated" | "onDeleted"
+>;
+
 /**
- * The "+" next to ETIQUETAS in the inbox contact panel: search the
- * tags this user can use and toggle them on the contact, or type a
- * new name and create it. What an advisor creates is personal (only
- * they see it); what an admin creates is shared with the team. Only
- * one's own personal tags (or, for an admin, any tag) can be deleted.
+ * Search / toggle / create body shared by the popover below and the
+ * inbox list's right-click "Etiquetas" dialog.
  */
-export function ContactTagPicker({
+export function TagPickerPanel({
   allTags,
   selectedIds,
   onToggle,
   onCreated,
   onDeleted,
-  triggerClassName,
-  triggerContent,
-  align = "end",
-}: ContactTagPickerProps) {
+}: TagPickerPanelProps) {
   const t = useTranslations("Inbox.sidebar");
   const { user, accountId, accountRole } = useAuth();
   const isAdmin = accountRole ? canCreateSharedTags(accountRole) : false;
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -130,13 +128,113 @@ export function ContactTagPicker({
   };
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setQuery("");
-      }}
-    >
+    <>
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && q && !exactExists) {
+            e.preventDefault();
+            void create();
+          }
+        }}
+        placeholder={t("tagSearch")}
+        autoFocus
+        className="w-full rounded-md border border-border bg-muted py-1.5 pl-7 pr-2 text-sm text-foreground outline-none focus:border-primary/50"
+      />
+    </div>
+
+    <ul className="max-h-60 overflow-y-auto">
+      {visible.map((tag) => {
+        const checked = selectedIds.has(tag.id);
+        return (
+          <li key={tag.id} className="group flex items-center gap-1 rounded-md hover:bg-muted">
+            <button
+              type="button"
+              onClick={() => onToggle(tag)}
+              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
+            >
+              <span
+                className={cn(
+                  "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border",
+                  checked ? "border-primary bg-primary text-primary-foreground" : "border-border",
+                )}
+              >
+                {checked && <Check className="h-2.5 w-2.5" />}
+              </span>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+              <span className="truncate">{tag.name}</span>
+              {tag.is_shared === false && (
+                <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground group-hover:bg-background">
+                  {isMine(tag) ? t("tagMine") : t("tagPersonal")}
+                </span>
+              )}
+            </button>
+            {canDelete(tag) && (
+              <button
+                type="button"
+                onClick={() => void remove(tag)}
+                aria-label={t("tagDelete")}
+                className="mr-1 rounded p-1 text-muted-foreground opacity-0 hover:text-red-400 group-hover:opacity-100 focus:opacity-100"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </li>
+        );
+      })}
+      {visible.length === 0 && !q && (
+        <li className="px-2 py-2 text-xs text-muted-foreground">{t("tagEmpty")}</li>
+      )}
+    </ul>
+
+    {q && !exactExists && (
+      <button
+        type="button"
+        onClick={() => void create()}
+        disabled={creating}
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-primary hover:bg-muted disabled:opacity-50"
+      >
+        {creating ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        ) : (
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="truncate">{t("tagCreate", { name: query.trim() })}</span>
+      </button>
+    )}
+
+    <p className="border-t border-border px-1 pt-1.5 text-[11px] text-muted-foreground">
+      {isAdmin ? t("tagHintAdmin") : t("tagHintMine")}
+    </p>
+    </>
+  );
+}
+
+/**
+ * The "+" next to ETIQUETAS in the inbox contact panel: search the
+ * tags this user can use and toggle them on the contact, or type a
+ * new name and create it. What an advisor creates is personal (only
+ * they see it); what an admin creates is shared with the team. Only
+ * one's own personal tags (or, for an admin, any tag) can be deleted.
+ */
+export function ContactTagPicker({
+  allTags,
+  selectedIds,
+  onToggle,
+  onCreated,
+  onDeleted,
+  triggerClassName,
+  triggerContent,
+  align = "end",
+}: ContactTagPickerProps) {
+  const t = useTranslations("Inbox.sidebar");
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className={
           triggerClassName ??
@@ -147,86 +245,13 @@ export function ContactTagPicker({
         {triggerContent ?? <Plus className="h-3.5 w-3.5" />}
       </PopoverTrigger>
       <PopoverContent align={align} className="w-64 gap-2 p-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && q && !exactExists) {
-                e.preventDefault();
-                void create();
-              }
-            }}
-            placeholder={t("tagSearch")}
-            autoFocus
-            className="w-full rounded-md border border-border bg-muted py-1.5 pl-7 pr-2 text-sm text-foreground outline-none focus:border-primary/50"
-          />
-        </div>
-
-        <ul className="max-h-60 overflow-y-auto">
-          {visible.map((tag) => {
-            const checked = selectedIds.has(tag.id);
-            return (
-              <li key={tag.id} className="group flex items-center gap-1 rounded-md hover:bg-muted">
-                <button
-                  type="button"
-                  onClick={() => onToggle(tag)}
-                  className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
-                >
-                  <span
-                    className={cn(
-                      "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border",
-                      checked ? "border-primary bg-primary text-primary-foreground" : "border-border",
-                    )}
-                  >
-                    {checked && <Check className="h-2.5 w-2.5" />}
-                  </span>
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
-                  <span className="truncate">{tag.name}</span>
-                  {tag.is_shared === false && (
-                    <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground group-hover:bg-background">
-                      {isMine(tag) ? t("tagMine") : t("tagPersonal")}
-                    </span>
-                  )}
-                </button>
-                {canDelete(tag) && (
-                  <button
-                    type="button"
-                    onClick={() => void remove(tag)}
-                    aria-label={t("tagDelete")}
-                    className="mr-1 rounded p-1 text-muted-foreground opacity-0 hover:text-red-400 group-hover:opacity-100 focus:opacity-100"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </li>
-            );
-          })}
-          {visible.length === 0 && !q && (
-            <li className="px-2 py-2 text-xs text-muted-foreground">{t("tagEmpty")}</li>
-          )}
-        </ul>
-
-        {q && !exactExists && (
-          <button
-            type="button"
-            onClick={() => void create()}
-            disabled={creating}
-            className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-primary hover:bg-muted disabled:opacity-50"
-          >
-            {creating ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5 shrink-0" />
-            )}
-            <span className="truncate">{t("tagCreate", { name: query.trim() })}</span>
-          </button>
-        )}
-
-        <p className="border-t border-border px-1 pt-1.5 text-[11px] text-muted-foreground">
-          {isAdmin ? t("tagHintAdmin") : t("tagHintMine")}
-        </p>
+        <TagPickerPanel
+          allTags={allTags}
+          selectedIds={selectedIds}
+          onToggle={onToggle}
+          onCreated={onCreated}
+          onDeleted={onDeleted}
+        />
       </PopoverContent>
     </Popover>
   );
