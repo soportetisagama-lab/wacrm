@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { avatarTintStyle } from "@/lib/inbox/avatar-tint";
 import { TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Conversation, Profile, Tag } from "@/types";
-import { Search, ChevronDown, X, Pin, MailOpen, Mail } from "lucide-react";
+import { Search, ChevronDown, X, Pin, MailOpen, Mail, Tag as TagIcon } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/context-menu";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 import { useAuth } from "@/hooks/use-auth";
+import { ConversationTagsDialog } from "./conversation-tags-dialog";
 
 /** Matches the DB trigger in migration 063 — kept in sync manually
  *  since there's no single source of truth shared between SQL and TS. */
@@ -932,6 +933,8 @@ function ConversationItem({
   // reset-to-0 on open; the realtime UPDATE this triggers is what actually
   // syncs the badge back into inbox/page.tsx's list state, not a local
   // optimistic update here.
+  const [tagsOpen, setTagsOpen] = useState(false);
+
   const handleToggleUnread = useCallback(async () => {
     const supabase = createClient();
     const { error } = await supabase
@@ -1121,7 +1124,19 @@ function ConversationItem({
             </>
           )}
         </ContextMenuItem>
+        {contact && (
+          <ContextMenuItem onClick={() => setTagsOpen(true)}>
+            <TagIcon /> {t("manageTags")}
+          </ContextMenuItem>
+        )}
       </ContextMenuContent>
+      {contact && (
+        <ConversationTagsDialog
+          contactId={contact.id}
+          open={tagsOpen}
+          onOpenChange={setTagsOpen}
+        />
+      )}
     </ContextMenu>
   );
 }
