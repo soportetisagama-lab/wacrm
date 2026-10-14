@@ -27,3 +27,15 @@ jobs:
             NEXT_PUBLIC_SUPABASE_URL=${{ secrets.MAXI_NEXT_PUBLIC_SUPABASE_URL }}
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.MAXI_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_SITE_URL=${{ secrets.MAXI_NEXT_PUBLIC_SITE_URL }}
+      # Despliega en EasyPanel solo después de que la imagen ya está en GHCR.
+      # Si el secreto aún no existe, se salta sin fallar el build.
+      - name: Deploy en EasyPanel
+        env:
+          DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_MAXI }}
+        run: |
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "EASYPANEL_DEPLOY_MAXI no está configurado; se omite el deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "$DEPLOY_URL" > /dev/null
+          echo "Deploy lanzado en EasyPanel."
