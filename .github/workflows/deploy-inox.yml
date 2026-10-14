@@ -1,0 +1,20 @@
+name: Deploy en EasyPanel (Sagama Inox)
+on:
+  push:
+    branches: [xlr9-inox]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # EasyPanel construye Inox desde Git: basta con avisarle del push.
+      # Si el secreto aún no existe, se salta sin fallar.
+      - name: Deploy en EasyPanel
+        env:
+          DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_INOX }}
+        run: |
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "EASYPANEL_DEPLOY_INOX no está configurado; se omite el deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "$DEPLOY_URL" > /dev/null
+          echo "Deploy lanzado en EasyPanel."
