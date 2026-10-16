@@ -1714,6 +1714,9 @@ function makeFakeDb(
      *  `flow_run_events` "handoff" row already logged for this
      *  conversation within the cooldown window. */
     recentHandoffExists?: boolean;
+    /** What `contacts.phone` holds for the run's contact. Omitted =
+     *  the contacts lookup finds nothing (every older test). */
+    contactPhone?: string | null;
   } = {},
 ) {
   const advanceSucceeds = opts.advanceSucceeds ?? true;
@@ -1765,6 +1768,9 @@ function makeFakeDb(
         return chain;
       },
       maybeSingle() {
+        if (table === "contacts" && opts.contactPhone !== undefined) {
+          return Promise.resolve({ data: { phone: opts.contactPhone }, error: null });
+        }
         return Promise.resolve({ data: null, error: null });
       },
       then(resolve: (v: { data: unknown; error: null }) => void) {
@@ -2956,6 +2962,70 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
         text: "Gracias, un asesor va a continuar tu consulta en breve.",
       }),
     );
+  });
+
+  describe("handoff node when the contact has no phone yet", () => {
+    const NO_PHONE_TEXT = expect.stringContaining("necesitamos tu número de teléfono");
+
+    async function runHandoff(
+      contactPhone: string | null | undefined,
+      config: Record<string, unknown> = { note: "escalated" },
+    ) {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+      const { db, updates } = makeFakeDb({ contactPhone });
+      const run = makeRun({ current_node_key: "topics" });
+      const node = topicsNode({ release_unmatched_text_to_assistant: true });
+      const handoffNode = makeNode({ node_key: "human_handoff", node_type: "handoff", config });
+      await handleReplyForActiveRun(
+        db,
+        run,
+        { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.2" },
+        new Map([["topics", node], ["human_handoff", handoffNode]]),
+      );
+      vi.useRealTimers();
+      return { updates };
+    }
+
+    it("asks for the number instead of just promising an advisor, and still hands off", async () => {
+      vi.mocked(engineSendText).mockClear();
+      const { updates } = await runHandoff(null);
+      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: NO_PHONE_TEXT }));
+      expect(engineSendText).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Gracias, un asesor va a continuar tu consulta en breve.",
+        }),
+      );
+      expect(
+        updates.some((u) => u.table === "conversations" && u.payload.status === "pending"),
+      ).toBe(true);
+    });
+
+    it("an empty phone counts as no phone", async () => {
+      vi.mocked(engineSendText).mockClear();
+      await runHandoff("  ");
+      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: NO_PHONE_TEXT }));
+    });
+
+    it("keeps a configured customer_message after the ask", async () => {
+      vi.mocked(engineSendText).mockClear();
+      await runHandoff(null, { customer_message: "Ya te derivo, ¡gracias!" });
+      expect(engineSendText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringMatching(/necesitamos tu número de teléfono[\s\S]*Ya te derivo, ¡gracias!/),
+        }),
+      );
+    });
+
+    it("a contact that already has a phone gets the usual message", async () => {
+      vi.mocked(engineSendText).mockClear();
+      await runHandoff("51999999999");
+      expect(engineSendText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Gracias, un asesor va a continuar tu consulta en breve.",
+        }),
+      );
+    });
   });
 
   it("a handoff node's configured customer_message is sent instead of the default", async () => {

@@ -1065,6 +1065,46 @@ export const DEFAULT_NUDGE_AFTER_MINUTES = 60;
 const DEFAULT_HANDOFF_CUSTOMER_MESSAGE =
   "Gracias, un asesor va a continuar tu consulta en breve.";
 
+/** Handoff text for a contact we still have no phone number for: the
+ *  advisor's first move is to call, so the number is asked for before
+ *  promising anything. The webhook already sends the WhatsApp "share
+ *  number" button (sendBsuidContactInfoRequest) and picks up a typed
+ *  number, so this only needs to say what to do. */
+const NO_PHONE_HANDOFF_MESSAGE =
+  "Para que un asesor pueda llamarte, necesitamos tu número de teléfono. Compártelo con el botón de WhatsApp o escríbelo aquí, y un asesor continuará tu consulta.";
+
+/** Same ask, put in front of a text the flow author wrote (or the
+ *  after-hours default) so that text still reaches the customer. */
+const NO_PHONE_HANDOFF_PREFIX =
+  "Para que un asesor pueda llamarte, necesitamos tu número de teléfono. Compártelo con el botón de WhatsApp o escríbelo aquí.";
+
+/**
+ * Customer-visible text for a handoff, adjusted when the contact has no
+ * phone yet. Contacts that already have a number — and any lookup that
+ * fails or finds nothing — get `text` unchanged, so the handoff itself
+ * is never blocked or altered by this check.
+ */
+async function handoffTextForContact(
+  db: AdminClient,
+  contactId: string | null | undefined,
+  text: string,
+): Promise<string> {
+  if (!contactId) return text;
+  try {
+    const { data } = await db
+      .from("contacts")
+      .select("phone")
+      .eq("id", contactId)
+      .maybeSingle();
+    if (!data || (data.phone ?? "").trim() !== "") return text;
+  } catch {
+    return text;
+  }
+  return text === DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+    ? NO_PHONE_HANDOFF_MESSAGE
+    : `${NO_PHONE_HANDOFF_PREFIX}\n\n${text}`;
+}
+
 /** Default for HandoffNodeConfig.customer_message_after_hours, and for
  *  the generic fallback_policy "handoff" exit outside business hours —
  *  same idea as DEFAULT_HANDOFF_CUSTOMER_MESSAGE, but for when nobody
@@ -1935,7 +1975,7 @@ async function executeHandoff(
         userId: run.user_id,
         conversationId: run.conversation_id,
         contactId: run.contact_id,
-        text: outgoingMessage,
+        text: await handoffTextForContact(db, run.contact_id, outgoingMessage),
       });
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
@@ -2103,9 +2143,13 @@ async function handOffOnHumanRequest(
         userId: input.userId,
         conversationId: input.conversationId,
         contactId: input.contactId,
-        text: isWithinBusinessHours()
-          ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
-          : fillBusinessHoursPlaceholders(DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS),
+        text: await handoffTextForContact(
+          db,
+          input.contactId,
+          isWithinBusinessHours()
+            ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+            : fillBusinessHoursPlaceholders(DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS),
+        ),
         aiGenerated: false,
       });
     } catch (err) {
@@ -2982,9 +3026,13 @@ export async function handleReplyForActiveRun(
           userId: run.user_id,
           conversationId: run.conversation_id,
           contactId: run.contact_id,
-          text: isWithinBusinessHours()
-            ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
-            : DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
+          text: await handoffTextForContact(
+            db,
+            run.contact_id,
+            isWithinBusinessHours()
+              ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+              : DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
+          ),
         });
       } catch (err) {
         await logEvent(db, run.id, "error", run.current_node_key, {
