@@ -1078,6 +1078,11 @@ const NO_PHONE_HANDOFF_MESSAGE =
 const NO_PHONE_HANDOFF_PREFIX =
   "Para que un asesor pueda llamarte, necesitamos tu número de teléfono. Compártelo con el botón de WhatsApp o escríbelo aquí.";
 
+/** After-hours text for a collect_ai handoff that gathered nothing — the
+ *  configured "ya tengo tu información" line would be false here. */
+const NO_DATA_AFTER_HOURS_HANDOFF_MESSAGE =
+  "Gracias por escribirnos. En este momento estamos fuera de nuestro horario de atención, pero ya tenemos tu solicitud: un asesor te escribirá {proxima_apertura}. Si quieres adelantar tu atención, cuéntanos por aquí qué necesitas.";
+
 /**
  * Customer-visible text for a handoff, adjusted when the contact has no
  * phone yet. Contacts that already have a number — and any lookup that
@@ -1355,6 +1360,23 @@ async function handOffFromCollectAi(
   reason: CollectAiHandoffReason,
   message?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  // A handoff that gathered NOTHING (the customer tapped "asesor" and
+  // the model gave up on the opening call, or they insisted before
+  // answering) must not claim "ya tengo tu información". On the opening
+  // turn it asks the node's first question instead — same no-AI form
+  // the node falls back to when the provider fails — so the advisor
+  // gets business context; if the customer still doesn't answer, the
+  // handoff goes through with an honest text below.
+  const noData = collectAiCollectedKeys(cfg.fields, run.vars).length === 0;
+  if (
+    noData &&
+    (reason === "model_handoff" || reason === "empty_reply") &&
+    (run.ai_turn_count ?? 0) <= 1 &&
+    run.conversation_id
+  ) {
+    return handleCollectAiWithoutAi(db, run, node, cfg, nodes);
+  }
+
   // Outside business hours, the configured after-hours text wins over
   // EVERYTHING else — including the model's own courtesy line — because
   // the model has no clock and must never be the one deciding
@@ -1365,21 +1387,31 @@ async function handOffFromCollectAi(
   // the welcome menu, and collect_ai's own continue/complete sends
   // never call isWithinBusinessHours at all.
   const afterHoursText = cfg.handoff_fallback_text_after_hours?.trim();
-  const useAfterHoursText = Boolean(afterHoursText) && !isWithinBusinessHours();
+  const useAfterHoursText =
+    Boolean(afterHoursText) && !isWithinBusinessHours() && !noData;
   // Last resort for a terminal handoff with nothing configured (e.g. the
   // AI ran out of credit mid-flow): the general assistant's closing line,
   // so the customer is never left with silence. Not when the handoff
   // advances to another node — that node sends its own message.
-  const outgoingText = useAfterHoursText
-    ? fillBusinessHoursPlaceholders(afterHoursText!)
-    : message?.trim() ||
-      cfg.handoff_fallback_text?.trim() ||
-      (cfg.handoff_node_key ? undefined : handoffClosingText());
+  const outgoingText = noData
+    ? await handoffTextForContact(
+        db,
+        run.contact_id,
+        isWithinBusinessHours()
+          ? message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+          : fillBusinessHoursPlaceholders(NO_DATA_AFTER_HOURS_HANDOFF_MESSAGE),
+      )
+    : useAfterHoursText
+      ? fillBusinessHoursPlaceholders(afterHoursText!)
+      : message?.trim() ||
+        cfg.handoff_fallback_text?.trim() ||
+        (cfg.handoff_node_key ? undefined : handoffClosingText());
   // True only when `outgoingText` actually ended up being the model's
   // own courtesy line (`message`, model_handoff only) — the static
   // `handoff_fallback_text` / after-hours fallback is author-written,
   // not AI-generated, same distinction the inbox badge relies on.
-  const usedModelMessage = !useAfterHoursText && Boolean(message?.trim());
+  const usedModelMessage =
+    !useAfterHoursText && !(noData && !isWithinBusinessHours()) && Boolean(message?.trim());
 
   // Duplicate guard — only for the TERMINAL handoff below (no
   // handoff_node_key): that's the branch that can repeat verbatim for
