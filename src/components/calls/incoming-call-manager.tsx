@@ -18,9 +18,8 @@ import { cn } from "@/lib/utils";
  * wrapper alike).
  *
  * Who rings: the conversation's Asesor (whatsapp_calls.ring_user_id).
- * Unassigned calls ring ATC right away; an assigned call its Asesor
- * doesn't pick up escalates to ATC after ESCALATE_AFTER_MS. Admins /
- * gerencia never ring. RLS already hides other Asesores' calls.
+ * Unassigned calls ring ATC; an assigned call only ever rings its
+ * Asesor, even if they don't pick up. Admins / gerencia never ring. RLS already hides other Asesores' calls.
  *
  * Answering: the customer's SDP offer came in on the webhook; we answer
  * it with a local RTCPeerConnection and hand the SDP answer to
@@ -60,8 +59,6 @@ type Pending =
 
 /** Meta gives ~30–60 s to answer; older "ringing" rows are stale. */
 const RING_WINDOW_MS = 60_000;
-/** Assigned Asesor didn't pick up → ATC starts ringing too. */
-const ESCALATE_AFTER_MS = 15_000;
 
 type Phase = "ringing" | "connecting" | "calling" | "active";
 
@@ -95,7 +92,6 @@ export function IncomingCallManager() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const escalationTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const setPhaseBoth = (p: Phase) => {
     phaseRef.current = p;
@@ -144,27 +140,14 @@ export function IncomingCallManager() {
     [t],
   );
 
-  // Should this viewer ring for this call — now, later, or never?
+  // Should this viewer ring for this call?
   const consider = useCallback(
     (row: CallRow) => {
       if (!userId || !canAct || row.status !== "ringing" || !row.offer_sdp) return;
       if (row.direction === "outbound") return;
       if (row.ring_user_id === userId || (!row.ring_user_id && isAtc)) {
         void ring(row);
-        return;
       }
-      if (!isAtc || escalationTimers.current.has(row.id)) return;
-      const age = Date.now() - new Date(row.created_at).getTime();
-      const timer = setTimeout(async () => {
-        escalationTimers.current.delete(row.id);
-        const { data } = await createClient()
-          .from("whatsapp_calls")
-          .select("*")
-          .eq("id", row.id)
-          .maybeSingle();
-        if (data?.status === "ringing") void ring(data as CallRow);
-      }, Math.max(0, ESCALATE_AFTER_MS - age));
-      escalationTimers.current.set(row.id, timer);
     },
     [userId, canAct, isAtc, ring],
   );
@@ -172,7 +155,6 @@ export function IncomingCallManager() {
   useEffect(() => {
     if (!userId) return;
     const supabase = createClient();
-    const timers = escalationTimers.current;
 
     // Opened the app from the push notification while it still rings.
     (async () => {
@@ -218,8 +200,6 @@ export function IncomingCallManager() {
 
     return () => {
       supabase.removeChannel(channel);
-      timers.forEach(clearTimeout);
-      timers.clear();
     };
   }, [userId, consider, cleanup, t]);
 
