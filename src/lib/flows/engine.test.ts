@@ -1723,6 +1723,10 @@ function makeRun(overrides: Partial<FlowRunRow> = {}): FlowRunRow {
   };
 }
 
+/** A run that already collected one field — a handoff with data to hand
+ *  over, as opposed to one where the customer hasn't answered anything. */
+const ONE_FIELD_COLLECTED = { equipos: "góndolas" };
+
 /** run.vars of a run that already used its MAX_NO_AI_QUESTIONS on the
  *  default "collect" node — the next provider failure hands off. */
 const NO_AI_FORM_ANSWERED = {
@@ -2109,7 +2113,7 @@ describe("handleCollectAiReply", () => {
 
   it("a provider failure sends handoff_fallback_text when the node configured one", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
+    const run = makeRun({ vars: { ...NO_AI_FORM_ANSWERED, ...ONE_FIELD_COLLECTED } });
     const node = makeNode({
       config: collectAiConfig({
         handoff_fallback_text: "Un asesor te va a contactar en breve para ayudarte con tu cotización.",
@@ -2152,7 +2156,7 @@ describe("handleCollectAiReply", () => {
 
   it("a provider failure with handoff_node_key configured always sends its message, even within the handoff cooldown — it's advancing to a different node, not repeating a terminal handoff", async () => {
     const { db } = makeFakeDb({ recentHandoffExists: true });
-    const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
+    const run = makeRun({ vars: { ...NO_AI_FORM_ANSWERED, ...ONE_FIELD_COLLECTED } });
     const node = makeNode({
       config: collectAiConfig({
         handoff_fallback_text: "Un asesor te va a contactar en breve.",
@@ -2170,7 +2174,7 @@ describe("handleCollectAiReply", () => {
 
   it("max_turns exhaustion sends handoff_fallback_text too, not just provider errors", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun({ ai_turn_count: 5 });
+    const run = makeRun({ ai_turn_count: 5, vars: ONE_FIELD_COLLECTED });
     const node = makeNode({
       config: collectAiConfig({ max_turns: 6, handoff_fallback_text: "Un asesor te contactará pronto." }),
     });
@@ -2185,7 +2189,7 @@ describe("handleCollectAiReply", () => {
 
   it("prefers the model's own courtesy message over handoff_fallback_text when both are available", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun();
+    const run = makeRun({ vars: ONE_FIELD_COLLECTED });
     const node = makeNode({
       config: collectAiConfig({ handoff_fallback_text: "Texto genérico del nodo." }),
     });
@@ -2346,7 +2350,7 @@ describe("handleCollectAiReply", () => {
     it("outside business hours: sends handoff_fallback_text_after_hours, overriding even the model's own courtesy message", async () => {
       vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
       const { db } = makeFakeDb();
-      const run = makeRun();
+      const run = makeRun({ vars: ONE_FIELD_COLLECTED });
       const node = makeNode({
         config: collectAiConfig({
           handoff_fallback_text: "Un asesor te contactará pronto.",
@@ -2370,7 +2374,7 @@ describe("handleCollectAiReply", () => {
     it("within business hours: unaffected — the model's courtesy message still wins as before", async () => {
       vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
       const { db } = makeFakeDb();
-      const run = makeRun();
+      const run = makeRun({ vars: ONE_FIELD_COLLECTED });
       const node = makeNode({
         config: collectAiConfig({
           handoff_fallback_text: "Un asesor te contactará pronto.",
@@ -2388,10 +2392,74 @@ describe("handleCollectAiReply", () => {
       );
     });
 
+    it("handoff with nothing collected on the opening turn asks a question instead of claiming 'ya tengo tu información'", async () => {
+      vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+      const { db } = makeFakeDb();
+      const run = makeRun({ ai_turn_count: 0 }); // the opening call is turn 1
+      const node = makeNode({
+        config: collectAiConfig({
+          handoff_fallback_text_after_hours: "¡Perfecto! Ya tengo tu información.",
+        }),
+      });
+      mockSendText.mockClear();
+      mockExtract.mockResolvedValue(extractResult({ handoff: true, replyText: "" }));
+
+      const outcome = await handleCollectAiReply(db, run, node, new Map());
+
+      expect(outcome.outcome).not.toBe("handed_off");
+      expect(mockSendText).toHaveBeenCalledTimes(1);
+      expect(mockSendText).not.toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining("Ya tengo tu información") }),
+      );
+    });
+
+    it("customer insists on an advisor before answering, out of hours: honest text, not 'ya tengo tu información'", async () => {
+      vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+      const { db } = makeFakeDb();
+      const run = makeRun({ ai_turn_count: 1 }); // second model call, still nothing collected
+      const node = makeNode({
+        config: collectAiConfig({
+          handoff_fallback_text_after_hours: "¡Perfecto! Ya tengo tu información.",
+        }),
+      });
+      mockSendText.mockClear();
+      mockExtract.mockResolvedValue(extractResult({ handoff: true, replyText: "" }));
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining("ya tenemos tu solicitud"),
+        }),
+      );
+      expect(mockSendText).not.toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining("Ya tengo tu información") }),
+      );
+    });
+
+    it("handoff with data collected still sends the 'ya tengo tu información' text out of hours", async () => {
+      vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed
+      const { db } = makeFakeDb();
+      const run = makeRun({ ai_turn_count: 1, vars: ONE_FIELD_COLLECTED });
+      const node = makeNode({
+        config: collectAiConfig({
+          handoff_fallback_text_after_hours: "¡Perfecto! Ya tengo tu información.",
+        }),
+      });
+      mockSendText.mockClear();
+      mockExtract.mockResolvedValue(extractResult({ handoff: true, replyText: "" }));
+
+      await handleCollectAiReply(db, run, node, new Map());
+
+      expect(mockSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "¡Perfecto! Ya tengo tu información." }),
+      );
+    });
+
     it("no handoff_fallback_text_after_hours configured: behavior is unchanged regardless of the time", async () => {
       vi.setSystemTime(new Date("2024-01-07T15:00:00Z")); // Sunday — closed, but irrelevant here
       const { db } = makeFakeDb();
-      const run = makeRun({ vars: NO_AI_FORM_ANSWERED });
+      const run = makeRun({ vars: { ...NO_AI_FORM_ANSWERED, ...ONE_FIELD_COLLECTED } });
       const node = makeNode({
         config: collectAiConfig({ handoff_fallback_text: "Un asesor te contactará pronto." }),
       });
