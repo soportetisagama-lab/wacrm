@@ -22,6 +22,7 @@ import { isEmbeddedApp } from "@/lib/mobile-app";
 import { showBrowserNotification } from "@/lib/notifications/browser-push";
 import { useAuth } from "@/hooks/use-auth";
 import { reportInboxThreadOpen } from "@/hooks/use-mobile-thread-open";
+import { triggerXlr8Sync } from "@/lib/xlr8/client";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -56,6 +57,11 @@ function InboxPageInner() {
   const [embedded, setEmbedded] = useState(false);
   useEffect(() => {
     setEmbedded(isEmbeddedApp());
+  }, []);
+
+  // Keep xlr8 status tags fresh (background, best-effort).
+  useEffect(() => {
+    void triggerXlr8Sync();
   }, []);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
