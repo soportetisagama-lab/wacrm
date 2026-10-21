@@ -753,7 +753,7 @@
     },
     "importModal": {
       "title": "Importar contactos",
-      "desc": "Subí un CSV con una columna obligatoria <phoneCode>phone</phoneCode>. Opcional: <nameCode>name</nameCode>, <emailCode>email</emailCode>, <companyCode>company</companyCode>, <tagsCode>tags</tagsCode> (separadas por comas; entrecomillá las celdas con varias etiquetas).",
+      "desc": "Sube un CSV con una columna obligatoria <phoneCode>phone</phoneCode>. Opcional: <nameCode>name</nameCode>, <emailCode>email</emailCode>, <companyCode>company</companyCode>, <tagsCode>tags</tagsCode> (separadas por comas; entrecomilla las celdas con varias etiquetas).",
       "uploadDropzone": "Hacé clic para elegir un archivo CSV",
       "uploadHint": ".csv hasta el límite de tu navegador",
       "rowsReady": "{count} fila lista",
@@ -929,10 +929,10 @@
   "Broadcasts": {
     "page": {
       "title": "Difusiones",
-      "subtitle": "Enviá mensajes masivos a tus contactos usando plantillas aprobadas.",
+      "subtitle": "Envía mensajes masivos a tus contactos usando plantillas aprobadas.",
       "newBroadcast": "Nueva difusión",
       "noBroadcastsYet": "Todavía no hay difusiones",
-      "createFirst": "Creá tu primera difusión para llegar a tus contactos a gran escala.",
+      "createFirst": "Crea tu primera difusión para llegar a tus contactos a gran escala.",
       "table": {
         "name": "Nombre",
         "template": "Plantilla",
@@ -999,14 +999,14 @@
     },
     "new": {
       "title": "Nueva difusión",
-      "subtitle": "Creá y enviá un mensaje de difusión a tus contactos.",
+      "subtitle": "Crea y envía un mensaje de difusión a tus contactos.",
       "steps": {
         "template": "Plantilla",
         "audience": "Audiencia",
         "personalize": "Personalizar",
         "send": "Enviar"
       },
-      "toastGiveName": "Ponele un nombre a la difusión antes de guardar un borrador.",
+      "toastGiveName": "Ponle un nombre a la difusión antes de guardar un borrador.",
       "toastNotSignedIn": "No has iniciado sesión.",
       "toastNotLinked": "Tu perfil no está vinculado a ninguna cuenta.",
       "toastFailedDraft": "Error al guardar el borrador: {error}",
@@ -1017,15 +1017,15 @@
       "back": "Atrás",
       "cancel": "Cancelar",
       "chooseTemplate": {
-        "title": "Elegí una plantilla",
-        "subtitle": "Seleccioná una plantilla de mensaje aprobada para tu difusión.",
+        "title": "Elige una plantilla",
+        "subtitle": "Selecciona una plantilla de mensaje aprobada para tu difusión.",
         "noTemplates": "No hay plantillas disponibles.",
-        "createFirst": "Creá primero una plantilla en Configuración.",
+        "createFirst": "Crea primero una plantilla en Configuración.",
         "errorLoad": "Error al cargar las plantillas"
       },
       "selectAudience": {
         "title": "Seleccionar audiencia",
-        "subtitle": "Elegí quién recibirá esta difusión.",
+        "subtitle": "Elige quién recibirá esta difusión.",
         "method": {
           "all": "Todos los contactos",
           "tags": "Filtrar por etiquetas",
@@ -1036,7 +1036,7 @@
         "allDescLoading": "Enviar a todos los contactos de tu base de datos.",
         "tagDesc": "Enviar a los contactos que coincidan con etiquetas específicas.",
         "customFieldDesc": "Enviar a los contactos que coincidan con una regla de campo personalizado.",
-        "csvDesc": "Subí un CSV con números de teléfono (y nombres opcionales).",
+        "csvDesc": "Sube un CSV con números de teléfono (y nombres opcionales).",
         "selectTags": "Seleccionar etiquetas",
         "searchTags": "Buscar etiquetas...",
         "noTagsFound": "No se encontraron etiquetas.",
@@ -1060,13 +1060,13 @@
       },
       "personalize": {
         "title": "Personalizar variables",
-        "subtitle": "Asigná las variables de tu plantilla a campos de contacto o valores estáticos.",
+        "subtitle": "Asigna las variables de tu plantilla a campos de contacto o valores estáticos.",
         "headerImage": "Imagen de encabezado",
         "headerImageDesc": "Esta plantilla requiere una imagen de encabezado.",
         "imageUrl": "URL de la imagen",
         "imageUrlPlaceholder": "https://ejemplo.com/imagen.jpg",
         "variables": "Variables",
-        "varDesc": "Definí valores para {{name}}",
+        "varDesc": "Define valores para {{name}}",
         "type": "Tipo",
         "typeStatic": "Valor estático",
         "typeContact": "Campo de contacto",
@@ -1087,7 +1087,7 @@
       },
       "scheduleSend": {
         "title": "Revisar y enviar",
-        "subtitle": "Ponele un nombre a tu difusión y confirmá el envío.",
+        "subtitle": "Ponle un nombre a tu difusión y confirma el envío.",
         "broadcastName": "Nombre de la difusión",
         "broadcastNamePlaceholder": "p. ej., Promo de verano",
         "summary": "Resumen",
@@ -1116,7 +1116,7 @@
       "retry": "Reintentar",
       "templatesTitle": "Plantillas de inicio rápido",
       "emptyTitle": "Todavía no hay automatizaciones",
-      "emptyDesc": "Elegí una plantilla de arriba o creá una desde cero.",
+      "emptyDesc": "Elige una plantilla de arriba o crea una desde cero.",
       "runs": "{count} ejecución",
       "runsPlural": "{count} ejecuciones",
       "lastRun": "última {time}",
