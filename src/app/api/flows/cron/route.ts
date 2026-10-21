@@ -17,6 +17,10 @@ import { generateNudge } from '@/lib/ai/nudge'
 import { logAiUsage } from '@/lib/ai/usage'
 import { remindPendingReplies } from '@/lib/notifications/pending-replies'
 import { internalCronState, isAuthorizedCronSecret } from '@/lib/cron/internal'
+import { runXlr8SyncIfDue } from '@/lib/xlr8/sync'
+
+/** xlr8 status → tag sync rides on this cron, at most every 5 min. */
+const XLR8_SYNC_EVERY_MS = 5 * 60_000
 
 /**
  * Sweep abandoned active flow runs, nudge collect_ai runs that have gone
@@ -102,6 +106,10 @@ async function runFlowsCron(): Promise<Response> {
 
   // Rides on this cron's schedule; throttles itself to every 10 min.
   await remindPendingReplies(admin, now)
+
+  // Fire-and-forget: a slow or failing xlr8 fetch must never hold up or
+  // break the jobs below. runXlr8SyncIfDue never throws.
+  void runXlr8SyncIfDue(admin, XLR8_SYNC_EVERY_MS)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
