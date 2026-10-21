@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { triggerXlr8Sync } from '@/lib/xlr8/client';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -91,6 +92,8 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  /** Bumped when the background xlr8 sync changed status tags. */
+  const [syncTick, setSyncTick] = useState(0);
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -107,7 +110,7 @@ export function Step2SelectAudience({
       }
     }
     fetchTags();
-  }, []);
+  }, [syncTick]);
 
   // Lazy-load custom fields only when that audience type is active.
   useEffect(() => {
@@ -213,6 +216,26 @@ export function Step2SelectAudience({
   useEffect(() => {
     fetchEstimatedCount();
   }, [fetchEstimatedCount]);
+
+  // Latest estimator, for the async xlr8-sync callback below.
+  const estimateRef = useRef(fetchEstimatedCount);
+  useEffect(() => {
+    estimateRef.current = fetchEstimatedCount;
+  }, [fetchEstimatedCount]);
+
+  // Refresh xlr8 status tags (NO CONTESTADO, etc.) in the background; if
+  // anything changed, reload the tag list and the estimate.
+  useEffect(() => {
+    let cancelled = false;
+    triggerXlr8Sync().then((changed) => {
+      if (!changed || cancelled) return;
+      setSyncTick((n) => n + 1);
+      void estimateRef.current();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function toggleTag(tagId: string) {
     const current = audience.tagIds ?? [];
