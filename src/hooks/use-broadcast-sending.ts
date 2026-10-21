@@ -4,6 +4,13 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Contact, MessageTemplate } from '@/types';
+import {
+  ID_CHUNK,
+  chunk,
+  fetchAllPages,
+  fetchCustomFieldContactIds,
+  fetchTaggedContactIds,
+} from '@/lib/broadcasts/audience';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -128,23 +135,44 @@ async function fetchCustomValueIndex(
   const index: CustomValueIndex = new Map();
   if (contactIds.length === 0) return index;
 
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
-  const PAGE = 500;
-  for (let i = 0; i < contactIds.length; i += PAGE) {
-    const slice = contactIds.slice(i, i + PAGE);
-    const { data } = await supabase
-      .from('contact_custom_values')
-      .select('contact_id, custom_field_id, value')
-      .in('contact_id', slice);
+  // Chunk the id list (URL length) and page each chunk (1000-row cap:
+  // a contact can have several custom values).
+  for (const slice of chunk(contactIds, ID_CHUNK)) {
+    const rows = await fetchAllPages<{ contact_id: string; custom_field_id: string; value: string | null }>(
+      (from, to) =>
+        supabase
+          .from('contact_custom_values')
+          .select('contact_id, custom_field_id, value')
+          .in('contact_id', slice)
+          .order('id', { ascending: true })
+          .range(from, to),
+    );
 
-    for (const row of data ?? []) {
+    for (const row of rows) {
       const bucket = index.get(row.contact_id) ?? new Map<string, string>();
       bucket.set(row.custom_field_id, row.value ?? '');
       index.set(row.contact_id, bucket);
     }
   }
   return index;
+}
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Full contact rows for `ids`, in chunks small enough for the URL. */
+async function fetchContactsByIds(
+  supabase: ReturnType<typeof createClient>,
+  ids: string[],
+): Promise<Contact[]> {
+  const out: Contact[] = [];
+  for (const slice of chunk(ids, ID_CHUNK)) {
+    const { data, error } = await supabase.from('contacts').select('*').in('id', slice);
+    if (error) throw new Error(`No se pudieron cargar los contactos: ${error.message}`);
+    out.push(...((data ?? []) as Contact[]));
+  }
+  return out;
 }
 
 export function useBroadcastSending(): UseBroadcastSendingReturn {
@@ -158,33 +186,25 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     let contacts: Contact[] = [];
 
     if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
+      try {
+        contacts = await fetchAllPages<Contact>((from, to) =>
+          supabase.from('contacts').select('*').order('id', { ascending: true }).range(from, to),
+        );
+      } catch (err) {
+        throw new Error(`No se pudieron cargar los contactos: ${errText(err)}`);
+      }
     } else if (
       audience.type === 'tags' &&
       audience.tagIds &&
       audience.tagIds.length > 0
     ) {
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.tagIds);
-
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
-        const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
-        ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
+      let taggedIds: Set<string>;
+      try {
+        taggedIds = await fetchTaggedContactIds(supabase, audience.tagIds);
+      } catch (err) {
+        throw new Error(`No se pudieron cargar las etiquetas de los contactos: ${errText(err)}`);
       }
+      contacts = await fetchContactsByIds(supabase, [...taggedIds]);
     } else if (audience.type === 'custom_field' && audience.customField) {
       contacts = await resolveCustomFieldAudience(supabase, audience.customField);
     } else if (audience.type === 'csv' && audience.csvContacts) {
@@ -194,11 +214,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     // Apply exclude tags (works across all contact-derived audience
     // types). CSV contacts are synthetic so exclusion doesn't apply.
     if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
+      let excludedIds: Set<string>;
+      try {
+        excludedIds = await fetchTaggedContactIds(supabase, audience.excludeTagIds);
+      } catch (err) {
+        // Sending to contacts that should be excluded is worse than not
+        // sending at all — abort instead of ignoring the error.
+        throw new Error(`No se pudieron cargar las etiquetas a excluir: ${errText(err)}`);
+      }
       contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
 
@@ -227,10 +250,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     } = await supabase.auth.getSession();
     const user = session?.user;
     if (!user) {
-      throw new Error('You are not signed in.');
+      throw new Error('No has iniciado sesión.');
     }
     if (!accountId) {
-      throw new Error('Your profile is not linked to an account.');
+      throw new Error('Tu perfil no está vinculado a ninguna cuenta.');
     }
 
     // De-duplicate by phone within the CSV (users can paste duplicates).
@@ -240,19 +263,20 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     }
     const phones = [...uniqueByPhone.keys()];
 
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
-
+    // Look up existing contacts by phone, chunked (URL length).
     const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
-      if (c.phone) byPhone.set(c.phone, c);
+    for (const slice of chunk(phones, ID_CHUNK)) {
+      const { data: existing, error: lookupErr } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('phone', slice);
+      if (lookupErr) {
+        throw new Error(`No se pudieron buscar los contactos del CSV: ${lookupErr.message}`);
+      }
+      for (const c of (existing ?? []) as Contact[]) {
+        if (c.phone) byPhone.set(c.phone, c);
+      }
     }
 
     // Insert only missing contacts, in one batch per 200 rows (PostgREST
@@ -274,7 +298,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert(chunk)
         .select();
       if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
+        throw new Error(`No se pudieron crear los contactos del CSV: ${insertErr.message}`);
       }
       for (const c of (inserted ?? []) as Contact[]) {
         if (c.phone) byPhone.set(c.phone, c);
@@ -291,33 +315,15 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     supabase: ReturnType<typeof createClient>,
     filter: CustomFieldFilter,
   ): Promise<Contact[]> {
-    const { fieldId, operator, value } = filter;
-
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
-
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains') query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
-    if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
+    // eq/neq/ilike per operator ("contains" is case-insensitive), paged.
+    let contactIds: Set<string>;
+    try {
+      contactIds = await fetchCustomFieldContactIds(supabase, filter);
+    } catch (err) {
+      throw new Error(`Falló el filtro por campo personalizado: ${errText(err)}`);
+    }
+    if (contactIds.size === 0) return [];
+    return fetchContactsByIds(supabase, [...contactIds]);
   }
 
   async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
@@ -337,10 +343,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       } = await supabase.auth.getSession();
       const user = session?.user;
       if (!user) {
-        throw new Error('You are not signed in.');
+        throw new Error('No has iniciado sesión.');
       }
       if (!accountId) {
-        throw new Error('Your profile is not linked to an account.');
+        throw new Error('Tu perfil no está vinculado a ninguna cuenta.');
       }
 
       // ── Step 1: Resolve audience contacts ─────────────────────────
@@ -348,7 +354,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const contacts = await resolveAudience(payload.audience);
 
       if (contacts.length === 0) {
-        throw new Error('No contacts found for this audience.');
+        throw new Error('No se encontraron contactos para esta audiencia.');
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────
@@ -381,7 +387,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       if (broadcastError || !broadcast) {
         throw new Error(
-          `Failed to create broadcast: ${broadcastError?.message ?? 'unknown error'}`,
+          `No se pudo crear la difusión: ${broadcastError?.message ?? 'error desconocido'}`,
         );
       }
 
@@ -412,20 +418,26 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             })
             .eq('id', broadcast.id);
           throw new Error(
-            `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
+            `No se pudo guardar el lote de destinatarios ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
       }
 
       // ── Step 4: Fetch recipients (joined contact) + preload custom values
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
-
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
+      type RecipientRow = { id: string; contact: Contact | null };
+      let recipients: RecipientRow[];
+      try {
+        recipients = await fetchAllPages<RecipientRow>((from, to) =>
+          supabase
+            .from('broadcast_recipients')
+            .select('*, contact:contacts(*)')
+            .eq('broadcast_id', broadcast.id)
+            .order('id', { ascending: true })
+            .range(from, to),
+        );
+      } catch {
+        throw new Error('No se pudieron cargar los destinatarios de la difusión.');
       }
 
       // One bulk fetch of custom values for every contact in this
@@ -487,7 +499,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           const data = await res.json();
 
           if (!res.ok) {
-            throw new Error(data.error || 'Broadcast API request failed');
+            throw new Error(data.error || 'Falló el envío de la difusión');
           }
 
           const resultsByPhone = new Map<string, BroadcastApiResult>();
@@ -505,7 +517,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                 .from('broadcast_recipients')
                 .update({
                   status: 'failed',
-                  error_message: 'No phone number on contact',
+                  error_message: 'El contacto no tiene número de teléfono',
                 })
                 .eq('id', recipient.id);
               continue;
@@ -527,7 +539,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                 .from('broadcast_recipients')
                 .update({
                   status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
+                  error_message: result.error ?? 'Error desconocido',
                 })
                 .eq('id', recipient.id);
             }
@@ -539,7 +551,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               .from('broadcast_recipients')
               .update({
                 status: 'failed',
-                error_message: err instanceof Error ? err.message : 'Unknown error',
+                error_message: err instanceof Error ? err.message : 'Error desconocido',
               })
               .eq('id', recipient.id);
           }
