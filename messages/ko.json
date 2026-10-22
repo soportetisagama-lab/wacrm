@@ -407,6 +407,17 @@
       "xmRemaining": "{minutes}분 남음",
       "noCustomerMessages": "고객 메시지 없음"
     },
+    "imageEditor": {
+      "title": "이미지 편집",
+      "cancel": "취소",
+      "done": "완료",
+      "rotate": "회전",
+      "crop": "자르기",
+      "draw": "그리기",
+      "undo": "실행 취소",
+      "ratioFree": "자유",
+      "applyCrop": "자르기 적용"
+    },
     "composer": {
       "draftHint": "✨를 눌러 AI로 답장 초안을 작성하세요 — 보내기 전에 수정할 수 있습니다",
       "sessionExpiredHint": "24시간 세션이 만료되었습니다. 다시 연결하려면 템플릿을 사용하세요.",
@@ -438,6 +449,7 @@
       "draftWithAI": "AI로 답장 초안 작성",
       "addCaption": "캡션 추가…",
       "removeAttachment": "첨부 파일 제거",
+      "editImage": "이미지 편집",
       "tooManyAttachments": "한 번에 최대 {max}개의 파일을 첨부할 수 있습니다.",
       "addMoreAttachments": "더 추가",
       "moreActions": "더보기",
