@@ -325,7 +325,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
         aria-label={t('closeMenu')}
         onClick={onClose}
         className={cn(
-          'bg-background/70 fixed inset-0 z-30 backdrop-blur-sm transition-opacity lg:hidden',
+          'bg-background/80 fixed inset-0 z-30 transition-opacity lg:hidden',
           open
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'

@@ -59,9 +59,17 @@ function InboxPageInner() {
     setEmbedded(isEmbeddedApp());
   }, []);
 
-  // Keep xlr8 status tags fresh (background, best-effort).
+  // Keep xlr8 status tags fresh (background, best-effort). Deferred until
+  // the browser is idle so it never competes with loading the chats
+  // themselves on slow phones / networks.
   useEffect(() => {
-    void triggerXlr8Sync();
+    const run = () => void triggerXlr8Sync();
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 8000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(run, 4000);
+    return () => clearTimeout(id);
   }, []);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
