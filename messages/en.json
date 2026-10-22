@@ -76,7 +76,8 @@
     "fullscreenEnter": "Enter fullscreen",
     "fullscreenExit": "Exit fullscreen",
     "collapseSidebar": "Collapse sidebar",
-    "expandSidebar": "Expand sidebar"
+    "expandSidebar": "Expand sidebar",
+    "linePhone": "Phone number"
   },
   "ModeToggle": {
     "switchMode": "Switch to {mode} mode"

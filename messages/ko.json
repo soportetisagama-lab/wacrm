@@ -76,7 +76,8 @@
     "fullscreenEnter": "전체 화면",
     "fullscreenExit": "전체 화면 종료",
     "collapseSidebar": "사이드바 접기",
-    "expandSidebar": "사이드바 펼치기"
+    "expandSidebar": "사이드바 펼치기",
+    "linePhone": "휴대폰 번호"
   },
   "ModeToggle": {
     "switchMode": "{mode} 모드로 전환"
