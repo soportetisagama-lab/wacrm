@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   CONVERSATION_SELECT,
@@ -844,7 +844,9 @@ export function ConversationList({
                     : null
                 }
                 badgeTags={
-                  isAgent && conv.assigned_agent_id === user?.id ? (conv.contact?.tags ?? []) : []
+                  isAgent && conv.assigned_agent_id === user?.id
+                    ? (conv.contact?.tags ?? NO_TAGS)
+                    : NO_TAGS
                 }
               />
             ))}
@@ -854,6 +856,9 @@ export function ConversationList({
     </div>
   );
 }
+
+/** Stable empty list so memoised rows don't see a "new" prop each render. */
+const NO_TAGS: Tag[] = [];
 
 interface ConversationItemProps {
   conversation: Conversation;
@@ -869,7 +874,9 @@ interface ConversationItemProps {
   badgeTags: Tag[];
 }
 
-function ConversationItem({
+/** Memoised: on a realtime update only the touched row re-renders, not
+ *  the whole list (noticeable with many chats on modest phones). */
+const ConversationItem = memo(function ConversationItem({
   conversation,
   isActive,
   onSelect,
@@ -993,6 +1000,8 @@ function ConversationItem({
           <img
             src={contact.avatar_url}
             alt={displayName}
+            loading="lazy"
+            decoding="async"
             className={cn("rounded-full object-cover", avatarSize)}
           />
         ) : (
@@ -1139,4 +1148,4 @@ function ConversationItem({
       )}
     </ContextMenu>
   );
-}
+});
