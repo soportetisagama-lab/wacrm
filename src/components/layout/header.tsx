@@ -21,6 +21,7 @@ import {
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { FullscreenToggle } from "@/components/layout/fullscreen-toggle";
 import { SidebarCollapseToggle } from "@/components/layout/sidebar-collapse-toggle";
+import { LinePhoneBadge } from "@/components/layout/line-phone-badge";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
@@ -107,6 +108,8 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5">
+        <LinePhoneBadge />
+
         <ModeToggle className="h-10 w-10 shrink-0 rounded-full border-0 bg-white/20 text-white transition-all duration-300 hover:scale-[1.07] hover:bg-white/30" />
 
         {/* Notifications — same unread count the sidebar's nav item
