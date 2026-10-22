@@ -34,8 +34,11 @@ export function LinePhoneBadge() {
         if (cancelled || !data) return;
         const formatted = formatLinePhone(data.display_phone_number);
         setPhone(formatted);
+        // Only cache a real number: a transient Meta failure must not
+        // hide the badge for the rest of the session.
+        if (!formatted) return;
         try {
-          sessionStorage.setItem(STORAGE_KEY, formatted ?? "");
+          sessionStorage.setItem(STORAGE_KEY, formatted);
         } catch {
           // ignore
         }
