@@ -415,6 +415,8 @@
       "crop": "Crop",
       "draw": "Draw",
       "undo": "Undo",
+      "erase": "Erase",
+      "clearAll": "Erase all",
       "ratioFree": "Free",
       "applyCrop": "Apply crop"
     },
