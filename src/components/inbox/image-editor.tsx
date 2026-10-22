@@ -11,9 +11,11 @@ import { createPortal } from "react-dom";
 import {
   Check,
   Crop,
+  Eraser,
   Loader2,
   Pencil,
   RotateCw,
+  Trash2,
   Undo2,
   X,
 } from "lucide-react";
@@ -25,19 +27,25 @@ import { cn } from "@/lib/utils";
  * fixed ratio), rotate 90°, and freehand drawing with a few colours, with
  * undo. Plain <canvas>, no dependencies.
  *
- * Model: the original (downscaled) image plus a list of operations. The
- * view canvas always holds the result of replaying them; a new stroke is
- * painted straight onto it while the finger moves, and undo / rotate /
- * crop replay the list from the original. Coordinates are stored
- * normalised (0..1) so they survive any display size.
+ * Model: the original (downscaled) image plus a list of operations. Two
+ * stacked canvases show the result of replaying them: the image (rotated
+ * / cropped) and, on top, a transparent drawing layer. Strokes go on the
+ * layer, so the eraser (destination-out) removes only what was drawn and
+ * reveals the untouched photo underneath. A new stroke is painted
+ * straight onto the layer while the finger moves; undo / rotate / crop /
+ * clear replay the list. Coordinates are stored normalised (0..1) so they
+ * survive any display size.
  */
 
 type Op =
   | { type: "rotate" }
   | { type: "crop"; x: number; y: number; w: number; h: number }
-  | { type: "stroke"; color: string; size: number; points: number[] };
+  | { type: "stroke"; color: string; size: number; points: number[]; erase?: boolean }
+  | { type: "clear" };
 
-type Mode = "draw" | "crop";
+type StrokeOp = Extract<Op, { type: "stroke" }>;
+
+type Mode = "draw" | "erase" | "crop";
 
 interface CropRect {
   x: number;
@@ -51,6 +59,8 @@ interface CropRect {
 const MAX_SIDE = 2048;
 /** Stroke width relative to the longest side of the image. */
 const STROKE_SIZE = 0.012;
+/** Eraser width, same unit — thicker so it's easy to hit a line. */
+const ERASE_SIZE = 0.05;
 const MIN_CROP = 0.06;
 const COLORS = ["#ffffff", "#000000", "#ef4444", "#facc15", "#22c55e", "#3b82f6", "#ec4899"];
 const RATIOS: { key: string; value: number | null }[] = [
@@ -68,10 +78,11 @@ function makeCanvas(w: number, h: number) {
   return c;
 }
 
-function drawStroke(ctx: CanvasRenderingContext2D, op: Extract<Op, { type: "stroke" }>, w: number, h: number) {
+function drawStroke(ctx: CanvasRenderingContext2D, op: StrokeOp, w: number, h: number) {
   const pts = op.points;
   if (pts.length < 2) return;
   ctx.save();
+  if (op.erase) ctx.globalCompositeOperation = "destination-out";
   ctx.strokeStyle = op.color;
   ctx.fillStyle = op.color;
   ctx.lineWidth = op.size * Math.max(w, h);
@@ -90,40 +101,58 @@ function drawStroke(ctx: CanvasRenderingContext2D, op: Extract<Op, { type: "stro
   ctx.restore();
 }
 
-function replay(source: HTMLCanvasElement, ops: Op[]): HTMLCanvasElement {
-  let cur = source;
-  let owned = false;
-  const ensureOwned = () => {
-    if (owned) return;
-    const c = makeCanvas(cur.width, cur.height);
-    c.getContext("2d")!.drawImage(cur, 0, 0);
-    cur = c;
-    owned = true;
-  };
+interface Rendered {
+  image: HTMLCanvasElement;
+  layer: HTMLCanvasElement;
+}
+
+function rotateCanvas(src: HTMLCanvasElement) {
+  const c = makeCanvas(src.height, src.width);
+  const ctx = c.getContext("2d")!;
+  ctx.translate(c.width, 0);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(src, 0, 0);
+  return c;
+}
+
+function cropCanvas(src: HTMLCanvasElement, op: Extract<Op, { type: "crop" }>) {
+  const sx = op.x * src.width;
+  const sy = op.y * src.height;
+  const sw = op.w * src.width;
+  const sh = op.h * src.height;
+  const c = makeCanvas(sw, sh);
+  c.getContext("2d")!.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+
+/** Replay the ops: image + drawing layer, transformed together. */
+function replay(source: HTMLCanvasElement, ops: Op[]): Rendered {
+  let image = source;
+  let layer = makeCanvas(source.width, source.height);
   for (const op of ops) {
     if (op.type === "rotate") {
-      const c = makeCanvas(cur.height, cur.width);
-      const ctx = c.getContext("2d")!;
-      ctx.translate(c.width, 0);
-      ctx.rotate(Math.PI / 2);
-      ctx.drawImage(cur, 0, 0);
-      cur = c;
-      owned = true;
+      image = rotateCanvas(image);
+      layer = rotateCanvas(layer);
     } else if (op.type === "crop") {
-      const sx = op.x * cur.width;
-      const sy = op.y * cur.height;
-      const sw = op.w * cur.width;
-      const sh = op.h * cur.height;
-      const c = makeCanvas(sw, sh);
-      c.getContext("2d")!.drawImage(cur, sx, sy, sw, sh, 0, 0, c.width, c.height);
-      cur = c;
-      owned = true;
+      image = cropCanvas(image, op);
+      layer = cropCanvas(layer, op);
+    } else if (op.type === "clear") {
+      layer.getContext("2d")!.clearRect(0, 0, layer.width, layer.height);
     } else {
-      ensureOwned();
-      drawStroke(cur.getContext("2d")!, op, cur.width, cur.height);
+      drawStroke(layer.getContext("2d")!, op, layer.width, layer.height);
     }
   }
-  return cur;
+  return { image, layer };
+}
+
+/** True when the drawing layer currently has something to erase/clear. */
+function hasDrawing(ops: Op[]): boolean {
+  for (let i = ops.length - 1; i >= 0; i--) {
+    const op = ops[i];
+    if (op.type === "clear") return false;
+    if (op.type === "stroke" && !op.erase) return true;
+  }
+  return false;
 }
 
 function loadSource(file: File): Promise<HTMLCanvasElement> {
@@ -174,6 +203,8 @@ export function ImageEditor({
 }) {
   const t = useTranslations("Inbox.imageEditor");
   const viewRef = useRef<HTMLCanvasElement>(null);
+  const layerRef = useRef<HTMLCanvasElement>(null);
+  const eraserCursorRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<HTMLCanvasElement | null>(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -185,12 +216,16 @@ export function ImageEditor({
 
   const paint = useCallback((list: Op[]) => {
     const view = viewRef.current;
+    const layer = layerRef.current;
     const source = sourceRef.current;
-    if (!view || !source) return;
-    const result = replay(source, list);
-    view.width = result.width;
-    view.height = result.height;
-    view.getContext("2d")!.drawImage(result, 0, 0);
+    if (!view || !layer || !source) return;
+    const { image, layer: drawn } = replay(source, list);
+    view.width = image.width;
+    view.height = image.height;
+    view.getContext("2d")!.drawImage(image, 0, 0);
+    layer.width = drawn.width;
+    layer.height = drawn.height;
+    layer.getContext("2d")!.drawImage(drawn, 0, 0);
   }, []);
 
   useEffect(() => {
@@ -260,6 +295,10 @@ export function ImageEditor({
     if (view) setCrop(fitCrop(value, view.width, view.height));
   }, []);
 
+  const clearDrawing = useCallback(() => {
+    if (hasDrawing(opsRef.current)) pushOp({ type: "clear" }, true);
+  }, [pushOp]);
+
   const applyCrop = useCallback(() => {
     const full = crop.x <= 0.001 && crop.y <= 0.001 && crop.w >= 0.999 && crop.h >= 0.999;
     if (!full) pushOp({ type: "crop", ...crop }, true);
@@ -276,37 +315,68 @@ export function ImageEditor({
     return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1)] as const;
   };
 
+  const liveStroke = (points: number[]): StrokeOp => ({
+    type: "stroke",
+    color,
+    size: mode === "erase" ? ERASE_SIZE : STROKE_SIZE,
+    points,
+    erase: mode === "erase" || undefined,
+  });
+
+  // Eraser ring: follows the pointer at the eraser's on-screen size.
+  // Written straight to the DOM — no re-render per move.
+  const moveEraserCursor = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const ring = eraserCursorRef.current;
+    if (!ring) return;
+    if (mode !== "erase") {
+      ring.style.display = "none";
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    const size = ERASE_SIZE * Math.max(r.width, r.height);
+    ring.style.display = "block";
+    ring.style.width = `${size}px`;
+    ring.style.height = `${size}px`;
+    ring.style.transform = `translate(${e.clientX - r.left - size / 2}px, ${e.clientY - r.top - size / 2}px)`;
+  };
+
+  const hideEraserCursor = () => {
+    if (eraserCursorRef.current) eraserCursorRef.current.style.display = "none";
+  };
+
   const onDrawDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (mode !== "draw" || !ready || strokeRef.current) return;
+    if ((mode !== "draw" && mode !== "erase") || !ready || strokeRef.current) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    moveEraserCursor(e);
     const [x, y] = toNorm(e);
     strokeRef.current = { points: [x, y], id: e.pointerId };
-    const view = viewRef.current!;
-    drawStroke(view.getContext("2d")!, { type: "stroke", color, size: STROKE_SIZE, points: [x, y] }, view.width, view.height);
+    const layer = layerRef.current!;
+    drawStroke(layer.getContext("2d")!, liveStroke([x, y]), layer.width, layer.height);
   };
 
   const onDrawMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    moveEraserCursor(e);
     const s = strokeRef.current;
     if (!s || s.id !== e.pointerId) return;
-    const view = viewRef.current!;
+    const layer = layerRef.current!;
     const n = s.points.length;
     const [x, y] = toNorm(e);
-    const ctx = view.getContext("2d")!;
     drawStroke(
-      ctx,
-      { type: "stroke", color, size: STROKE_SIZE, points: [s.points[n - 2], s.points[n - 1], x, y] },
-      view.width,
-      view.height,
+      layer.getContext("2d")!,
+      liveStroke([s.points[n - 2], s.points[n - 1], x, y]),
+      layer.width,
+      layer.height,
     );
     s.points.push(x, y);
   };
 
   const onDrawUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType !== "mouse") hideEraserCursor();
     const s = strokeRef.current;
     if (!s || s.id !== e.pointerId) return;
     strokeRef.current = null;
-    pushOp({ type: "stroke", color, size: STROKE_SIZE, points: s.points }, false);
+    pushOp(liveStroke(s.points), false);
   };
 
   // ---- Crop box dragging ----------------------------------------------
@@ -376,7 +446,11 @@ export function ImageEditor({
       return;
     }
     setSaving(true);
-    const blob = await new Promise<Blob | null>((resolve) => view.toBlob(resolve, "image/jpeg", 0.9));
+    const out = makeCanvas(view.width, view.height);
+    const octx = out.getContext("2d")!;
+    octx.drawImage(view, 0, 0);
+    if (layerRef.current) octx.drawImage(layerRef.current, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, "image/jpeg", 0.9));
     if (!blob) {
       setSaving(false);
       onCancel();
@@ -428,14 +502,26 @@ export function ImageEditor({
         <div className={cn("relative", !ready && "hidden")}>
           <canvas
             ref={viewRef}
+            className="block max-h-[calc(100dvh-13rem)] max-w-[calc(100vw-1.5rem)]"
+          />
+          {/* Drawing layer — same pixel size as the image, stretched over it. */}
+          <canvas
+            ref={layerRef}
             onPointerDown={onDrawDown}
             onPointerMove={onDrawMove}
             onPointerUp={onDrawUp}
             onPointerCancel={onDrawUp}
+            onPointerLeave={hideEraserCursor}
             className={cn(
-              "block max-h-[calc(100dvh-13rem)] max-w-[calc(100vw-1.5rem)] touch-none",
+              "absolute inset-0 h-full w-full touch-none",
               mode === "draw" && "cursor-crosshair",
+              mode === "erase" && "cursor-none",
             )}
+          />
+          <div
+            ref={eraserCursorRef}
+            aria-hidden
+            className="pointer-events-none absolute top-0 left-0 hidden rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
           />
           {mode === "crop" && (
             <div
@@ -480,7 +566,17 @@ export function ImageEditor({
 
       {/* Mode options */}
       <div className="flex h-12 shrink-0 items-center justify-center gap-2 overflow-x-auto px-3">
-        {mode === "draw" ? (
+        {mode === "erase" ? (
+          <button
+            type="button"
+            onClick={clearDrawing}
+            disabled={!hasDrawing(ops)}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs text-white disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" />
+            {t("clearAll")}
+          </button>
+        ) : mode === "draw" ? (
           COLORS.map((c) => (
             <button
               key={c}
@@ -543,6 +639,15 @@ export function ImageEditor({
         >
           <Pencil className="h-5 w-5" />
           {t("draw")}
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("erase")}
+          disabled={!ready}
+          className={cn(toolBtn, mode === "erase" && "bg-white/15 text-white")}
+        >
+          <Eraser className="h-5 w-5" />
+          {t("erase")}
         </button>
         <button type="button" onClick={undo} disabled={!ready || ops.length === 0} className={toolBtn}>
           <Undo2 className="h-5 w-5" />
