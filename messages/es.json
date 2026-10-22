@@ -76,7 +76,8 @@
     "fullscreenEnter": "Pantalla completa",
     "fullscreenExit": "Salir de pantalla completa",
     "collapseSidebar": "Colapsar menú",
-    "expandSidebar": "Expandir menú"
+    "expandSidebar": "Expandir menú",
+    "linePhone": "Número de celular"
   },
   "ModeToggle": {
     "switchMode": "Cambiar a modo {mode}"
