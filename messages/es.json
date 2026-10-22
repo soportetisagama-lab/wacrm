@@ -415,6 +415,8 @@
       "crop": "Recortar",
       "draw": "Dibujar",
       "undo": "Deshacer",
+      "erase": "Borrar",
+      "clearAll": "Borrar todo",
       "ratioFree": "Libre",
       "applyCrop": "Aplicar recorte"
     },

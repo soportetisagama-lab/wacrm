@@ -415,6 +415,8 @@
       "crop": "자르기",
       "draw": "그리기",
       "undo": "실행 취소",
+      "erase": "지우기",
+      "clearAll": "모두 지우기",
       "ratioFree": "자유",
       "applyCrop": "자르기 적용"
     },
