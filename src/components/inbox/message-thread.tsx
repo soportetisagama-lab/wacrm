@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { Fragment, memo, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { attentionFields } from '@/lib/conversations/attention';
 import { useAuth } from '@/hooks/use-auth';
@@ -194,6 +194,76 @@ const DOODLE_BG_CLASSES = "bg-inbox-thread";
  *  the same size as the agent scrolls up (WhatsApp-style), instead of the
  *  whole history at once — long chats were slow to open on low-end phones. */
 const MESSAGES_PAGE_SIZE = 50;
+
+interface MessageRowHandlers {
+  react: (messageId: string, emoji: string) => void;
+  toggleReaction: (
+    messageId: string,
+    emoji: string,
+    reactions: MessageReaction[] | undefined,
+    userId: string | undefined
+  ) => void;
+  reply: (msg: Message) => void;
+  jump: (messageId: string) => void;
+}
+
+/**
+ * One message (actions toolbar + bubble). Memoised so a thread re-render
+ * only touches the rows whose message / reactions / highlight changed.
+ */
+const MessageRow = memo(function MessageRow({
+  message,
+  parent,
+  customerLabel,
+  highlighted,
+  reactions,
+  currentUserId,
+  handlers,
+  onOpenMedia,
+}: {
+  message: Message;
+  parent: Message | null;
+  customerLabel: string;
+  highlighted: boolean;
+  reactions: MessageReaction[] | undefined;
+  currentUserId: string | undefined;
+  handlers: MessageRowHandlers;
+  onOpenMedia: (messageId: string | null) => void;
+}) {
+  const t = useTranslations('Inbox.messageThread');
+  const tQuote = useTranslations('Inbox.replyQuote');
+  const reply = parent
+    ? {
+        authorLabel:
+          parent.sender_type === 'agent' || parent.sender_type === 'bot'
+            ? t('me')
+            : customerLabel,
+        preview: buildReplyPreview(parent, tQuote),
+        thumbnailUrl:
+          parent.content_type === 'image' ? parent.media_url : undefined,
+        onJump: () => handlers.jump(parent.id),
+      }
+    : null;
+  return (
+    <MessageActions
+      message={message}
+      onReply={() => handlers.reply(message)}
+      onReact={(emoji) => handlers.react(message.id, emoji)}
+    >
+      <MessageBubble
+        message={message}
+        reply={reply}
+        highlighted={highlighted}
+        reactions={reactions}
+        currentUserId={currentUserId}
+        onToggleReaction={(emoji) =>
+          handlers.toggleReaction(message.id, emoji, reactions, currentUserId)
+        }
+        onOpenMedia={onOpenMedia}
+      />
+    </MessageActions>
+  );
+});
 
 export function MessageThread({
   conversation,
@@ -1146,6 +1216,32 @@ export function MessageThread({
     [conversation, user?.id]
   );
 
+  // Stable callbacks for the memoised <MessageRow>s: they read the latest
+  // handlers through a ref, so a row only re-renders when its own data
+  // changes — not every time the thread re-renders (realtime events,
+  // typing in other panels, etc.). Matters a lot on modest phones.
+  const rowHandlersRef = useRef({ postReaction, jumpToMessage, handleStartReply });
+  useEffect(() => {
+    rowHandlersRef.current = { postReaction, jumpToMessage, handleStartReply };
+  });
+  const rowHandlers = useMemo<MessageRowHandlers>(
+    () => ({
+      react: (messageId, emoji) => {
+        if (emoji) void rowHandlersRef.current.postReaction(messageId, emoji);
+      },
+      toggleReaction: (messageId, emoji, reactions, userId) => {
+        const own = reactions?.find(
+          (r) => r.actor_type === 'agent' && r.actor_id === userId
+        );
+        const next = own?.emoji === emoji ? '' : emoji;
+        void rowHandlersRef.current.postReaction(messageId, next);
+      },
+      reply: (msg) => rowHandlersRef.current.handleStartReply(msg),
+      jump: (messageId) => void rowHandlersRef.current.jumpToMessage(messageId),
+    }),
+    []
+  );
+
   const handleAssignChange = useCallback(
     async (agentId: string | null) => {
       if (!conversation) return;
@@ -1713,65 +1809,34 @@ export function MessageThread({
                 </div>
                 {/* Messages */}
                 <div className="space-y-2">
-                  {group.messages.map((msg) => {
-                    const parent = msg.reply_to_message_id
-                      ? (messagesById.get(msg.reply_to_message_id) ??
-                        quotedParents.get(msg.reply_to_message_id))
-                      : null;
-                    const reply = parent
-                      ? {
-                          authorLabel:
-                            parent.sender_type === 'agent' ||
-                            parent.sender_type === 'bot'
-                              ? t('me')
-                              : contact?.name ||
-                                contact?.phone ||
-                                contact?.whatsapp_user_id ||
-                                'Unknown',
-                          preview: buildReplyPreview(parent, tQuote),
-                          thumbnailUrl:
-                            parent.content_type === 'image'
-                              ? parent.media_url
-                              : undefined,
-                          onJump: () => void jumpToMessage(parent.id),
-                        }
-                      : null;
-                    const msgReactions = reactionsByMessageId.get(msg.id);
-                    // Toggle is computed at the call site — `msgReactions`
-                    // and `user?.id` are already in scope, no extra hook.
-                    const handlePillToggle = (emoji: string) => {
-                      const own = msgReactions?.find(
-                        (r) =>
-                          r.actor_type === 'agent' && r.actor_id === user?.id
-                      );
-                      const next = own?.emoji === emoji ? '' : emoji;
-                      void postReaction(msg.id, next);
-                    };
-                    return (
-                      <Fragment key={msg.id}>
-                      <MessageActions
+                  {group.messages.map((msg) => (
+                    <Fragment key={msg.id}>
+                      <MessageRow
                         message={msg}
-                        onReply={() => handleStartReply(msg)}
-                        onReact={(emoji) => {
-                          if (emoji) void postReaction(msg.id, emoji);
-                        }}
-                      >
-                        <MessageBubble
-                          message={msg}
-                          reply={reply}
-                          highlighted={highlightedId === msg.id}
-                          reactions={msgReactions}
-                          currentUserId={user?.id}
-                          onToggleReaction={handlePillToggle}
-                          onOpenMedia={handleMediaChange}
-                        />
-                      </MessageActions>
+                        parent={
+                          msg.reply_to_message_id
+                            ? (messagesById.get(msg.reply_to_message_id) ??
+                              quotedParents.get(msg.reply_to_message_id) ??
+                              null)
+                            : null
+                        }
+                        customerLabel={
+                          contact?.name ||
+                          contact?.phone ||
+                          contact?.whatsapp_user_id ||
+                          'Unknown'
+                        }
+                        highlighted={highlightedId === msg.id}
+                        reactions={reactionsByMessageId.get(msg.id)}
+                        currentUserId={user?.id}
+                        handlers={rowHandlers}
+                        onOpenMedia={handleMediaChange}
+                      />
                       {callsByAnchor.get(msg.id)?.map((c) => (
                         <CallLogChip key={c.id} call={c} />
                       ))}
-                      </Fragment>
-                    );
-                  })}
+                    </Fragment>
+                  ))}
                 </div>
               </div>
             ))}
