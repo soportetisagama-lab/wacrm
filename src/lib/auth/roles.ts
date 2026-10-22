@@ -216,6 +216,16 @@ export function canCreateSharedTags(role: AccountRole): boolean {
   return hasMinRole(role, 'admin');
 }
 
+/**
+ * Owner / admin: take an xlr8 status tag (ASIGNADO, CERRADO, …) off a
+ * contact. Everyone else can add them but not remove them. Keep in
+ * sync with the contact_tags_delete RLS policy
+ * (supabase/migrations/077_contact_tags_estado_admin_only.sql).
+ */
+export function canRemoveEstadoTags(role: AccountRole): boolean {
+  return hasMinRole(role, 'admin');
+}
+
 /** Owner only: irreversible destructive operations. */
 export function canDeleteAccount(role: AccountRole): boolean {
   return role === 'owner';

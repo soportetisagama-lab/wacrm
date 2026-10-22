@@ -4,6 +4,8 @@ import { CallContactButton } from '@/components/calls/call-contact-button';
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
+import { isEstadoTag } from "@/lib/xlr8/estados";
 import { cn } from "@/lib/utils";
 import { avatarTintStyle } from "@/lib/inbox/avatar-tint";
 import { CONTACT_DATA_CHANGED_EVENT, TAGS_CHANGED_EVENT } from "@/lib/contact-events";
@@ -42,6 +44,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const tThread = useTranslations("Inbox.messageThread");
 
   const { accountId } = useAuth();
+  const canRemoveEstados = useCan("remove-estado-tags");
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -225,6 +228,8 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
       const existing = tags.find((t) => t.id === tag.id);
 
       if (existing) {
+        // xlr8 status tags: only an admin can take them off.
+        if (!canRemoveEstados && isEstadoTag(existing)) return;
         // Optimistic remove, roll back on failure.
         setTags((prev) => prev.filter((t) => t.id !== tag.id));
         publishTags(tags.filter((t) => t.id !== tag.id));
@@ -253,7 +258,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
       setTags((prev) => [...prev, added]);
       publishTags([...tags, added]);
     },
-    [contact, tags, publishTags]
+    [contact, tags, publishTags, canRemoveEstados]
   );
 
   if (!contact) {
@@ -449,6 +454,11 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                 tags.map((tag) => (
                   <span
                     key={tag.contact_tag_id}
+                    title={
+                      !canRemoveEstados && isEstadoTag(tag)
+                        ? tSidebar("estadoTagLocked")
+                        : undefined
+                    }
                     className="inline-flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-[10px] font-medium"
                     style={{
                       backgroundColor: `${tag.color}20`,
@@ -456,13 +466,17 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                     }}
                   >
                     {tag.name}
-                    <button
-                      onClick={() => handleToggleTag(tag)}
-                      aria-label={tSidebar("removeTag")}
-                      className="rounded-full p-0.5 hover:bg-black/10"
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
+                    {canRemoveEstados || !isEstadoTag(tag) ? (
+                      <button
+                        onClick={() => handleToggleTag(tag)}
+                        aria-label={tSidebar("removeTag")}
+                        className="rounded-full p-0.5 hover:bg-black/10"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    ) : (
+                      <span className="pr-1" aria-hidden />
+                    )}
                   </span>
                 ))
               )}
