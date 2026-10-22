@@ -60,11 +60,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'tag_id required' }, { status: 400 });
     }
 
-    await removeContactTag(ctx.supabase, {
-      accountId: ctx.accountId,
-      contactId,
-      tagId,
-    });
+    await removeContactTag(
+      ctx.supabase,
+      { accountId: ctx.accountId, contactId, tagId },
+      ctx.role
+    );
 
     return NextResponse.json({ ok: true });
   } catch (error) {

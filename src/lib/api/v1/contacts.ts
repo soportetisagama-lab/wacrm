@@ -12,6 +12,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
+import { canRemoveEstadoTags, isAccountRole } from '@/lib/auth/roles';
+import { isEstadoTag } from '@/lib/xlr8/estados';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -154,6 +156,27 @@ export async function findOrCreateContact(
 }
 
 /**
+ * Whether an API key may take xlr8 status tags off contacts: only when
+ * the member who minted it is still admin/owner of the account. A key
+ * whose author was removed (createdBy null) or demoted can't.
+ */
+export async function apiKeyCanRemoveEstadoTags(
+  db: SupabaseClient,
+  accountId: string,
+  createdBy: string | null
+): Promise<boolean> {
+  if (!createdBy) return false;
+  const { data } = await db
+    .from('profiles')
+    .select('account_role')
+    .eq('user_id', createdBy)
+    .eq('account_id', accountId)
+    .maybeSingle();
+  const role = data?.account_role;
+  return isAccountRole(role) && canRemoveEstadoTags(role);
+}
+
+/**
  * Replace a contact's tags to exactly match `tagNames` (case-
  * insensitive; missing tags are created). A no-op when `tagNames` is
  * undefined — pass `[]` to clear all tags. Reuses `resolveImportTagIds`
@@ -165,7 +188,9 @@ export async function setContactTags(
   auditUserId: string,
   contactId: string,
   tagNames: string[],
-  mode: 'replace' | 'add' = 'replace'
+  mode: 'replace' | 'add' = 'replace',
+  /** false → refuse (403) to remove xlr8 status tags. */
+  canRemoveEstados = true
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
@@ -204,6 +229,17 @@ export async function setContactTags(
   const toRemove =
     mode === 'replace' ? [...existing].filter((id) => !desired.has(id)) : [];
 
+  if (toRemove.length > 0 && !canRemoveEstados) {
+    const { data: removing, error } = await db
+      .from('tags')
+      .select('name, is_shared')
+      .eq('account_id', accountId)
+      .in('id', toRemove);
+    if (error) throw new ContactError('Failed to read contact tags', 500);
+    if ((removing ?? []).some((tag) => isEstadoTag(tag as { name: string; is_shared: boolean | null }))) {
+      throw new ContactError('Only an account admin can remove status tags', 403);
+    }
+  }
   if (toRemove.length > 0) {
     const { error } = await db
       .from('contact_tags')
