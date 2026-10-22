@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useCan } from '@/hooks/use-can';
+import { isEstadoTag } from '@/lib/xlr8/estados';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
@@ -49,6 +51,8 @@ export function ContactForm({
   const t = useTranslations('Contacts.form');
   const supabase = createClient();
   const { accountId, isAgent } = useAuth();
+  const canRemoveEstados = useCan('remove-estado-tags');
+  const tTags = useTranslations('Inbox.sidebar');
   const isEdit = !!contact;
   // Asesores can't change an existing contact's number (enforced in the
   // DB too — migration 072); they still set it when creating one.
@@ -343,12 +347,21 @@ export function ContactForm({
               <div className="flex flex-wrap gap-1.5">
                 {tags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id);
+                  // xlr8 status tags already on the contact: only an
+                  // admin can take them off.
+                  const locked =
+                    selected &&
+                    !canRemoveEstados &&
+                    isEstadoTag(tag) &&
+                    contactTags.some((ct) => ct.tag_id === tag.id);
                   return (
                     <button
                       key={tag.id}
                       type="button"
                       onClick={() => toggleTag(tag.id)}
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer ${
+                      disabled={locked}
+                      title={locked ? tTags('estadoTagLocked') : undefined}
+                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed ${
                         selected
                           ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
                           : 'opacity-60 hover:opacity-100'

@@ -572,6 +572,7 @@
       "deals": "Deals",
       "noTags": "No tags",
       "removeTag": "Remove tag",
+      "estadoTagLocked": "Only an admin can remove this status tag.",
       "tagShort": "Tag",
       "tagUpdateFailed": "Couldn't update the tag",
       "tagAdd": "Add tag",

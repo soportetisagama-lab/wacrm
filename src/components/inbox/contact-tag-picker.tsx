@@ -7,7 +7,8 @@ import { useTranslations } from "next-intl";
 
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { canCreateSharedTags } from "@/lib/auth/roles";
+import { canCreateSharedTags, canRemoveEstadoTags } from "@/lib/auth/roles";
+import { isEstadoTag } from "@/lib/xlr8/estados";
 import { cn } from "@/lib/utils";
 import { announceTagsChanged } from "@/lib/contact-events";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -73,6 +74,7 @@ export function TagPickerPanel({
   const t = useTranslations("Inbox.sidebar");
   const { user, accountId, accountRole } = useAuth();
   const isAdmin = accountRole ? canCreateSharedTags(accountRole) : false;
+  const canRemoveEstados = accountRole ? canRemoveEstadoTags(accountRole) : false;
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -149,12 +151,16 @@ export function TagPickerPanel({
     <ul className="max-h-60 overflow-y-auto">
       {visible.map((tag) => {
         const checked = selectedIds.has(tag.id);
+        // xlr8 status tags: only an admin can take them off a contact.
+        const locked = checked && !canRemoveEstados && isEstadoTag(tag);
         return (
           <li key={tag.id} className="group flex items-center gap-1 rounded-md hover:bg-muted">
             <button
               type="button"
               onClick={() => onToggle(tag)}
-              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
+              disabled={locked}
+              title={locked ? t("estadoTagLocked") : undefined}
+              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span
                 className={cn(
