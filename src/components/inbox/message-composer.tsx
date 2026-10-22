@@ -28,6 +28,7 @@ import {
   Pause,
   X,
   Loader2,
+  Pencil,
   Sparkles,
   Plus,
   MessageSquareDashed,
@@ -76,6 +77,7 @@ import {
 import type { InteractiveMessagePayload, QuickReply } from "@/types";
 import { QuickReplyPicker } from "./quick-reply-picker";
 import { EmojiButton } from "./emoji-button";
+import { ImageEditor } from "./image-editor";
 import { isEmbeddedApp } from "@/lib/mobile-app";
 
 /** Media content types an agent can send from the composer. */
@@ -178,6 +180,9 @@ interface MediaDraft {
   /** Storage path — used to GC the object if the draft is discarded. */
   path: string;
   filename: string;
+  /** Local copy of the picked file — fed to the image editor so it can
+   *  work without re-downloading (and without CORS-tainting a canvas). */
+  file?: File;
 }
 
 /** Most attachments staged at once — like WhatsApp's per-send limit,
@@ -702,6 +707,7 @@ export function MessageComposer({
               mediaUrl: r.value.publicUrl,
               path: r.value.path,
               filename: batch[i].file.name,
+              file: batch[i].file,
             });
           } else {
             const err = r.reason;
@@ -1027,6 +1033,72 @@ export function MessageComposer({
     }
   }, [drafts, caption, busy, onSendMedia, replyTo?.id, onClearReply]);
 
+  // ---- Edit a staged image (crop / rotate / draw) --------------------
+  const [editing, setEditing] = useState<{ id: string; file: File } | null>(null);
+
+  const openEditor = useCallback(
+    async (id: string) => {
+      const d = drafts.find((x) => x.id === id);
+      if (!d || d.kind !== "image" || busy) return;
+      if (d.file) {
+        setEditing({ id, file: d.file });
+        return;
+      }
+      try {
+        const res = await fetch(d.mediaUrl);
+        const blob = await res.blob();
+        setEditing({ id, file: new File([blob], d.filename, { type: blob.type || "image/jpeg" }) });
+      } catch {
+        toast.error(t("uploadFailed"));
+      }
+    },
+    [drafts, busy, t],
+  );
+
+  const closeEditor = useCallback(() => setEditing(null), []);
+
+  // The edited image replaces the staged one: upload it, swap the draft
+  // in place (same position in the list) and GC the old object.
+  const saveEditedImage = useCallback(
+    async (file: File) => {
+      const target = editing;
+      setEditing(null);
+      if (!target) return;
+      if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+        toast.error(
+          t("uploadTooLarge", {
+            sizeMb: (file.size / 1024 / 1024).toFixed(1),
+            kind: t("photo"),
+            maxMb: Math.round(MEDIA_MAX_BYTES_BY_KIND.image / 1024 / 1024),
+          }),
+        );
+        return;
+      }
+      setBusy(true);
+      try {
+        const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
+        const old = draftsRef.current.find((x) => x.id === target.id);
+        if (!old) {
+          removeStaged(path);
+          return;
+        }
+        setDrafts((prev) =>
+          prev.map((x) =>
+            x.id === target.id
+              ? { ...x, id: path, mediaUrl: publicUrl, path, filename: file.name, file }
+              : x,
+          ),
+        );
+        removeStaged(old.path);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t("uploadFailed"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [editing, removeStaged, t],
+  );
+
   // Discard GCs the staged object — it was uploaded but never sent.
   const discardDraft = useCallback(
     (id: string) => {
@@ -1131,6 +1203,7 @@ export function MessageComposer({
           onAddMore={() => imageInputRef.current?.click()}
           onCaptionChange={setCaption}
           onDiscard={discardDraft}
+          onEdit={(id) => void openEditor(id)}
           onSend={() => void sendDrafts()}
           t={t}
         />
@@ -1546,6 +1619,15 @@ export function MessageComposer({
         </DialogContent>
       </Dialog>
 
+      {editing && (
+        <ImageEditor
+          key={editing.id}
+          file={editing.file}
+          onCancel={closeEditor}
+          onSave={saveEditedImage}
+        />
+      )}
+
       {/* Quick-reply picker. */}
       <QuickReplyPicker
         key={pickerKey}
@@ -1573,6 +1655,7 @@ function MediaDraftPreview({
   onAddMore,
   onCaptionChange,
   onDiscard,
+  onEdit,
   onSend,
   t,
 }: {
@@ -1584,6 +1667,7 @@ function MediaDraftPreview({
   onAddMore: () => void;
   onCaptionChange: (caption: string) => void;
   onDiscard: (id: string) => void;
+  onEdit: (id: string) => void;
   onSend: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
@@ -1615,6 +1699,18 @@ function MediaDraftPreview({
               </div>
             )}
           </div>
+          {single.kind === "image" && !readOnly && (
+            <button
+              type="button"
+              onClick={() => onEdit(single.id)}
+              disabled={busy}
+              aria-label={t("editImage")}
+              title={t("editImage")}
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          )}
           {canAddMore && <AddMoreButton onClick={onAddMore} disabled={busy} t={t} />}
           <button
             type="button"
@@ -1654,6 +1750,18 @@ function MediaDraftPreview({
               >
                 <X className="h-3 w-3" />
               </button>
+              {d.kind === "image" && !readOnly && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(d.id)}
+                  disabled={busy}
+                  aria-label={t("editImage")}
+                  title={t("editImage")}
+                  className="absolute bottom-0.5 left-0.5 rounded-full bg-black/60 p-1 text-white hover:bg-black/80 disabled:opacity-40"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              )}
             </div>
           ))}
           {canAddMore && <AddMoreButton onClick={onAddMore} disabled={busy} t={t} tile />}
