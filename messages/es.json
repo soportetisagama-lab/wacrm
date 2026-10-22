@@ -407,6 +407,17 @@
       "xmRemaining": "quedan {minutes}m",
       "noCustomerMessages": "Sin mensajes del cliente"
     },
+    "imageEditor": {
+      "title": "Editar imagen",
+      "cancel": "Cancelar",
+      "done": "Listo",
+      "rotate": "Rotar",
+      "crop": "Recortar",
+      "draw": "Dibujar",
+      "undo": "Deshacer",
+      "ratioFree": "Libre",
+      "applyCrop": "Aplicar recorte"
+    },
     "composer": {
       "draftHint": "Toca el ✨ para redactar una respuesta con IA — puedes editarla antes de enviarla",
       "sessionExpiredHint": "La sesión de 24 horas expiró. Usa una plantilla para volver a contactar.",
@@ -438,6 +449,7 @@
       "draftWithAI": "Redactar respuesta con IA",
       "addCaption": "Agregar un pie de foto…",
       "removeAttachment": "Quitar adjunto",
+      "editImage": "Editar imagen",
       "tooManyAttachments": "Puedes adjuntar hasta {max} archivos a la vez.",
       "addMoreAttachments": "Agregar más",
       "moreActions": "Más",
