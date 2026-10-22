@@ -407,6 +407,17 @@
       "xmRemaining": "{minutes}m remaining",
       "noCustomerMessages": "No customer messages"
     },
+    "imageEditor": {
+      "title": "Edit image",
+      "cancel": "Cancel",
+      "done": "Done",
+      "rotate": "Rotate",
+      "crop": "Crop",
+      "draw": "Draw",
+      "undo": "Undo",
+      "ratioFree": "Free",
+      "applyCrop": "Apply crop"
+    },
     "composer": {
       "draftHint": "Tap the ✨ to draft a reply with AI — you can edit it before sending",
       "sessionExpiredHint": "24-hour session expired. Use a template to re-engage.",
@@ -438,6 +449,7 @@
       "draftWithAI": "Draft a reply with AI",
       "addCaption": "Add a caption…",
       "removeAttachment": "Remove attachment",
+      "editImage": "Edit image",
       "tooManyAttachments": "You can attach up to {max} files at once.",
       "addMoreAttachments": "Add more",
       "moreActions": "More",
