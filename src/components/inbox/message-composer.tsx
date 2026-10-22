@@ -7,6 +7,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useSyncExternalStore,
   KeyboardEvent,
   type ClipboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -166,6 +167,9 @@ function kindForFile(file: File): "image" | "video" | "document" | null {
   return null;
 }
 
+/** useSyncExternalStore subscriber for values that never change after load. */
+const subscribeNever = () => () => {};
+
 /** Imperative handle so the thread can hand the composer a file dropped
  *  anywhere on the conversation, not just on the composer itself. */
 export interface MessageComposerHandle {
@@ -239,10 +243,7 @@ export function MessageComposer({
   // mobile browser, and that experience must stay exactly as it was
   // — the collapse is an app-specific choice, not a "phone" one. Set
   // once on mount, same SSR-safe pattern as dashboard-shell.tsx.
-  const [embedded, setEmbedded] = useState(false);
-  useEffect(() => {
-    setEmbedded(isEmbeddedApp());
-  }, []);
+  const embedded = useSyncExternalStore(subscribeNever, isEmbeddedApp, () => false);
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -295,7 +296,9 @@ export function MessageComposer({
   // Voice recording state. The recorder encodes Ogg/Opus in-browser
   // (opus-recorder) so there's no server-side transcode.
   const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
+  // The elapsed time is written straight into the clock <span> (see
+  // RecordingStrip) so the 1 s tick doesn't re-render this whole composer.
+  const clockRef = useRef<HTMLSpanElement | null>(null);
   const recorderRef = useRef<import("opus-recorder").default | null>(null);
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -310,8 +313,24 @@ export function MessageComposer({
   const releasedEarlyRef = useRef(false);
   const holdStartXRef = useRef(0);
   const holdStartYRef = useRef(0);
-  const [slideX, setSlideX] = useState(0);
-  const [slideY, setSlideY] = useState(0);
+  // Slide offsets live in CSS variables on the composer root, written
+  // from pointermove — not React state. Re-rendering this whole component
+  // on every finger move was the main source of mic lag on modest phones.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [lockNear, setLockNear] = useState(false);
+  // Instant feedback on touch: the mic grows the moment it's pressed,
+  // before the recorder has finished starting.
+  const [micPressed, setMicPressed] = useState(false);
+  const setSlide = useCallback((x: number, y: number) => {
+    const el = rootRef.current;
+    if (el) {
+      el.style.setProperty("--slide-x", `${-x}px`);
+      el.style.setProperty("--slide-y", `${-Math.min(y, LOCK_SLIDE_PX)}px`);
+      el.style.setProperty("--slide-fade", String(Math.max(0.25, 1 - x / CANCEL_SLIDE_PX)));
+    }
+    const near = y >= LOCK_SLIDE_PX * 0.6;
+    setLockNear((prev) => (prev === near ? prev : near));
+  }, []);
   // Paused hands-free recording (WhatsApp's "Pausar"): the encoder is
   // detached and the timer frozen until resumed.
   const [paused, setPaused] = useState(false);
@@ -815,14 +834,14 @@ export function MessageComposer({
       recordModeRef.current = null;
       setRecording(false);
       setRecordMode(null);
-      setSlideX(0);
-      setSlideY(0);
+      setSlide(0, 0);
+      setMicPressed(false);
       pausedRef.current = false;
       setPaused(false);
       setAnalyser(null);
       void recorderRef.current?.stop().catch(() => {});
     },
-    [clearTimer],
+    [clearTimer, setSlide],
   );
 
   const stopRecording = useCallback(() => endRecording(true), [endRecording]);
@@ -873,6 +892,7 @@ export function MessageComposer({
           // Let go (or cancelled) before the mic was even live.
           cancelledRef.current = true;
           recordModeRef.current = null;
+          setMicPressed(false);
           void recorder.stop().catch(() => {});
           return;
         }
@@ -889,18 +909,18 @@ export function MessageComposer({
         recordStartedAtRef.current = Date.now();
         setRecordMode(mode);
         setRecording(true);
-        setRecordSeconds(0);
         let elapsed = 0;
         timerRef.current = setInterval(() => {
           if (pausedRef.current) return;
           elapsed += 1;
-          setRecordSeconds(elapsed);
+          if (clockRef.current) clockRef.current.textContent = formatDuration(elapsed);
           // Auto-stop at the cap so a forgotten recording can't blow the
           // upload size limit — sends what was recorded.
           if (elapsed >= MAX_RECORDING_SECONDS) stopRecording();
         }, 1000);
       } catch (err) {
         recordModeRef.current = null;
+        setMicPressed(false);
         void recorderRef.current?.stop().catch(() => {});
         recorderRef.current = null;
         // getUserMedia's DOMException name says why — tell the agent how
@@ -919,6 +939,23 @@ export function MessageComposer({
     },
     [inputsDisabled, busy, finalizeRecording, stopRecording, t],
   );
+
+  // Warm the voice-note encoder while the page is idle, so the first tap
+  // on the mic starts recording right away instead of waiting on the
+  // ~400 KB module + worker download (slow on modest phones / networks).
+  useEffect(() => {
+    if (readOnly) return;
+    const warm = () => {
+      void import("opus-recorder").catch(() => {});
+      void fetch(OPUS_ENCODER_PATH).catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(warm, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(warm, 3000);
+    return () => clearTimeout(id);
+  }, [readOnly]);
 
   // ---- Mic button (WhatsApp-style) -----------------------------------
   // Mouse: click to start, click again (now a send button) to send.
@@ -945,12 +982,12 @@ export function MessageComposer({
         e.currentTarget.setPointerCapture(e.pointerId);
         holdStartXRef.current = e.clientX;
         holdStartYRef.current = e.clientY;
-        setSlideX(0);
-        setSlideY(0);
+        setSlide(0, 0);
+        setMicPressed(true);
         void startRecording("hold");
       }
     },
-    [startRecording, stopRecording],
+    [startRecording, stopRecording, setSlide],
   );
 
   const handleMicPointerMove = useCallback(
@@ -963,21 +1000,20 @@ export function MessageComposer({
         // (handleMicPointerUp ignores non-hold modes).
         recordModeRef.current = "toggle";
         setRecordMode("toggle");
-        setSlideX(0);
-        setSlideY(0);
+        setSlide(0, 0);
         navigator.vibrate?.(30);
       } else if (dx >= CANCEL_SLIDE_PX) {
         cancelRecording();
       } else {
         // Follow whichever direction the finger is mostly going.
-        setSlideX(dx > dy ? dx : 0);
-        setSlideY(dy >= dx ? dy : 0);
+        setSlide(dx > dy ? dx : 0, dy >= dx ? dy : 0);
       }
     },
-    [cancelRecording],
+    [cancelRecording, setSlide],
   );
 
   const handleMicPointerUp = useCallback(() => {
+    setMicPressed(false);
     if (recordModeRef.current !== "hold") return;
     if (!recordingRef.current) {
       // Still starting — abort it once it resolves.
@@ -1113,6 +1149,7 @@ export function MessageComposer({
 
   return (
     <div
+      ref={rootRef}
       className={cn(
         "border-t border-border/60 bg-card p-3",
         // The fixed-width send button was sitting flush against the
@@ -1212,8 +1249,7 @@ export function MessageComposer({
           {recording ? (
             <RecordingStrip
               mode={recordMode ?? "toggle"}
-              seconds={recordSeconds}
-              slideX={slideX}
+              clockRef={clockRef}
               analyser={analyser}
               paused={paused}
               onCancel={cancelRecording}
@@ -1521,9 +1557,9 @@ export function MessageComposer({
               <div
                 aria-hidden
                 className="pointer-events-none absolute bottom-full left-1/2 mb-5 flex flex-col items-center gap-1 rounded-full border border-border bg-popover px-2 pb-2 pt-3 text-muted-foreground shadow-lg"
-                style={{ transform: `translate(-50%, ${-Math.min(slideY, LOCK_SLIDE_PX)}px)` }}
+                style={{ transform: "translate(-50%, var(--slide-y, 0px))" }}
               >
-                {slideY >= LOCK_SLIDE_PX * 0.6 ? (
+                {lockNear ? (
                   <Lock className="h-5 w-5 text-primary" />
                 ) : (
                   <LockOpen className="h-5 w-5" />
@@ -1552,7 +1588,7 @@ export function MessageComposer({
               }
               className={cn(
                 "inline-flex h-10 w-10 shrink-0 touch-none select-none items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm transition-transform duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40",
-                recording && recordMode === "hold" && "scale-[1.35] shadow-lg"
+                (micPressed || (recording && recordMode === "hold")) && "scale-[1.35] shadow-lg"
               )}
             >
               {busy && !recording ? (
@@ -1836,8 +1872,7 @@ function AddMoreButton({
  *  a press-and-hold), so this only covers the left side of the row. */
 function RecordingStrip({
   mode,
-  seconds,
-  slideX,
+  clockRef,
   analyser,
   paused,
   onCancel,
@@ -1845,8 +1880,8 @@ function RecordingStrip({
   t,
 }: {
   mode: RecordMode;
-  seconds: number;
-  slideX: number;
+  /** The composer writes the elapsed time straight into this span. */
+  clockRef: Ref<HTMLSpanElement>;
   analyser: AnalyserNode | null;
   paused: boolean;
   onCancel: () => void;
@@ -1872,15 +1907,15 @@ function RecordingStrip({
           paused ? "bg-muted-foreground" : "animate-pulse bg-red-500"
         )}
       />
-      <span className="shrink-0 text-sm tabular-nums text-foreground">
-        {formatDuration(seconds)}
+      <span ref={clockRef} className="shrink-0 text-sm tabular-nums text-foreground">
+        {formatDuration(0)}
       </span>
       {mode === "hold" ? (
         <span
           className="ml-auto flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground"
           style={{
-            transform: `translateX(${-slideX}px)`,
-            opacity: Math.max(0.25, 1 - slideX / CANCEL_SLIDE_PX),
+            transform: "translateX(var(--slide-x, 0px))",
+            opacity: "var(--slide-fade, 1)",
           }}
         >
           <ChevronLeft className="h-4 w-4 shrink-0" />
@@ -1908,7 +1943,12 @@ function RecordingStrip({
 }
 
 /** Scrolling mic-level bars, WhatsApp-style. Falls back to a gentle
- *  pulse when the recorder exposed no audio graph to tap. */
+ *  pulse when the recorder exposed no audio graph to tap. The bars are
+ *  updated by writing their heights directly (no React state), so the
+ *  meter never re-renders anything while recording. */
+const LEVEL_BARS = 32;
+const LEVEL_MIN = 0.08;
+
 function VoiceLevelBars({
   analyser,
   paused = false,
@@ -1916,28 +1956,34 @@ function VoiceLevelBars({
   analyser: AnalyserNode | null;
   paused?: boolean;
 }) {
-  const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0.08));
+  const barsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Paused: freeze the bars where they are (the mic is still open, but
     // nothing is being recorded).
-    if (!analyser || paused) return;
+    const container = barsRef.current;
+    if (!analyser || paused || !container) return;
+    const bars = Array.from(container.children) as HTMLElement[];
+    const levels = bars.map((b) => parseFloat(b.style.height) / 100 || LEVEL_MIN);
     const data = new Uint8Array(analyser.fftSize);
     let raf = 0;
     let last = 0;
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
-      if (now - last < 90) return;
+      if (now - last < 100) return;
       last = now;
       analyser.getByteTimeDomainData(data);
       let sum = 0;
-      for (const v of data) {
-        const x = (v - 128) / 128;
+      for (let i = 0; i < data.length; i++) {
+        const x = (data[i] - 128) / 128;
         sum += x * x;
       }
       const rms = Math.sqrt(sum / data.length);
-      const level = Math.min(1, Math.max(0.08, rms * 4));
-      setLevels((prev) => [...prev.slice(1), level]);
+      levels.shift();
+      levels.push(Math.min(1, Math.max(LEVEL_MIN, rms * 4)));
+      for (let i = 0; i < bars.length; i++) {
+        bars[i].style.height = `${Math.round(levels[i] * 100)}%`;
+      }
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
@@ -1945,17 +1991,18 @@ function VoiceLevelBars({
 
   return (
     <div
+      ref={barsRef}
       className={cn(
         "flex h-6 min-w-0 flex-1 items-center justify-end gap-[2px] overflow-hidden",
         !analyser && !paused && "animate-pulse"
       )}
       aria-hidden
     >
-      {levels.map((level, i) => (
+      {Array.from({ length: LEVEL_BARS }, (_, i) => (
         <span
           key={i}
           className="w-[3px] shrink-0 rounded-full bg-primary/70"
-          style={{ height: `${Math.round(level * 100)}%` }}
+          style={{ height: `${Math.round(LEVEL_MIN * 100)}%` }}
         />
       ))}
     </div>

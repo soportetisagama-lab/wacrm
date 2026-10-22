@@ -335,7 +335,7 @@ function NavButton({
       aria-label={label}
       title={label}
       className={cn(
-        "absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-background disabled:pointer-events-none disabled:opacity-0",
+        "absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/60 bg-background/85 text-foreground shadow-md transition-colors lg:backdrop-blur-sm hover:bg-background disabled:pointer-events-none disabled:opacity-0",
         side === "left" ? "left-1" : "right-1",
       )}
     >
