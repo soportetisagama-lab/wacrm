@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { canRemoveEstadoTags, type AccountRole } from '@/lib/auth/roles';
+import { isEstadoTag } from '@/lib/xlr8/estados';
+
 export class ContactTagWriteError extends Error {
   readonly status: number;
 
@@ -19,7 +22,7 @@ interface ContactTagWriteInput {
 async function assertContactAndTagOwnership(
   db: SupabaseClient,
   input: ContactTagWriteInput
-): Promise<void> {
+): Promise<{ name?: string; is_shared?: boolean | null }> {
   const [contactResult, tagResult] = await Promise.all([
     db
       .from('contacts')
@@ -29,7 +32,7 @@ async function assertContactAndTagOwnership(
       .maybeSingle(),
     db
       .from('tags')
-      .select('id')
+      .select('id, name, is_shared')
       .eq('id', input.tagId)
       .eq('account_id', input.accountId)
       .maybeSingle(),
@@ -44,6 +47,7 @@ async function assertContactAndTagOwnership(
   if (!tagResult.data) {
     throw new ContactTagWriteError('Tag not found', 404);
   }
+  return tagResult.data as { name?: string; is_shared?: boolean | null };
 }
 
 /**
@@ -72,11 +76,29 @@ export async function addContactTagIfAbsent(
   return true;
 }
 
+/**
+ * Remove a tag from a contact. `actorRole` is the role of the person
+ * asking (API routes pass it): without admin/owner, xlr8 status tags
+ * can't be removed. System callers (flows) omit it.
+ */
 export async function removeContactTag(
   db: SupabaseClient,
-  input: ContactTagWriteInput
+  input: ContactTagWriteInput,
+  actorRole?: AccountRole
 ): Promise<void> {
-  await assertContactAndTagOwnership(db, input);
+  const tag = await assertContactAndTagOwnership(db, input);
+
+  if (
+    actorRole &&
+    !canRemoveEstadoTags(actorRole) &&
+    typeof tag.name === 'string' &&
+    isEstadoTag({ name: tag.name, is_shared: tag.is_shared })
+  ) {
+    throw new ContactTagWriteError(
+      'Solo un administrador puede quitar etiquetas de estado.',
+      403
+    );
+  }
 
   const { error } = await db
     .from('contact_tags')

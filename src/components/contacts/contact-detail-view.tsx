@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useCan } from '@/hooks/use-can';
+import { isEstadoTag } from '@/lib/xlr8/estados';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -60,6 +61,8 @@ export function ContactDetailView({
   const t = useTranslations('Contacts.detailView');
   // Templates are ATC and above — hidden for an agent (asesor).
   const canTemplates = useCan('send-templates');
+  const canRemoveEstados = useCan('remove-estado-tags');
+  const tTags = useTranslations('Inbox.sidebar');
   const supabase = createClient();
   const { accountId, defaultCurrency, isAgent } = useAuth();
 
@@ -585,12 +588,15 @@ export function ContactDetailView({
                     <div className="flex flex-wrap gap-2">
                       {allTags.map((tag) => {
                         const selected = contactTagIds.includes(tag.id);
+                        // xlr8 status tags: only an admin can take them off.
+                        const locked = selected && !canRemoveEstados && isEstadoTag(tag);
                         return (
                           <button
                             key={tag.id}
                             onClick={() => toggleTag(tag.id)}
-                            disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
+                            disabled={savingTags || locked}
+                            title={locked ? tTags('estadoTagLocked') : undefined}
+                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer disabled:cursor-not-allowed ${
                               selected
                                 ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
                                 : 'opacity-50 hover:opacity-80'

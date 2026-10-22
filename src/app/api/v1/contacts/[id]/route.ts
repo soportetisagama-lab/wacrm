@@ -13,6 +13,7 @@ import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import {
   getContactById,
   setContactTags,
+  apiKeyCanRemoveEstadoTags,
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
@@ -87,7 +88,9 @@ export async function PATCH(
         ctx.accountId,
         auditUserId,
         id,
-        body.tags.filter((t): t is string => typeof t === 'string')
+        body.tags.filter((t): t is string => typeof t === 'string'),
+        'replace',
+        await apiKeyCanRemoveEstadoTags(ctx.supabase, ctx.accountId, ctx.createdBy)
       );
     }
 
@@ -95,7 +98,9 @@ export async function PATCH(
     return ok(contact);
   } catch (err) {
     if (err instanceof ContactError) {
-      return fail(err.status === 400 ? 'bad_request' : 'internal', err.message, err.status);
+      const code =
+        err.status === 400 ? 'bad_request' : err.status === 403 ? 'forbidden' : 'internal';
+      return fail(code, err.message, err.status);
     }
     return toApiErrorResponse(err);
   }
