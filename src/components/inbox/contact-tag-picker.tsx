@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { canCreateSharedTags, canRemoveEstadoTags } from "@/lib/auth/roles";
+import { canCreateSharedTags, canManageEstadoTags } from "@/lib/auth/roles";
 import { isEstadoTag } from "@/lib/xlr8/estados";
 import { cn } from "@/lib/utils";
 import { announceTagsChanged } from "@/lib/contact-events";
@@ -74,14 +74,20 @@ export function TagPickerPanel({
   const t = useTranslations("Inbox.sidebar");
   const { user, accountId, accountRole } = useAuth();
   const isAdmin = accountRole ? canCreateSharedTags(accountRole) : false;
-  const canRemoveEstados = accountRole ? canRemoveEstadoTags(accountRole) : false;
+  const canManageEstados = accountRole ? canManageEstadoTags(accountRole) : false;
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
 
   const q = fold(query);
+  // xlr8 status tags: only an admin can put them on or take them off,
+  // so nobody else even sees them in the list.
+  const pickable = useMemo(
+    () => (canManageEstados ? allTags : allTags.filter((tag) => !isEstadoTag(tag))),
+    [allTags, canManageEstados],
+  );
   const visible = useMemo(
-    () => (q ? allTags.filter((tag) => fold(tag.name).includes(q)) : allTags),
-    [allTags, q],
+    () => (q ? pickable.filter((tag) => fold(tag.name).includes(q)) : pickable),
+    [pickable, q],
   );
   const exactExists = q !== "" && allTags.some((tag) => fold(tag.name) === q);
 
@@ -151,16 +157,12 @@ export function TagPickerPanel({
     <ul className="max-h-60 overflow-y-auto">
       {visible.map((tag) => {
         const checked = selectedIds.has(tag.id);
-        // xlr8 status tags: only an admin can take them off a contact.
-        const locked = checked && !canRemoveEstados && isEstadoTag(tag);
         return (
           <li key={tag.id} className="group flex items-center gap-1 rounded-md hover:bg-muted">
             <button
               type="button"
               onClick={() => onToggle(tag)}
-              disabled={locked}
-              title={locked ? t("estadoTagLocked") : undefined}
-              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
             >
               <span
                 className={cn(

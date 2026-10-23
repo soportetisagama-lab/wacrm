@@ -37,6 +37,7 @@ export async function POST(
       accountId: ctx.accountId,
       contactId,
       tagId,
+      actorRole: ctx.role,
     });
 
     return NextResponse.json({ ok: true, ...result });

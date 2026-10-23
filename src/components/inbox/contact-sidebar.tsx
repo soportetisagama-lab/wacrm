@@ -44,7 +44,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const tThread = useTranslations("Inbox.messageThread");
 
   const { accountId } = useAuth();
-  const canRemoveEstados = useCan("remove-estado-tags");
+  const canManageEstados = useCan("manage-estado-tags");
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -224,12 +224,12 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const handleToggleTag = useCallback(
     async (tag: Tag) => {
       if (!contact) return;
+      // xlr8 status tags: only an admin can put them on or take them off.
+      if (!canManageEstados && isEstadoTag(tag)) return;
       const supabase = createClient();
       const existing = tags.find((t) => t.id === tag.id);
 
       if (existing) {
-        // xlr8 status tags: only an admin can take them off.
-        if (!canRemoveEstados && isEstadoTag(existing)) return;
         // Optimistic remove, roll back on failure.
         setTags((prev) => prev.filter((t) => t.id !== tag.id));
         publishTags(tags.filter((t) => t.id !== tag.id));
@@ -258,7 +258,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
       setTags((prev) => [...prev, added]);
       publishTags([...tags, added]);
     },
-    [contact, tags, publishTags, canRemoveEstados]
+    [contact, tags, publishTags, canManageEstados]
   );
 
   if (!contact) {
@@ -455,7 +455,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                   <span
                     key={tag.contact_tag_id}
                     title={
-                      !canRemoveEstados && isEstadoTag(tag)
+                      !canManageEstados && isEstadoTag(tag)
                         ? tSidebar("estadoTagLocked")
                         : undefined
                     }
@@ -466,7 +466,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
                     }}
                   >
                     {tag.name}
-                    {canRemoveEstados || !isEstadoTag(tag) ? (
+                    {canManageEstados || !isEstadoTag(tag) ? (
                       <button
                         onClick={() => handleToggleTag(tag)}
                         aria-label={tSidebar("removeTag")}

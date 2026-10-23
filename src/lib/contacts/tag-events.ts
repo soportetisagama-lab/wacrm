@@ -4,6 +4,7 @@ import {
   runAutomationsForTrigger,
   type AutomationContext,
 } from '@/lib/automations/engine';
+import type { AccountRole } from '@/lib/auth/roles';
 import { addContactTagIfAbsent } from './tag-write';
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from './tag-chain';
 
@@ -15,6 +16,8 @@ interface AddContactTagAndDispatchInput {
   contactId: string;
   tagId: string;
   context?: AutomationContext;
+  /** Role of the person asking; omitted by system callers (flows). */
+  actorRole?: AccountRole;
 }
 
 export interface AddContactTagResult {
@@ -34,7 +37,7 @@ export async function addContactTagAndDispatch(
     accountId: input.accountId,
     contactId: input.contactId,
     tagId: input.tagId,
-  });
+  }, input.actorRole);
 
   if (!added) return { added: false, dispatched: false, reason: 'duplicate' };
 
