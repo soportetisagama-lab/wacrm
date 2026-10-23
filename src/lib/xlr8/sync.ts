@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
   XLR8_ESTADOS,
+  XLR8_TIPOS,
   computeEstadoDiff,
   estadoKey,
   parseXlr8Response,
@@ -10,7 +11,7 @@ import {
 } from './estados';
 
 // ============================================================
-// Mirrors each phone's xlr8 status as a shared contact tag (see
+// Mirrors each phone's xlr8 status and type as shared contact tags (see
 // ./estados.ts). Runs from the flows cron (every 5 min) and from
 // POST /api/xlr8/sync (on demand, min 30 s apart). Which line to read
 // comes from XLR8_LINEA, so the same code serves all 5 lines.
@@ -153,11 +154,12 @@ export async function syncXlr8Estados(
   return total;
 }
 
-/** Shared status tags of the account, creating the missing ones (owner as author). */
+/** Shared tags of the account for `defs`, creating the missing ones (owner as author). */
 async function ensureEstadoTags(
   admin: SupabaseClient,
   accountId: string,
   ownerUserId: string,
+  defs: ReadonlyArray<{ name: string; color: string }>,
 ): Promise<{ tagIdByEstado: Map<string, string>; allEstadoTagIds: string[] }> {
   const { data: tags, error } = await admin
     .from('tags')
@@ -169,7 +171,7 @@ async function ensureEstadoTags(
 
   const tagIdByEstado = new Map<string, string>();
   const allEstadoTagIds: string[] = [];
-  const estadoKeys = new Set(XLR8_ESTADOS.map((e) => estadoKey(e.name)));
+  const estadoKeys = new Set(defs.map((e) => estadoKey(e.name)));
   for (const t of (tags ?? []) as { id: string; name: string }[]) {
     const key = estadoKey(t.name);
     if (!estadoKeys.has(key)) continue;
@@ -179,7 +181,7 @@ async function ensureEstadoTags(
     if (!tagIdByEstado.has(key)) tagIdByEstado.set(key, t.id);
   }
 
-  const missing = XLR8_ESTADOS.filter((e) => !tagIdByEstado.has(estadoKey(e.name)));
+  const missing = defs.filter((e) => !tagIdByEstado.has(estadoKey(e.name)));
   if (missing.length > 0) {
     const { data: created, error: createError } = await admin
       .from('tags')
@@ -256,11 +258,33 @@ async function syncAccount(
   ownerUserId: string,
   items: Xlr8Item[],
 ): Promise<Xlr8SyncSummary> {
-  const { tagIdByEstado, allEstadoTagIds } = await ensureEstadoTags(admin, accountId, ownerUserId);
+  const estados = await ensureEstadoTags(admin, accountId, ownerUserId, XLR8_ESTADOS);
+  const tipos = await ensureEstadoTags(admin, accountId, ownerUserId, XLR8_TIPOS);
   const contactsByPhone = await loadContactsByPhone(admin, accountId);
-  const currentRows = await loadEstadoRows(admin, allEstadoTagIds);
+  const currentRows = await loadEstadoRows(admin, [
+    ...estados.allEstadoTagIds,
+    ...tipos.allEstadoTagIds,
+  ]);
+  const tipoTagIds = new Set(tipos.allEstadoTagIds);
 
-  const diff = computeEstadoDiff({ items, contactsByPhone, tagIdByEstado, currentRows });
+  const estadoDiff = computeEstadoDiff({
+    items,
+    contactsByPhone,
+    tagIdByEstado: estados.tagIdByEstado,
+    currentRows: currentRows.filter((r) => !tipoTagIds.has(r.tag_id)),
+  });
+  const tipoDiff = computeEstadoDiff({
+    items,
+    contactsByPhone,
+    tagIdByEstado: tipos.tagIdByEstado,
+    field: 'tipo',
+    currentRows: currentRows.filter((r) => tipoTagIds.has(r.tag_id)),
+  });
+  const diff = {
+    ...estadoDiff,
+    toInsert: [...estadoDiff.toInsert, ...tipoDiff.toInsert],
+    toDelete: [...estadoDiff.toDelete, ...tipoDiff.toDelete],
+  };
 
   // Delete first so a contact never shows two statuses for long.
   let quitados = 0;

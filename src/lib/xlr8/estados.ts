@@ -1,6 +1,7 @@
 // ============================================================
-// Lead statuses from the legacy "xlr8" CRM (PHP/MySQL), mirrored as
-// shared contact tags so broadcasts can filter by them. Pure helpers
+// Lead statuses and lead types from the legacy "xlr8" CRM (PHP/MySQL),
+// mirrored as shared contact tags so broadcasts can filter by them.
+// They're edited in xlr8 only; xlr9 just reflects them. Pure helpers
 // only — the I/O lives in ./sync.ts.
 // ============================================================
 
@@ -22,6 +23,15 @@ export const XLR8_ESTADOS: ReadonlyArray<{ name: string; color: string }> = [
 ];
 
 /** Case/space-insensitive key used to match tag names. */
+/** The 5 xlr8 lead types (project_list.tipo), as view_project.php offers them. */
+export const XLR8_TIPOS: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'PRODUCTO', color: '#3f51b5' },
+  { name: 'PROYECTO', color: '#009688' },
+  { name: 'INFO', color: '#607d8b' },
+  { name: 'VOLVER A LLAMAR', color: '#e91e63' },
+  { name: 'DISEÑO', color: '#8bc34a' },
+];
+
 export function estadoKey(name: string): string {
   return name.trim().replace(/\s+/g, ' ').toUpperCase();
 }
@@ -32,14 +42,20 @@ export function isEstado(name: string): boolean {
   return ESTADO_KEYS.has(estadoKey(name));
 }
 
+const TIPO_KEYS = new Set(XLR8_TIPOS.map((e) => estadoKey(e.name)));
+
+export function isTipo(name: string): boolean {
+  return TIPO_KEYS.has(estadoKey(name));
+}
+
 /**
- * True for the shared tags the xlr8 sync manages. A personal tag that
- * happens to share a status name is NOT one (the sync only uses shared
+ * True for the shared tags the xlr8 sync manages (statuses and types).
+ * A personal tag that happens to share one of those names is NOT one (the sync only uses shared
  * tags). Only admin/owner may put these on or take them off a contact —
  * see canManageEstadoTags and supabase/migrations/077 + 078.
  */
 export function isEstadoTag(tag: { name: string; is_shared?: boolean | null }): boolean {
-  return tag.is_shared !== false && isEstado(tag.name);
+  return tag.is_shared !== false && (isEstado(tag.name) || isTipo(tag.name));
 }
 
 /**
@@ -55,6 +71,8 @@ export function phoneKey(phone: string | null | undefined): string {
 export interface Xlr8Item {
   celular: string;
   estado: string;
+  /** '' → the lead has no type; absent → xlr8 didn't send types at all. */
+  tipo?: string | null;
 }
 
 /** Validates the PHP response; drops malformed rows and unknown statuses. */
@@ -65,12 +83,17 @@ export function parseXlr8Response(body: unknown): Xlr8Item[] {
   const out: Xlr8Item[] = [];
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
-    const { celular, estado } = it as { celular?: unknown; estado?: unknown };
+    const { celular, estado, tipo } = it as { celular?: unknown; estado?: unknown; tipo?: unknown };
     if (typeof celular !== 'string' && typeof celular !== 'number') continue;
     if (typeof estado !== 'string' || !isEstado(estado)) continue;
     const key = phoneKey(String(celular));
     if (!key) continue;
-    out.push({ celular: key, estado: estadoKey(estado) });
+    out.push({
+      celular: key,
+      estado: estadoKey(estado),
+      // Unknown or empty type → no type tag.
+      tipo: typeof tipo === 'string' ? (isTipo(tipo) ? estadoKey(tipo) : '') : null,
+    });
   }
   return out;
 }
@@ -81,7 +104,9 @@ export interface EstadoDiffInput {
   contactsByPhone: Map<string, string[]>;
   /** estadoKey → canonical tag id to assign. */
   tagIdByEstado: Map<string, string>;
-  /** Existing contact_tags rows whose tag is any status tag. */
+  /** Which item field this diff mirrors (default 'estado'). */
+  field?: 'estado' | 'tipo';
+  /** Existing contact_tags rows whose tag is any tag of that field. */
   currentRows: ReadonlyArray<{ id: string; contact_id: string; tag_id: string }>;
 }
 
@@ -95,9 +120,9 @@ export interface EstadoDiff {
 
 /**
  * For every xlr8 phone that matches a contact, the contact must end up
- * with exactly one status tag: the xlr8 one. Non-status tags are never
- * in `currentRows`, so they're never touched. Contacts absent from the
- * feed keep whatever status tag they have.
+ * with exactly one tag of the field: the xlr8 one (none when the value
+ * is ''). Other tags are never in `currentRows`, so they're never
+ * touched. Contacts absent from the feed keep whatever tag they have.
  */
 export function computeEstadoDiff(input: EstadoDiffInput): EstadoDiff {
   const rowsByContact = new Map<string, { id: string; tag_id: string }[]>();
@@ -113,8 +138,10 @@ export function computeEstadoDiff(input: EstadoDiffInput): EstadoDiff {
   let sinContacto = 0;
 
   for (const item of input.items) {
-    const tagId = input.tagIdByEstado.get(item.estado);
-    if (!tagId) continue;
+    const value = item[input.field ?? 'estado'];
+    if (value == null) continue;
+    const tagId = value ? input.tagIdByEstado.get(value) : null;
+    if (tagId === undefined) continue;
     const contactIds = input.contactsByPhone.get(item.celular);
     if (!contactIds?.length) {
       sinContacto += 1;
@@ -127,10 +154,10 @@ export function computeEstadoDiff(input: EstadoDiffInput): EstadoDiff {
       const rows = rowsByContact.get(contactId) ?? [];
       let has = false;
       for (const r of rows) {
-        if (r.tag_id === tagId && !has) has = true;
+        if (tagId && r.tag_id === tagId && !has) has = true;
         else toDelete.push(r.id);
       }
-      if (!has) toInsert.push({ contact_id: contactId, tag_id: tagId });
+      if (tagId && !has) toInsert.push({ contact_id: contactId, tag_id: tagId });
     }
   }
 
