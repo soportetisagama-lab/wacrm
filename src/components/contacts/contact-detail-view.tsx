@@ -61,7 +61,7 @@ export function ContactDetailView({
   const t = useTranslations('Contacts.detailView');
   // Templates are ATC and above — hidden for an agent (asesor).
   const canTemplates = useCan('send-templates');
-  const canRemoveEstados = useCan('remove-estado-tags');
+  const canManageEstados = useCan('manage-estado-tags');
   const tTags = useTranslations('Inbox.sidebar');
   const supabase = createClient();
   const { accountId, defaultCurrency, isAgent } = useAuth();
@@ -588,8 +588,10 @@ export function ContactDetailView({
                     <div className="flex flex-wrap gap-2">
                       {allTags.map((tag) => {
                         const selected = contactTagIds.includes(tag.id);
-                        // xlr8 status tags: only an admin can take them off.
-                        const locked = selected && !canRemoveEstados && isEstadoTag(tag);
+                        // xlr8 status tags: only an admin can put them on or take them off.
+                        const locked = !canManageEstados && isEstadoTag(tag);
+                        // …and only see the ones already on the contact.
+                        if (locked && !selected) return null;
                         return (
                           <button
                             key={tag.id}
