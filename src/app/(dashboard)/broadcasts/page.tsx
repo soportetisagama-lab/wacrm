@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Radio, Plus, Loader2 } from 'lucide-react';
+import { Radio, Plus, Loader2, Megaphone } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
@@ -180,27 +180,39 @@ export default function BroadcastsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t('subtitle')}
-          </p>
+      <section className="relative isolate flex flex-wrap items-center justify-between gap-4 overflow-hidden rounded-3xl border border-border bg-card px-5 py-5 shadow-sm sm:px-8">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-32"
+          style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 75%)' }}
+        />
+        <div className="flex min-w-0 items-center gap-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-primary ring-4 ring-primary/10">
+            <Megaphone className="h-6 w-6" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-2xl leading-tight font-extrabold tracking-tight text-foreground sm:text-[26px]">{t('title')}</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t('subtitle')}
+            </p>
+          </div>
         </div>
         <GatedButton
           canAct={canCreate}
           gateReason="create broadcasts"
           onClick={() => router.push('/broadcasts/new')}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="bg-primary font-semibold text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
           {t('newBroadcast')}
         </GatedButton>
-      </div>
+      </section>
 
       {broadcasts.length === 0 ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
-          <Radio className="mb-3 h-10 w-10 text-muted-foreground" />
+        <div className="flex h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card px-4 text-center shadow-sm">
+          <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary">
+            <Radio className="h-7 w-7" />
+          </span>
           <p className="text-sm font-medium text-foreground">{t('noBroadcastsYet')}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {t('createFirst')}
@@ -209,26 +221,26 @@ export default function BroadcastsPage() {
             canAct={canCreate}
             gateReason="create broadcasts"
             onClick={() => router.push('/broadcasts/new')}
-            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="mt-4 bg-primary font-semibold text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90"
           >
             <Plus className="h-4 w-4" />
             {t('newBroadcast')}
           </GatedButton>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
           <Table>
             <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-muted-foreground">{t('table.name')}</TableHead>
-                <TableHead className="hidden text-muted-foreground md:table-cell">{t('table.template')}</TableHead>
-                <TableHead className="hidden text-right text-muted-foreground sm:table-cell">
+              <TableRow className="border-border bg-muted/40 hover:bg-muted/40">
+                <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.name')}</TableHead>
+                <TableHead className="hidden text-xs font-bold tracking-wider text-muted-foreground uppercase md:table-cell">{t('table.template')}</TableHead>
+                <TableHead className="hidden text-right text-xs font-bold tracking-wider text-muted-foreground uppercase sm:table-cell">
                   {t('table.recipients')}
                 </TableHead>
-                <TableHead className="hidden text-muted-foreground lg:table-cell">{t('table.delivery')}</TableHead>
-                <TableHead className="hidden text-muted-foreground lg:table-cell">{t('table.read')}</TableHead>
-                <TableHead className="text-muted-foreground">{t('table.status')}</TableHead>
-                <TableHead className="hidden text-muted-foreground sm:table-cell">{t('table.date')}</TableHead>
+                <TableHead className="hidden text-xs font-bold tracking-wider text-muted-foreground uppercase lg:table-cell">{t('table.delivery')}</TableHead>
+                <TableHead className="hidden text-xs font-bold tracking-wider text-muted-foreground uppercase lg:table-cell">{t('table.read')}</TableHead>
+                <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.status')}</TableHead>
+                <TableHead className="hidden text-xs font-bold tracking-wider text-muted-foreground uppercase sm:table-cell">{t('table.date')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -237,10 +249,10 @@ export default function BroadcastsPage() {
                 return (
                   <TableRow
                     key={broadcast.id}
-                    className="cursor-pointer border-border hover:bg-muted/50"
+                    className="cursor-pointer border-border transition-colors hover:bg-primary/5"
                     onClick={() => router.push(`/broadcasts/${broadcast.id}`)}
                   >
-                    <TableCell className="font-medium text-foreground">
+                    <TableCell className="font-semibold text-foreground">
                       {broadcast.name}
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground md:table-cell">
