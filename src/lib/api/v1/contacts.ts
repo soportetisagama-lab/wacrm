@@ -156,11 +156,11 @@ export async function findOrCreateContact(
 }
 
 /**
- * Whether an API key may take xlr8 status tags off contacts: only when
+ * Whether an API key may put xlr8 status tags on or take them off: only when
  * the member who minted it is still admin/owner of the account. A key
  * whose author was removed (createdBy null) or demoted can't.
  */
-export async function apiKeyCanRemoveEstadoTags(
+export async function apiKeyCanManageEstadoTags(
   db: SupabaseClient,
   accountId: string,
   createdBy: string | null
