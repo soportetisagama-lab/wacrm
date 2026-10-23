@@ -11,7 +11,7 @@ import { Step2SelectAudience } from '@/components/broadcasts/step2-select-audien
 import { Step3Personalize } from '@/components/broadcasts/step3-personalize';
 import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
 import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
-import { Check } from 'lucide-react';
+import { Check, FileText, Megaphone, Send, SlidersHorizontal, Users } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 const steps = [
@@ -20,6 +20,13 @@ const steps = [
   { label: 'personalize', key: 'personalize' },
   { label: 'send', key: 'send' },
 ] as const;
+
+const STEP_ICONS = {
+  template: FileText,
+  audience: Users,
+  personalize: SlidersHorizontal,
+  send: Send,
+} as const;
 
 export default function NewBroadcastPage() {
   const router = useRouter();
@@ -130,57 +137,88 @@ export default function NewBroadcastPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('subtitle')}
-        </p>
-      </div>
+    <div className="flex w-full flex-col gap-6">
+      {/* Header — same card + faint brand wash as the Panel hero */}
+      <section className="relative isolate overflow-hidden rounded-3xl border border-border bg-card px-5 pt-6 pb-5 shadow-sm sm:px-8">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-32"
+          style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 75%)' }}
+        />
+        <div className="flex items-center gap-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-primary ring-4 ring-primary/10">
+            <Megaphone className="h-6 w-6" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-2xl leading-tight font-extrabold tracking-tight text-foreground sm:text-[26px]">{t('title')}</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t('subtitle')}
+            </p>
+          </div>
+        </div>
 
-      {/* Step Indicator */}
-      <div className="flex items-center justify-between">
-        {steps.map((step, index) => {
-          const isActive = index === currentStep;
-          const isCompleted = index < currentStep;
+        {/* Step Indicator */}
+        <ol className="mt-6 grid grid-cols-4 gap-2 sm:gap-3">
+          {steps.map((step, index) => {
+            const isActive = index === currentStep;
+            const isCompleted = index < currentStep;
+            const StepIcon = STEP_ICONS[step.key];
 
-          return (
-            <div key={step.key} className="flex flex-1 items-center">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all ${
-                    isCompleted
-                      ? 'bg-primary text-primary-foreground'
-                      : isActive
-                        ? 'border-2 border-primary bg-primary/10 text-primary'
-                        : 'border border-border bg-muted text-muted-foreground'
-                  }`}
-                >
-                  {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
+            return (
+              <li
+                key={step.key}
+                aria-current={isActive ? 'step' : undefined}
+                className={`flex min-w-0 flex-col gap-2 rounded-2xl border p-2.5 transition-colors sm:p-3 ${
+                  isActive
+                    ? 'border-primary/40 bg-primary/8 shadow-sm'
+                    : isCompleted
+                      ? 'border-transparent bg-primary/5'
+                      : 'border-transparent bg-muted/50'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-all sm:h-9 sm:w-9 ${
+                      isCompleted
+                        ? 'bg-primary text-primary-foreground'
+                        : isActive
+                          ? 'bg-primary text-primary-foreground shadow-md shadow-primary/30'
+                          : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {isCompleted ? <Check className="h-4 w-4" /> : <StepIcon className="h-4 w-4" />}
+                  </span>
+                  <span className="hidden min-w-0 sm:block">
+                    <span className="block text-[10px] font-bold tracking-wider text-muted-foreground uppercase tabular-nums">
+                      {index + 1} / {steps.length}
+                    </span>
+                    <span
+                      className={`block truncate text-sm font-semibold ${
+                        isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {t(`steps.${step.label}`)}
+                    </span>
+                  </span>
                 </div>
-                <span
-                  className={`hidden text-sm font-medium sm:block ${
-                    isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
-                  }`}
-                >
-                  {t(`steps.${step.label}`)}
+                <span className="h-1 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className={`block h-full rounded-full bg-primary transition-[width] duration-300 ${
+                      isCompleted ? 'w-full' : isActive ? 'w-1/2' : 'w-0'
+                    }`}
+                  />
                 </span>
-              </div>
-              {index < steps.length - 1 && (
-                <div
-                  className={`mx-3 h-px flex-1 ${
-                    index < currentStep ? 'bg-primary' : 'bg-muted'
-                  }`}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
+              </li>
+            );
+          })}
+        </ol>
+        <p className="mt-3 text-center text-sm font-semibold text-foreground sm:hidden">
+          {t(`steps.${steps[currentStep].label}`)}
+        </p>
+      </section>
 
       {/* Step Content */}
-      <div className="relative min-h-[400px]">
+      <div className="relative min-h-[400px] rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
         <div
           className="transition-all duration-300 ease-in-out"
           style={{
