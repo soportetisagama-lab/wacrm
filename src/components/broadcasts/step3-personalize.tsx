@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2, SlidersHorizontal } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 type VariableType = 'static' | 'field' | 'custom_field';
@@ -235,15 +235,20 @@ export function Step3Personalize({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">{t('personalize.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('personalize.subtitle')}
-        </p>
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+          <SlidersHorizontal className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg leading-tight font-bold text-foreground">{t('personalize.title')}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {t('personalize.subtitle')}
+          </p>
+        </div>
       </div>
 
       {mediaHeaderType && (
-        <div className="rounded-xl border border-border bg-card/50 p-4">
+        <div className="rounded-xl border border-border bg-muted/30 p-4">
           <div className="mb-3 flex items-center gap-2">
             <ImageIcon className="h-4 w-4 text-primary" />
             <p className="text-sm font-medium text-foreground">{t('personalize.headerImage')}</p>
@@ -285,7 +290,7 @@ export function Step3Personalize({
       )}
 
       {placeholders.length === 0 && !mediaHeaderType ? (
-        <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
+        <div className="rounded-xl border border-dashed border-border bg-muted/30 p-6 text-center">
           <p className="text-sm text-muted-foreground">
             {t('personalize.noPreview')}
           </p>
@@ -299,7 +304,7 @@ export function Step3Personalize({
             return (
               <div
                 key={placeholder}
-                className="rounded-xl border border-border bg-card/50 p-4"
+                className="rounded-xl border border-border bg-muted/30 p-4"
               >
                 <div className="mb-3 flex items-center gap-2">
                   <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-mono font-medium text-primary">
@@ -402,7 +407,7 @@ export function Step3Personalize({
 
       {/* Live Preview — rendered as a WhatsApp-style bubble so the user
           sees approximately what the recipient will see. */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
+      <div className="rounded-xl border border-border bg-muted/30 p-4">
         <div className="mb-3 flex items-center gap-2">
           <Eye className="h-4 w-4 text-primary" />
           <p className="text-sm font-medium text-foreground">{t('personalize.preview')}</p>
@@ -430,11 +435,11 @@ export function Step3Personalize({
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-5">
         <Button
           variant="outline"
           onClick={onBack}
-          className="border-border text-muted-foreground"
+          className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           {t('back')}
@@ -442,7 +447,7 @@ export function Step3Personalize({
         <Button
           onClick={onNext}
           disabled={unmappedKeys.length > 0 || headerMediaError !== null}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="bg-primary font-semibold text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90 disabled:opacity-50 disabled:shadow-none"
         >
           {t('next')}
           <ArrowRight className="h-4 w-4" />

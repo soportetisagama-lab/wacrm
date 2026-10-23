@@ -51,15 +51,15 @@ interface StatCardProps {
 function StatCard({ label, value, total, icon, color }: StatCardProps) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 shadow-sm transition-shadow duration-200 hover:shadow-md">
       <div className="flex items-center justify-between">
-        <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${color}`}>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${color}`}>
           {icon}
         </div>
-        <span className="text-xs text-muted-foreground">{pct}%</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground tabular-nums">{pct}%</span>
       </div>
-      <p className="mt-3 text-2xl font-bold text-foreground">{value.toLocaleString()}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xs font-semibold text-muted-foreground">{label}</p>
+      <p className="text-3xl leading-none font-black text-foreground tabular-nums">{value.toLocaleString()}</p>
     </div>
   );
 }
@@ -78,8 +78,13 @@ interface FunnelStep {
 function FunnelChart({ steps }: { steps: FunnelStep[] }) {
   const max = Math.max(...steps.map((s) => s.value), 1);
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <h3 className="mb-4 text-sm font-medium text-foreground">Embudo</h3>
+    <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+          <Filter className="h-5 w-5" />
+        </span>
+        <h3 className="text-[15px] font-bold text-foreground">Embudo</h3>
+      </div>
       <div className="space-y-2">
         {steps.map((step) => {
           const pctOfMax = Math.max(5, Math.round((step.value / max) * 100));
@@ -89,7 +94,7 @@ function FunnelChart({ steps }: { steps: FunnelStep[] }) {
               : 0;
           return (
             <div key={step.label} className="flex items-center gap-3">
-              <span className="w-20 shrink-0 text-xs text-muted-foreground">
+              <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">
                 {step.label}
               </span>
               <div className="relative h-7 flex-1 rounded-full bg-muted">
@@ -275,26 +280,31 @@ export default function BroadcastDetailPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-4">
+      <section className="relative isolate flex flex-wrap items-start justify-between gap-3 overflow-hidden rounded-3xl border border-border bg-card px-5 py-5 shadow-sm sm:px-8">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-32"
+          style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 75%)' }}
+        />
+        <div className="flex min-w-0 items-center gap-4">
           <Button
             variant="outline"
             size="icon"
             onClick={() => router.push('/broadcasts')}
-            className="border-border"
+            className="shrink-0 rounded-xl border-border hover:bg-muted"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-foreground">{broadcast.name}</h1>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="text-2xl leading-tight font-extrabold tracking-tight break-words text-foreground">{broadcast.name}</h1>
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${status.classes}`}
               >
                 {tStatus(status.label)}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-muted-foreground">
               <span>{t('template', { name: broadcast.template_name })}</span>
               <span>-</span>
               <span>
@@ -346,7 +356,7 @@ export default function BroadcastDetailPage() {
             {t('delete')}
           </Button>
         )}
-      </div>
+      </section>
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -397,9 +407,12 @@ export default function BroadcastDetailPage() {
       <FunnelChart steps={funnelSteps} />
 
       {/* Recipients Table */}
-      <div className="rounded-xl border border-border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-          <h2 className="text-sm font-medium text-foreground">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-4">
+          <h2 className="flex items-center gap-3 text-[15px] font-bold text-foreground">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+              <Users className="h-5 w-5" />
+            </span>
             {statusFilter !== 'all'
               ? t('recipientsHeader', { filtered: filteredRecipients.length, total: recipients.length })
               : t('recipientsHeaderAll', { total: recipients.length })}
@@ -471,21 +484,21 @@ export default function BroadcastDetailPage() {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-muted-foreground">{t('table.contact')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.phone')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.status')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.sent')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.delivered')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.read')}</TableHead>
-                  <TableHead className="text-muted-foreground">{t('table.error')}</TableHead>
+                <TableRow className="border-border bg-muted/40 hover:bg-muted/40">
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.contact')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.phone')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.status')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.sent')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.delivered')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.read')}</TableHead>
+                  <TableHead className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('table.error')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredRecipients.map((recipient) => {
                   const rStatus = getRecipientStatus(recipient.status);
                   return (
-                    <TableRow key={recipient.id} className="border-border">
+                    <TableRow key={recipient.id} className="border-border transition-colors hover:bg-muted/40">
                       <TableCell className="font-medium text-foreground">
                         {recipient.contact?.name ?? 'Unknown'}
                       </TableCell>

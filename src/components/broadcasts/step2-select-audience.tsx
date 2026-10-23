@@ -221,14 +221,19 @@ export function Step2SelectAudience({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">{t('selectAudience.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('selectAudience.subtitle')}
-        </p>
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+          <Users className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg leading-tight font-bold text-foreground">{t('selectAudience.title')}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {t('selectAudience.subtitle')}
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {audienceOptions.map((option: { type: AudienceType; label: string; description: string; icon: typeof Users }) => {
           const isSelected = audience.type === option.type;
           const Icon = option.icon;
@@ -250,23 +255,23 @@ export function Step2SelectAudience({
                     option.type === 'csv' ? audience.csvContacts : undefined,
                 })
               }
-              className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
+              className={`flex items-start gap-3 rounded-2xl border p-4 text-left shadow-sm transition-all duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
                 isSelected
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                  : 'border-border bg-card/50 hover:border-border'
+                  ? 'border-primary bg-primary/5 ring-2 ring-primary/25'
+                  : 'border-border bg-card hover:border-primary/40'
               }`}
             >
               <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
                   isSelected
-                    ? 'bg-primary/10 text-primary'
-                    : 'bg-muted text-muted-foreground'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-primary/12 text-primary'
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-5 w-5" />
               </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">{option.label}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-foreground">{option.label}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {option.description}
                 </p>
@@ -277,7 +282,7 @@ export function Step2SelectAudience({
       </div>
 
       {audience.type === 'tags' && (
-        <div className="rounded-xl border border-border bg-card/50 p-4">
+        <div className="rounded-xl border border-border bg-muted/30 p-4">
           <p className="mb-3 text-sm font-medium text-foreground">{t('selectAudience.selectTags')}</p>
           {loadingTags ? (
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -313,7 +318,7 @@ export function Step2SelectAudience({
       )}
 
       {audience.type === 'custom_field' && (
-        <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4">
+        <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
           <p className="text-sm font-medium text-foreground">{t('selectAudience.method.customField')}</p>
           {loadingFields ? (
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -363,7 +368,7 @@ export function Step2SelectAudience({
       )}
 
       {/* Exclude list — applies regardless of audience type */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
+      <div className="rounded-xl border border-border bg-muted/30 p-4">
         <div className="mb-3 flex items-center gap-2">
           <X className="h-4 w-4 text-red-400" />
           <p className="text-sm font-medium text-foreground">
@@ -399,8 +404,8 @@ export function Step2SelectAudience({
       </div>
 
       {/* Audience Summary */}
-      <div className="rounded-xl border border-border bg-card/50 p-4">
-        <p className="mb-2 text-sm font-medium text-foreground">Resumen de audiencia</p>
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <p className="mb-2 text-sm font-bold text-foreground">Resumen de audiencia</p>
         {loadingCount ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -408,8 +413,10 @@ export function Step2SelectAudience({
           </div>
         ) : estimatedCount !== null ? (
           <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" />
-            <span className="text-sm text-foreground">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/12 text-primary">
+              <Users className="h-4 w-4" />
+            </span>
+            <span className="text-2xl leading-none font-black text-foreground tabular-nums">
               {estimatedCount.toLocaleString()}
             </span>
             <span className="text-xs text-muted-foreground">destinatarios estimados</span>
@@ -421,11 +428,11 @@ export function Step2SelectAudience({
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-5">
         <Button
           variant="outline"
           onClick={onBack}
-          className="border-border text-muted-foreground"
+          className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           {t('back')}
@@ -433,7 +440,7 @@ export function Step2SelectAudience({
         <Button
           onClick={onNext}
           disabled={!isValid}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="bg-primary font-semibold text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary/90 disabled:opacity-50 disabled:shadow-none"
         >
           {t('next')}
           <ArrowRight className="h-4 w-4" />
