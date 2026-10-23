@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { canRemoveEstadoTags, type AccountRole } from '@/lib/auth/roles';
+import { canManageEstadoTags, type AccountRole } from '@/lib/auth/roles';
 import { isEstadoTag } from '@/lib/xlr8/estados';
 
 export class ContactTagWriteError extends Error {
@@ -50,16 +50,37 @@ async function assertContactAndTagOwnership(
   return tagResult.data as { name?: string; is_shared?: boolean | null };
 }
 
+/** Without admin/owner, xlr8 status tags can't be put on or taken off. */
+function assertCanWriteEstadoTag(
+  tag: { name?: string; is_shared?: boolean | null },
+  actorRole: AccountRole | undefined
+): void {
+  if (
+    actorRole &&
+    !canManageEstadoTags(actorRole) &&
+    typeof tag.name === 'string' &&
+    isEstadoTag({ name: tag.name, is_shared: tag.is_shared })
+  ) {
+    throw new ContactTagWriteError(
+      'Solo un administrador puede poner o quitar etiquetas de estado.',
+      403
+    );
+  }
+}
+
 /**
  * Add a tag exactly once. The unique constraint on
  * (contact_id, tag_id) is the concurrency-safe source of truth: a
  * duplicate insert is a no-op and must not emit a tag_added event.
+ * `actorRole` works as in removeContactTag.
  */
 export async function addContactTagIfAbsent(
   db: SupabaseClient,
-  input: ContactTagWriteInput
+  input: ContactTagWriteInput,
+  actorRole?: AccountRole
 ): Promise<boolean> {
-  await assertContactAndTagOwnership(db, input);
+  const tag = await assertContactAndTagOwnership(db, input);
+  assertCanWriteEstadoTag(tag, actorRole);
 
   const { error } = await db
     .from('contact_tags')
@@ -87,18 +108,7 @@ export async function removeContactTag(
   actorRole?: AccountRole
 ): Promise<void> {
   const tag = await assertContactAndTagOwnership(db, input);
-
-  if (
-    actorRole &&
-    !canRemoveEstadoTags(actorRole) &&
-    typeof tag.name === 'string' &&
-    isEstadoTag({ name: tag.name, is_shared: tag.is_shared })
-  ) {
-    throw new ContactTagWriteError(
-      'Solo un administrador puede quitar etiquetas de estado.',
-      403
-    );
-  }
+  assertCanWriteEstadoTag(tag, actorRole);
 
   const { error } = await db
     .from('contact_tags')
