@@ -68,6 +68,7 @@ describe('/api/contacts/[id]/tags', () => {
       accountId: 'account-1',
       contactId: 'contact-1',
       tagId: 'tag-1',
+      actorRole: 'agent',
     });
   });
 
