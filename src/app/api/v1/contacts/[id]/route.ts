@@ -13,7 +13,7 @@ import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import {
   getContactById,
   setContactTags,
-  apiKeyCanRemoveEstadoTags,
+  apiKeyCanManageEstadoTags,
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
@@ -90,7 +90,7 @@ export async function PATCH(
         id,
         body.tags.filter((t): t is string => typeof t === 'string'),
         'replace',
-        await apiKeyCanRemoveEstadoTags(ctx.supabase, ctx.accountId, ctx.createdBy)
+        await apiKeyCanManageEstadoTags(ctx.supabase, ctx.accountId, ctx.createdBy)
       );
     }
 
