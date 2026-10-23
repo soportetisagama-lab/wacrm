@@ -587,7 +587,7 @@
       "deals": "Negocios",
       "noTags": "Sin etiquetas",
       "removeTag": "Quitar etiqueta",
-      "estadoTagLocked": "Solo un administrador puede quitar esta etiqueta de estado.",
+      "estadoTagLocked": "Solo un administrador puede poner o quitar etiquetas de estado.",
       "tagShort": "Etiqueta",
       "tagUpdateFailed": "No se pudo actualizar la etiqueta",
       "tagAdd": "Agregar etiqueta",

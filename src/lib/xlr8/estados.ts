@@ -35,8 +35,8 @@ export function isEstado(name: string): boolean {
 /**
  * True for the shared tags the xlr8 sync manages. A personal tag that
  * happens to share a status name is NOT one (the sync only uses shared
- * tags). Only admin/owner may take these off a contact — see
- * canRemoveEstadoTags and supabase/migrations/077_contact_tags_estado_admin_only.sql.
+ * tags). Only admin/owner may put these on or take them off a contact —
+ * see canManageEstadoTags and supabase/migrations/077 + 078.
  */
 export function isEstadoTag(tag: { name: string; is_shared?: boolean | null }): boolean {
   return tag.is_shared !== false && isEstado(tag.name);

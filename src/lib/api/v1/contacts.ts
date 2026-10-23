@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
-import { canRemoveEstadoTags, isAccountRole } from '@/lib/auth/roles';
+import { canManageEstadoTags, isAccountRole } from '@/lib/auth/roles';
 import { isEstadoTag } from '@/lib/xlr8/estados';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
@@ -173,7 +173,7 @@ export async function apiKeyCanRemoveEstadoTags(
     .eq('account_id', accountId)
     .maybeSingle();
   const role = data?.account_role;
-  return isAccountRole(role) && canRemoveEstadoTags(role);
+  return isAccountRole(role) && canManageEstadoTags(role);
 }
 
 /**
@@ -189,8 +189,8 @@ export async function setContactTags(
   contactId: string,
   tagNames: string[],
   mode: 'replace' | 'add' = 'replace',
-  /** false → refuse (403) to remove xlr8 status tags. */
-  canRemoveEstados = true
+  /** false → refuse (403) to add or remove xlr8 status tags. */
+  canManageEstados = true
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
@@ -229,15 +229,16 @@ export async function setContactTags(
   const toRemove =
     mode === 'replace' ? [...existing].filter((id) => !desired.has(id)) : [];
 
-  if (toRemove.length > 0 && !canRemoveEstados) {
-    const { data: removing, error } = await db
+  const changing = [...toAdd, ...toRemove];
+  if (changing.length > 0 && !canManageEstados) {
+    const { data: changed, error } = await db
       .from('tags')
       .select('name, is_shared')
       .eq('account_id', accountId)
-      .in('id', toRemove);
+      .in('id', changing);
     if (error) throw new ContactError('Failed to read contact tags', 500);
-    if ((removing ?? []).some((tag) => isEstadoTag(tag as { name: string; is_shared: boolean | null }))) {
-      throw new ContactError('Only an account admin can remove status tags', 403);
+    if ((changed ?? []).some((tag) => isEstadoTag(tag as { name: string; is_shared: boolean | null }))) {
+      throw new ContactError('Only an account admin can add or remove status tags', 403);
     }
   }
   if (toRemove.length > 0) {

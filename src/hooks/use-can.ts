@@ -8,7 +8,7 @@ import {
   canDraftWithAi,
   canEditSettings,
   canManageMembers,
-  canRemoveEstadoTags,
+  canManageEstadoTags,
   canSendMessages,
   canSendTemplates,
   canTransferOwnership,
@@ -34,7 +34,7 @@ export type CanAction =
   | 'transfer-ownership'
   | 'assign-conversations'
   | 'view-team-members'
-  | 'remove-estado-tags';
+  | 'manage-estado-tags';
 
 /**
  * Inline alternative to `<RequireRole>` for places that need a
@@ -76,8 +76,8 @@ export function useCan(action: CanAction): boolean {
       return canAssignConversations(accountRole);
     case 'view-team-members':
       return canViewTeamMembers(accountRole);
-    case 'remove-estado-tags':
-      return canRemoveEstadoTags(accountRole);
+    case 'manage-estado-tags':
+      return canManageEstadoTags(accountRole);
     default: {
       // Exhaustiveness check — adding a new `CanAction` without a
       // case here fails the typecheck because TS narrows `action`
