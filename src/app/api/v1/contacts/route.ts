@@ -20,6 +20,7 @@ import {
   serializeContact,
   findOrCreateContact,
   setContactTags,
+  apiKeyCanManageEstadoTags,
   getContactById,
   resolveAuditUserId,
   ContactError,
@@ -132,7 +133,8 @@ export async function POST(request: Request) {
         id,
         body.tags.filter((t): t is string => typeof t === 'string'),
         // Find-or-create: a contact that already existed keeps its tags.
-        created ? 'replace' : 'add'
+        created ? 'replace' : 'add',
+        await apiKeyCanManageEstadoTags(ctx.supabase, ctx.accountId, ctx.createdBy)
       );
     }
 
