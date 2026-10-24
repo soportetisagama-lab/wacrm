@@ -232,7 +232,9 @@ export function SocialConfig() {
             <Label htmlFor="social-page-id">{t('pageIdLabel')}</Label>
             <Input
               id="social-page-id"
+              name="social-page-id"
               inputMode="numeric"
+              autoComplete="off"
               value={pageId}
               onChange={(e) => setPageId(e.target.value.trim())}
               placeholder="123456789012345"
@@ -242,8 +244,11 @@ export function SocialConfig() {
             <Label htmlFor="social-token">{t('tokenLabel')}</Label>
             <Input
               id="social-token"
+              name="social-token"
               type="password"
-              autoComplete="off"
+              // "new-password": Chrome ignores "off" on password fields and
+              // would autofill the admin's login password here.
+              autoComplete="new-password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder={connected.length > 0 ? t('tokenKeepPlaceholder') : 'EAAG…'}

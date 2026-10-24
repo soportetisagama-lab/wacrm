@@ -175,6 +175,25 @@ export interface PageInfo {
   instagram: { id: string; username: string | null; name: string | null } | null
 }
 
+/**
+ * The admin may paste a user / system-user token instead of a Page token.
+ * Page endpoints (subscribed_apps, Send API) need the Page token, so ask
+ * Meta for it; a Page token derived from a never-expiring system-user
+ * token never expires either. Falls back to the pasted token when Meta
+ * doesn't return one (e.g. it already is a Page token).
+ */
+export async function resolvePageAccessToken(args: { pageId: string; accessToken: string }): Promise<string> {
+  try {
+    const d = await graphFetch<{ access_token?: string }>(
+      `${encodeURIComponent(args.pageId)}?fields=access_token`,
+      { accessToken: args.accessToken },
+    )
+    return d.access_token || args.accessToken
+  } catch {
+    return args.accessToken
+  }
+}
+
 /** Validate a Page token and discover the linked Instagram professional account. */
 export async function fetchPageInfo(args: { pageId: string; accessToken: string }): Promise<PageInfo> {
   const d = await graphFetch<{

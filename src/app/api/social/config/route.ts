@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { decrypt, encrypt } from '@/lib/whatsapp/encryption'
-import { fetchPageInfo, subscribePageToApp } from '@/lib/social/graph'
+import { fetchPageInfo, resolvePageAccessToken, subscribePageToApp } from '@/lib/social/graph'
 import { isSocialChannel, type SocialChannel } from '@/lib/channels/types'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 
@@ -105,6 +105,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'El token guardado no se puede leer. Pégalo de nuevo.' }, { status: 400 })
       }
     }
+
+    accessToken = await resolvePageAccessToken({ pageId, accessToken })
 
     let page
     try {
