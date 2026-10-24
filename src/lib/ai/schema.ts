@@ -5,6 +5,7 @@ import {
   TRANSCRIPT_ANNOTATIONS_GUIDANCE,
   NO_PRICES_GUIDANCE,
   customerMemoryBlock,
+  learnedRulesBlock,
 } from './defaults'
 
 // ============================================================
@@ -135,8 +136,10 @@ export function buildExtractionPrompt(args: {
   /** Learned memory of this customer, already rendered (see
    *  customerMemoryBlock in ./defaults). */
   customerMemory?: string | null
+  /** Rules learned by the nightly self-review (see learnedRulesBlock). */
+  learnedRules?: string[]
 }): string {
-  const { fields, knownValues, systemContext, documents, customerMemory } = args
+  const { fields, knownValues, systemContext, documents, customerMemory, learnedRules } = args
   const known = fields.filter((f) => knownValues[f.key]?.trim())
   const missing = fields.filter((f) => !knownValues[f.key]?.trim())
 
@@ -194,6 +197,8 @@ export function buildExtractionPrompt(args: {
   if (systemContext && systemContext.trim()) {
     parts.push(`Business context and instructions:\n${systemContext.trim()}`)
   }
+  const rulesBlock = learnedRulesBlock(learnedRules)
+  if (rulesBlock) parts.push(rulesBlock)
   const memoryBlock = customerMemoryBlock(customerMemory)
   if (memoryBlock) parts.push(memoryBlock)
   // Last on purpose: overrides any price in the business context above.
