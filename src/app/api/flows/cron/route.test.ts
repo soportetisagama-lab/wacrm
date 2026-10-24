@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // ---------------------------------------------------------------------------
 
 const h = vi.hoisted(() => ({
+  // Stands in for runAutoReplyForOrphanedWindow (the sweep's entry point).
   runAutoReplyNow: vi.fn().mockResolvedValue(undefined),
+  recoverCollectAi: vi.fn().mockResolvedValue(false),
   engineSendText: vi.fn().mockResolvedValue(undefined),
   state: {
     flowRuns: [] as Record<string, unknown>[],
@@ -26,12 +28,18 @@ const h = vi.hoisted(() => ({
     // Keyed by `${flow_id}:${node_key}`.
     flowNodes: {} as Record<string, { node_type: string; config: Record<string, unknown> }>,
     flowRunEvents: [] as Record<string, unknown>[],
+    assignedAgentId: null as string | null,
   },
 }))
 
 vi.mock('@/lib/ai/auto-reply', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai/auto-reply')>()
-  return { ...actual, runAutoReplyNow: h.runAutoReplyNow }
+  return { ...actual, runAutoReplyForOrphanedWindow: h.runAutoReplyNow }
+})
+
+vi.mock('@/lib/flows/engine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/flows/engine')>()
+  return { ...actual, recoverCollectAiDebounce: h.recoverCollectAi }
 })
 
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
@@ -97,6 +105,16 @@ vi.mock('@/lib/flows/admin-client', () => ({
       }
       if (table === 'conversations') {
         return {
+          // .select('assigned_agent_id').eq('id', …).maybeSingle() — nudge gate
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: { assigned_agent_id: h.state.assignedAgentId },
+                  error: null,
+                }),
+            }),
+          }),
           // .update({ ai_debounce_until: null }).lt('ai_debounce_until', cutoff).select(...)
           update: () => ({
             lt: (_col: string, cutoff: string) => ({
@@ -156,7 +174,10 @@ function secondsAgo(seconds: number): string {
 beforeEach(() => {
   process.env.AUTOMATION_CRON_SECRET = SECRET
   h.runAutoReplyNow.mockClear()
+  h.recoverCollectAi.mockReset()
+  h.recoverCollectAi.mockResolvedValue(false)
   h.engineSendText.mockClear()
+  h.state.assignedAgentId = null
   h.state.flowRuns = []
   h.state.conversations = []
   h.state.whatsappConfigs = {}
@@ -245,7 +266,6 @@ describe('GET /api/flows/cron — debounce sweep', () => {
       conversationId: 'conv-1',
       contactId: 'contact-1',
       configOwnerUserId: 'user-1',
-      isTextMessage: true,
     })
     expect(body.debounceRecovered).toBe(1)
     // The "owner died mid-sleep" scenario this test simulates: nothing
@@ -467,5 +487,43 @@ describe('GET /api/flows/cron — inactivity nudge defaults', () => {
 
     expect(body.nudged).toBe(0)
     expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+})
+
+describe('GET /api/flows/cron — nudge skipped for an assigned chat, collect_ai debounce recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-05T15:00:00Z')) // Monday 10:00 Lima
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('never sends the inactivity nudge when an advisor is assigned to the conversation', async () => {
+    h.state.flowRuns = [activeRun()]
+    h.state.flowNodes['flow-1:node-1'] = { node_type: 'send_list', config: {} }
+    h.state.assignedAgentId = 'agent-1'
+
+    const body = await (await GET(request())).json()
+
+    expect(body.nudged).toBe(0)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('an orphaned window of a collect_ai run is answered by the node, not the general assistant', async () => {
+    h.state.conversations = [
+      {
+        id: 'conv-1',
+        account_id: 'acct-1',
+        contact_id: 'contact-1',
+        ai_debounce_until: secondsAgo(DEBOUNCE_SWEEP_GRACE_SECONDS + 30),
+      },
+    ]
+    h.state.whatsappConfigs['acct-1'] = { user_id: 'user-1' }
+    h.recoverCollectAi.mockResolvedValue(true)
+
+    const body = await (await GET(request())).json()
+
+    expect(h.recoverCollectAi).toHaveBeenCalledWith('acct-1', 'contact-1')
+    expect(h.runAutoReplyNow).not.toHaveBeenCalled()
+    expect(body.debounceRecovered).toBe(1)
   })
 })

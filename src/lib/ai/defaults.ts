@@ -1,4 +1,5 @@
 import type { AiDocument, AiProvider } from './types'
+import { formatPeruDateTime } from './annotations'
 
 // ============================================================
 // Tunables + prompt scaffold for the AI reply assistant.
@@ -73,6 +74,26 @@ export const HUMAN_STYLE_GUIDANCE =
   'avoid bot-like phrases such as "¡Excelente pregunta!", "Con gusto te ayudo", "Como asistente virtual", "Estoy aquí para ayudarte" or "¿Hay algo más en lo que pueda ayudarte?"; ' +
   'greet only in your first message of the conversation, never sign off with a signature, and use emojis sparingly (at most one, and not in every message).'
 
+/**
+ * How to read the bracketed notes `buildConversationContext` adds to
+ * the transcript (lib/ai/annotations.ts) — and never to write them.
+ */
+export const TRANSCRIPT_ANNOTATIONS_GUIDANCE =
+  'The transcript carries system notes in square brackets: "[Asesor]" marks a message written by a human advisor of the business (not by you), "[Se envió: …]" means that file was already sent to the customer, "Opciones: 1) … 2) …" lists the options of a menu the business sent (so "la 2" or an option name refers to it), "[Ubicación compartida]" is a location the customer shared, and a "[día dd/mm hh:mm]" stamp shows when a message was sent after a pause. ' +
+  'Use them to understand the conversation — do not send again a file that was already sent unless the customer asks for it again, and do not contradict what an advisor said — but never write these notes in your reply.'
+
+/**
+ * When the auto-reply bot should hand off. Advisors reported it
+ * handing off far too often (any doubt, any sign of impatience), so it
+ * only does so for a real reason; otherwise it keeps helping, or says
+ * honestly what it doesn't know.
+ */
+const AUTO_REPLY_HANDOFF_GUIDANCE =
+  `You are replying automatically with no human in the loop. Reply with exactly ${HANDOFF_SENTINEL} and nothing else (a human advisor then takes over) ONLY when: the customer asks to talk to a person or an advisor, or accepts your offer to pass them to one; the customer raises a serious complaint (a problem with an order, a delivery, a product, a charge) or is clearly angry; or the conversation keeps getting stuck on the same point after you already tried to resolve it. ` +
+  'Mild impatience is not a reason to hand off: if the customer says something like "ya te dije", "otra vez" or "no me entiendes", apologize briefly, re-read the conversation and continue from what they already told you, without asking for it again. ' +
+  'When you do not know something (a price, stock, a delivery date, a technical detail that is not in the business context or the knowledge base), say so honestly in one short sentence and offer to pass them to an advisor — never invent it. ' +
+  'Sending one of the documents listed below is never a reason to hand off.'
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_TRANSCRIBE_TIMEOUT_MS = 60_000
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 20
@@ -123,8 +144,21 @@ export function buildSystemPrompt(args: {
   /** Note left when this chat was transferred OUT to another line
    *  (lib/line-transfer-outbound.ts); null/undefined otherwise. */
   outboundTransferNote?: string | null
+  /** The customer's name on file, when there is a real one. */
+  contactName?: string | null
+  /** "Now" for the date/time line (Peru time). Omit to leave it out. */
+  now?: Date
 }): string {
-  const { userPrompt, mode, knowledge, documents, lineTransferContext, outboundTransferNote } = args
+  const {
+    userPrompt,
+    mode,
+    knowledge,
+    documents,
+    lineTransferContext,
+    outboundTransferNote,
+    contactName,
+    now,
+  } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
       'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
@@ -135,12 +169,20 @@ export function buildSystemPrompt(args: {
     NEUTRAL_SPANISH_GUIDANCE,
     HUMAN_STYLE_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
+    TRANSCRIPT_ANNOTATIONS_GUIDANCE,
   ]
 
-  if (mode === 'auto_reply') {
-    parts.push(
-      `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
+  const facts: string[] = []
+  if (now) facts.push(`Current date and time in Peru: ${formatPeruDateTime(now)}.`)
+  if (contactName && contactName.trim()) {
+    facts.push(
+      `The customer's name on file is "${contactName.trim()}" — you may use their first name now and then, naturally; do not ask for it again.`,
     )
+  }
+  if (facts.length > 0) parts.push(facts.join(' '))
+
+  if (mode === 'auto_reply') {
+    parts.push(AUTO_REPLY_HANDOFF_GUIDANCE)
 
     if (documents && documents.length > 0) {
       parts.push(
@@ -177,7 +219,7 @@ export function buildSystemPrompt(args: {
   if (knowledge && knowledge.length > 0) {
     const fallback =
       mode === 'auto_reply'
-        ? `if they don't cover the question, do not guess — reply with exactly ${HANDOFF_SENTINEL} so a human can help`
+        ? "if they don't cover the question, do not guess — say honestly that you don't have that detail and offer to pass them to an advisor"
         : "if they don't cover the question, don't guess — say you'll check and follow up"
     parts.push(
       'Knowledge base — excerpts from the business\'s own documentation, retrieved for this question. ' +

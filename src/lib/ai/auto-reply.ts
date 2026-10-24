@@ -15,8 +15,15 @@ import { writeHandoffBrief } from './handoff-brief'
 import { logAiUsage } from './usage'
 import { isAiKeyPaused, isAiOutOfServiceError } from './availability'
 import { notifyAdminsAiUnavailable } from './availability-notify'
-import { latestUserMessage } from './query'
+import { recentUserMessages } from './query'
 import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
+import {
+  DEBOUNCE_SWEEP_GRACE_SECONDS,
+  lastBusinessMessageIs,
+  runDebounced,
+  summarizePendingBurst,
+} from './debounce'
+import { textOf, type ChatMessage } from './types'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -68,11 +75,50 @@ interface DispatchArgs {
  *  the customer's side, the underlying situation is identical ("a
  *  human takes it from here"). After hours it says when an advisor will
  *  actually write (same next-opening phrase as the Flows' after-hours
- *  texts) instead of promising "en breve". */
-export function handoffClosingText(now: Date = new Date()): string {
+ *  texts) instead of promising "en breve".
+ *
+ *  `complaint`: the customer is upset — an apology and no emoji.
+ *  `variant`: which wording to use (any integer; the auto-reply picks
+ *  one at random so the line doesn't read canned). Default 0. */
+export function handoffClosingText(
+  now: Date = new Date(),
+  opts: { complaint?: boolean; variant?: number } = {},
+): string {
+  const leads = opts.complaint ? COMPLAINT_CLOSING_LEADS : CLOSING_LEADS
+  const n = leads.length
+  const lead = leads[(((opts.variant ?? 0) % n) + n) % n]
+  if (opts.complaint) {
+    return isWithinBusinessHours(now)
+      ? `${lead} en breve.`
+      : `${lead} ${nextOpeningPhrase(now)}, porque ahora estamos fuera de horario.`
+  }
   return isWithinBusinessHours(now)
-    ? 'Listo, ya le paso tu caso a un asesor del equipo y te escribe por aquí en breve 👍'
-    : `Listo, ya le paso tu caso a un asesor del equipo 👍 Ahora estamos fuera de horario, así que te escribe por aquí ${nextOpeningPhrase(now)}.`
+    ? `${lead} y te escribe por aquí en breve 👍`
+    : `${lead} 👍 Ahora estamos fuera de horario, así que te escribe por aquí ${nextOpeningPhrase(now)}.`
+}
+
+const CLOSING_LEADS = [
+  'Listo, ya le paso tu caso a un asesor del equipo',
+  'Perfecto, ya derivé tu consulta a un asesor del equipo',
+  'Entendido, un asesor del equipo va a tomar tu caso',
+]
+
+const COMPLAINT_CLOSING_LEADS = [
+  'Lamento lo ocurrido. Ya le paso tu caso a un asesor del equipo, que te escribe por aquí',
+  'Entiendo tu molestia y lo siento. Un asesor del equipo va a revisar tu caso y te escribe por aquí',
+]
+
+/** Signs of a complaint or anger in what the customer wrote — picks the
+ *  apologetic, emoji-free closing line. Mild impatience ("ya te dije")
+ *  deliberately doesn't count. */
+const COMPLAINT_RE =
+  /queja|reclam|molest|enojad|enfadad|indignad|fastidiad|hart[oa]\b|p[eé]sim|terrible|estafa|nadie (?:me )?(?:responde|contesta|atiende)|no sirve|mal servicio|mala atenci[oó]n|decepcion|inaceptable|denuncia|indecopi|reembolso|devoluci[oó]n|falta de respeto|lleg[oó] (?:roto|rota|mal|da[ñn]ad[oa])/i
+
+export function looksLikeComplaint(messages: ChatMessage[]): boolean {
+  return messages
+    .filter((m) => m.role === 'user')
+    .slice(-3)
+    .some((m) => COMPLAINT_RE.test(textOf(m.content)))
 }
 
 /**
@@ -94,76 +140,19 @@ const FIRST_REPLY_MENU_HINT = '\n\nSi quieres ver todas nuestras opciones, escri
  * (lib/flows/engine.ts) — kept as an independent constant rather than
  * imported across the ai/flows module boundary for a single string
  * the two are free to diverge on later, not because they must always
- * match.
+ * match. Sent once per batch of files (see sendNonTextFallback).
  */
-const AUTO_REPLY_NON_TEXT_FALLBACK_TEXT =
-  'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?'
+export const AUTO_REPLY_NON_TEXT_FALLBACK_TEXT =
+  'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?'
 
 // ============================================================
-// Debounce — coalesce a burst of text messages arriving seconds apart
-// into a single reply, instead of the general assistant answering each
-// one separately. Text-only (see dispatchInboundToAiReply's own
-// isTextMessage branch below) — a media inbound keeps going through the
-// immediate path unchanged. Design: `conversations.ai_debounce_until`
-// (migration 058) plus `claim_ai_debounce_window` is the only safe way
-// to read-and-extend that shared timestamp without a race between two
-// concurrent webhook deliveries for the same conversation.
+// Debounce — coalesce a burst of messages arriving seconds apart into a
+// single reply (lib/ai/debounce.ts, shared with collect_ai). Media goes
+// through it too, so several photos/PDFs in a row get ONE answer (or
+// one "Recibí tu archivo" notice), not one per file.
 // ============================================================
 
-/** Ventana inicial de espera tras el primer mensaje de una posible ráfaga. */
-const DEBOUNCE_WINDOW_SECONDS = 6
-/** Tope duro: el owner nunca espera más que esto en total, sin importar
- *  cuántos mensajes sigan extendiendo la ventana. */
-const MAX_DEBOUNCE_WAIT_SECONDS = 15
-/** Tras dejar de esperar, el owner re-extiende ai_debounce_until por esto
- *  ANTES de llamar al modelo — actúa como lock de "procesando" para que un
- *  mensaje que llegue durante la llamada al proveedor no dispare un segundo
- *  owner compitiendo por la misma ráfaga (ver el hueco documentado: un
- *  mensaje que llega DURANTE la llamada al modelo igual se contesta, pero
- *  recién cuando el sweep del cron lo recupera). */
-const PROCESSING_LOCK_SECONDS = 30
-/** El sweep de /api/flows/cron solo recupera ventanas más viejas que esto —
- *  tiene que ser mayor que MAX_DEBOUNCE_WAIT_SECONDS + PROCESSING_LOCK_SECONDS
- *  para no competir con un owner que sigue vivo y trabajando normalmente. */
-export const DEBOUNCE_SWEEP_GRACE_SECONDS = 90
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * Sleep until `initialWaitUntil`, then recheck whether a follower message
- * extended the window further — loop until it stabilizes (nobody extended
- * it since the last check) or `MAX_DEBOUNCE_WAIT_SECONDS` total have
- * elapsed since this call started, whichever comes first. No I/O beyond
- * one `conversations` read per iteration; never throws — a read failure
- * just ends the wait early (fail toward answering promptly).
- */
-async function waitForDebounceWindowToSettle(
-  db: ReturnType<typeof supabaseAdmin>,
-  conversationId: string,
-  initialWaitUntil: string,
-): Promise<void> {
-  const hardDeadline = Date.now() + MAX_DEBOUNCE_WAIT_SECONDS * 1000
-  let deadline = new Date(initialWaitUntil).getTime()
-  for (;;) {
-    const target = Math.min(deadline, hardDeadline)
-    const ms = target - Date.now()
-    if (ms > 0) await sleep(ms)
-    if (Date.now() >= hardDeadline) return // tope duro — se corta acá pase lo que pase
-    const { data, error } = await db
-      .from('conversations')
-      .select('ai_debounce_until')
-      .eq('id', conversationId)
-      .maybeSingle()
-    if (error) return // no bloquear la respuesta por un error de lectura
-    const current = data?.ai_debounce_until
-      ? new Date(data.ai_debounce_until as string).getTime()
-      : 0
-    if (current <= Date.now()) return // se estabilizó, nadie extendió de nuevo
-    deadline = current // un follower extendió la ventana — dar una vuelta más
-  }
-}
+export { DEBOUNCE_SWEEP_GRACE_SECONDS }
 
 /**
  * Send the fixed "text only" nudge for a media inbound (image/video/
@@ -180,6 +169,16 @@ async function sendNonTextFallback(args: {
   configOwnerUserId: string
 }): Promise<void> {
   try {
+    // Once per batch: the previous file of the same batch already got it.
+    if (
+      await lastBusinessMessageIs(
+        supabaseAdmin(),
+        args.conversationId,
+        AUTO_REPLY_NON_TEXT_FALLBACK_TEXT,
+      )
+    ) {
+      return
+    }
     await engineSendText({
       accountId: args.accountId,
       userId: args.configOwnerUserId,
@@ -203,6 +202,7 @@ async function sendHandoffClosingMessage(args: {
   conversationId: string
   contactId: string
   configOwnerUserId: string
+  complaint?: boolean
 }): Promise<void> {
   try {
     await engineSendText({
@@ -210,7 +210,10 @@ async function sendHandoffClosingMessage(args: {
       userId: args.configOwnerUserId,
       conversationId: args.conversationId,
       contactId: args.contactId,
-      text: handoffClosingText(),
+      text: handoffClosingText(new Date(), {
+        complaint: args.complaint,
+        variant: Math.floor(Math.random() * 6),
+      }),
     })
   } catch (err) {
     console.error('[ai auto-reply] handoff closing message send failed:', err)
@@ -329,19 +332,31 @@ async function handOffWithoutAi(
   })
 }
 
+/** The contact's name when it looks like a real one (not empty, not
+ *  just a phone number). Null on any failure — the prompt then omits it. */
+async function loadContactName(
+  db: ReturnType<typeof supabaseAdmin>,
+  contactId: string,
+): Promise<string | null> {
+  try {
+    const { data } = await db.from('contacts').select('name').eq('id', contactId).maybeSingle()
+    const name = typeof data?.name === 'string' ? data.name.trim() : ''
+    return name && /\p{L}/u.test(name) ? name : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * AI auto-reply for a freshly-arrived inbound message — the actual gates
- * + model call + send. Called three ways:
- *   1. Directly by `dispatchInboundToAiReply` below for a non-text inbound
- *      (no debounce — see that function).
- *   2. By `dispatchInboundToAiReply` for a text inbound, AFTER the debounce
- *      wait/recheck loop settles — so `buildConversationContext` (inside
- *      here) sees every message of the burst, not just the one that
- *      triggered this call.
- *   3. By the `/api/flows/cron` debounce sweep, to recover a conversation
- *      whose debounce "owner" instance died mid-wait (see
- *      DEBOUNCE_SWEEP_GRACE_SECONDS) — always with `isTextMessage: true`,
- *      since only text ever goes through debounce in the first place.
+ * + model call + send. Called two ways:
+ *   1. By `dispatchInboundToAiReply` (text and media alike), AFTER the
+ *      debounce wait/recheck loop settles — so `buildConversationContext`
+ *      (inside here) sees every message of the burst, not just the one
+ *      that triggered this call.
+ *   2. By the `/api/flows/cron` debounce sweep (runAutoReplyForOrphanedWindow),
+ *      to recover a conversation whose debounce "owner" instance died
+ *      mid-wait (see DEBOUNCE_SWEEP_GRACE_SECONDS).
  *
  * Mirrors the flow runner's contract: owns its own try/catch and NEVER
  * throws — a failing or slow LLM call must not affect the webhook's 200 to
@@ -522,12 +537,14 @@ export async function runAutoReplyNow(
       return
     }
 
-    // Ground the reply in the account's knowledge base (best-effort).
+    // Ground the reply in the account's knowledge base (best-effort) —
+    // queried with the customer's last few messages, not only the last
+    // one, so a follow-up ("¿y en acero?") still finds the right excerpt.
     const knowledge = await retrieveKnowledge(
       db,
       accountId,
       config,
-      latestUserMessage(messages),
+      recentUserMessages(messages, 3),
     )
 
     const systemPrompt = buildSystemPrompt({
@@ -537,6 +554,8 @@ export async function runAutoReplyNow(
       documents: config.documents,
       lineTransferContext: await loadLineTransferContext(db, conversationId, contactId),
       outboundTransferNote: await loadOutboundTransferContext(db, conversationId, contactId),
+      contactName: await loadContactName(db, contactId),
+      now: new Date(),
     })
 
     // An empty completion (the model spent its whole budget without
@@ -593,6 +612,7 @@ export async function runAutoReplyNow(
     // whether this turn also ends in a handoff — mirrors collect_ai's
     // sendCollectAiDocumentIfRequested (engine.ts). Best-effort: a
     // failed send is logged but never blocks the rest of the turn.
+    let documentSent = false
     if (sendDocument) {
       const doc = config.documents.find((d) => d.key === sendDocument)
       // Absent despite parseGeneration's own key check would mean
@@ -610,11 +630,16 @@ export async function runAutoReplyNow(
             caption: doc.caption,
             filename: doc.filename,
           })
+          documentSent = true
         } catch (err) {
           console.error('[ai auto-reply] document send failed:', err)
         }
       }
     }
+
+    // The model only asked to send a document (no text, no handoff): the
+    // file already went out — that's the whole answer, not a handoff.
+    if (!handoff && !text && documentSent) return
 
     if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
@@ -629,12 +654,18 @@ export async function runAutoReplyNow(
         messages,
         replyCount: conv.ai_reply_count ?? 0,
       })
-      await sendHandoffClosingMessage({
-        accountId,
-        conversationId,
-        contactId,
-        configOwnerUserId,
-      })
+      // Once per handoff: a thread already handed off (and still waiting
+      // for an advisor — the bot re-opened only because nobody claimed
+      // it) already told the customer an advisor is coming.
+      if (!conv.ai_autoreply_disabled) {
+        await sendHandoffClosingMessage({
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          complaint: looksLikeComplaint(messages),
+        })
+      }
       await markNeedsHuman(db, {
         conversationId,
         config,
@@ -714,79 +745,104 @@ export async function runAutoReplyNow(
 
 /**
  * Public entry point — called by the WhatsApp webhook's `after()` block on
- * every inbound the flow runner did NOT consume. For a non-text inbound
- * this is a thin passthrough to `runAutoReplyNow` (unchanged behavior,
- * zero added latency). For text, it debounces: claims a shared per-
- * conversation window (`claim_ai_debounce_window`, migration 058) so a
- * burst of messages seconds apart gets ONE reply covering all of them
- * instead of one reply per message.
+ * every inbound the flow runner did NOT consume. Every inbound (text and
+ * media alike) goes through the shared debounce (lib/ai/debounce.ts): a
+ * burst of messages seconds apart gets ONE reply covering all of them,
+ * and several photos/PDFs in a row get one answer or one notice. A
+ * message that arrives while the reply is being written is answered
+ * right after it, not dropped.
  *
- * Only the first message of a burst ("owner", `is_owner: true`) waits;
- * every later message in the same burst ("follower") just extends the
- * window and returns immediately — it doesn't need to wait itself because
- * its row is already in `messages` by the time the owner's
- * `buildConversationContext` call (inside `runAutoReplyNow`) runs.
+ * A voice note is transcribed by its own delivery BEFORE joining the
+ * burst, so whichever delivery owns the burst already finds the
+ * transcript in the conversation.
  *
- * Never throws — same contract `runAutoReplyNow` already has, and the
- * caller (webhook `after()`) depends on it.
+ * Never throws — the caller (webhook `after()`) depends on it.
  */
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  if (!args.isTextMessage) {
-    // No debounce for media — see this module's design note above.
-    return runAutoReplyNow(args)
-  }
-
-  const db = supabaseAdmin()
-  let claimedWindow = false
   try {
-    const { data: claimRows, error: claimErr } = await db.rpc(
-      'claim_ai_debounce_window',
-      {
-        p_conversation_id: args.conversationId,
-        p_window_seconds: DEBOUNCE_WINDOW_SECONDS,
-      },
-    )
-    if (claimErr) {
-      // Same posture as claim_ai_reply_slot's own error handling: almost
-      // always a deploy issue (migration not applied / grant missing).
-      // Fail OPEN to the immediate path rather than silently dropping the
-      // reply — better to answer without debounce than not answer.
-      console.error('[ai auto-reply] claim_ai_debounce_window failed:', claimErr)
-      return runAutoReplyNow(args)
+    const db = supabaseAdmin()
+    let base: DispatchArgs = args
+    if (args.audio) {
+      const transcript = await transcribeBeforeBurst(db, args)
+      base = { ...args, audio: undefined, isTextMessage: Boolean(transcript) }
     }
-    const claim = (claimRows as { is_owner: boolean; wait_until: string }[] | null)?.[0]
-    if (!claim || !claim.is_owner) return // follower — the owner processes the whole burst
-    claimedWindow = true
-
-    await waitForDebounceWindowToSettle(db, args.conversationId, claim.wait_until)
-
-    // Re-extend as a "processing" lock before the (possibly slow)
-    // provider call, so a message arriving mid-call doesn't see a settled
-    // window and elect itself a second owner for the same burst. See this
-    // module's doc comment for the known gap this doesn't fully close.
-    await db
-      .from('conversations')
-      .update({
-        ai_debounce_until: new Date(
-          Date.now() + PROCESSING_LOCK_SECONDS * 1000,
-        ).toISOString(),
-      })
-      .eq('id', args.conversationId)
-
-    await runAutoReplyNow(args)
+    await runDebounced(db, args.conversationId, async () => {
+      await runAutoReplyNow(await argsForPendingBurst(db, base))
+    })
   } catch (err) {
     console.error('[ai auto-reply] debounce wrapper failed:', err)
-  } finally {
-    // Signal "resolved" so the cron sweep never treats a normally-finished
-    // window as orphaned — cleared unconditionally (message sent, a gate
-    // blocked it, or an error was caught above), but only by whichever
-    // call actually became the owner; a follower that returned early never
-    // reaches here with `claimedWindow` true, so it can't clobber a window
-    // some OTHER, still-active owner is mid-way through.
-    if (claimedWindow) {
-      await db.from('conversations').update({ ai_debounce_until: null }).eq('id', args.conversationId)
-    }
   }
+}
+
+/**
+ * Transcribe a voice note before it joins the burst — only when the
+ * account opted in and the bot could answer this thread at all (auto-
+ * reply on, AI not paused, nobody assigned, reply cap not reached), so
+ * a chat the bot won't answer never spends on it.
+ */
+async function transcribeBeforeBurst(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: DispatchArgs,
+): Promise<string | null> {
+  if (!args.audio) return null
+  try {
+    const config = await loadAiConfig(db, args.accountId)
+    if (!config?.autoReplyEnabled || !config.transcribeAudioEnabled || !config.embeddingsApiKey) {
+      return null
+    }
+    if (isAiKeyPaused(config.apiKey)) return null
+    const { data: conv } = await db
+      .from('conversations')
+      .select('assigned_agent_id, ai_reply_count')
+      .eq('id', args.conversationId)
+      .maybeSingle()
+    if (conv?.assigned_agent_id) return null
+    if ((conv?.ai_reply_count ?? 0) >= config.autoReplyMaxPerConversation) return null
+    return await transcribeInboundAudio(db, {
+      accountId: args.accountId,
+      audio: args.audio,
+      embeddingsApiKey: config.embeddingsApiKey,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] voice note transcription failed:', err)
+    return null
+  }
+}
+
+/**
+ * The owner answers the whole burst, so what kind of answer it gives
+ * depends on everything the customer sent since the business last
+ * wrote, not only on the message that happened to arrive first: a photo
+ * followed by a question is answered as text; three PDFs alone get the
+ * file notice. Falls back to `args` when the burst can't be read.
+ */
+async function argsForPendingBurst(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: DispatchArgs,
+): Promise<DispatchArgs> {
+  const burst = await summarizePendingBurst(db, args.conversationId)
+  if (!burst) return args
+  return {
+    ...args,
+    isTextMessage: args.isTextMessage || burst.hasText,
+    isImageMessage: Boolean(args.isImageMessage) || burst.hasImage,
+  }
+}
+
+/**
+ * Cron-sweep entry (/api/flows/cron): answer a debounce window whose
+ * owner instance died mid-wait. The sweep doesn't know what the burst
+ * held, so it reads it; if it can't, it answers as text (as before).
+ */
+export async function runAutoReplyForOrphanedWindow(
+  args: Omit<DispatchArgs, 'isTextMessage' | 'isImageMessage' | 'audio'>,
+): Promise<void> {
+  const burst = await summarizePendingBurst(supabaseAdmin(), args.conversationId)
+  await runAutoReplyNow({
+    ...args,
+    isTextMessage: burst ? burst.hasText : true,
+    isImageMessage: burst?.hasImage ?? false,
+  })
 }

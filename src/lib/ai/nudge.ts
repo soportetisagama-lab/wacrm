@@ -6,10 +6,11 @@ import { textOf, type AiConfig, type AiUsage, type ChatMessage } from './types'
 // Inactivity nudge written by the model.
 //
 // Replaces the fixed "¿Sigues ahí? Quedé esperando tu respuesta…" the
-// flows cron used to send: advisors asked for a short, catchy line tied
-// to what the customer was actually asking about ("Tu góndola te
-// espera 👀", "Tu proyecto está a un paso de empezar ✨") that makes
-// them want to continue — but never an offer, discount or price, which
+// flows cron used to send: a short, sober line tied to what the
+// customer was actually asking about ("¿Pudiste revisar lo de tu
+// góndola? Cuando quieras, seguimos con tu cotización.") — no hype or
+// slogans, which read like advertising — and never an offer, discount
+// or price, which
 // only an advisor may give. Anything that slips past the prompt on that
 // front is caught by `isSafeNudge` and the caller falls back to its
 // fixed text.
@@ -28,13 +29,13 @@ export function isSafeNudge(text: string): boolean {
 
 export function buildNudgePrompt(businessContext: string | null): string {
   const parts = [
-    'A WhatsApp customer stopped replying in the middle of a sales conversation. Write ONE short follow-up message (one sentence, maximum 120 characters) that makes them want to continue.',
-    'Make it catchy and specific, written like an enthusiastic human sales advisor. Name the product using the SAME word the customer used in the conversation (if they wrote "góndola", say góndola; if they wrote "locker", say locker; keep their own term). ' +
-      'Patterns (replace <producto> with the customer\'s own word): "Tu <producto> te espera 👀 ¿Seguimos con tu cotización?", "Tu <producto> está a un paso de hacerse realidad ✨ ¿Te ayudo con lo que falta?". ' +
-      'If the customer has not named a product yet, do not name one: talk about their project or business instead (e.g. "Tu proyecto está por empezar 🙌 ¿Seguimos?"). ' +
+    'A WhatsApp customer stopped replying in the middle of a sales conversation. Write ONE short, polite follow-up message (one sentence, maximum 120 characters) inviting them to continue.',
+    'Keep it sober and specific, written like a real advisor checking in — no hype, no slogans, no advertising tone. Name the product using the SAME word the customer used in the conversation (if they wrote "góndola", say góndola; if they wrote "locker", say locker; keep their own term). ' +
+      'Patterns (replace <producto> with the customer\'s own word): "¿Pudiste revisar lo de tu <producto>? Cuando quieras, seguimos con tu cotización.", "Seguimos atentos para continuar con tu <producto> cuando te sea posible.". ' +
+      'If the customer has not named a product yet, do not name one: refer to their inquiry instead (e.g. "Cuando quieras, seguimos con tu consulta por aquí."). ' +
       'Never mention a product this business does not sell (see the business reference below), and never one the customer did not mention. Vary the wording; do not copy the patterns literally.',
     'Strictly forbidden: prices, discounts, offers, promotions, free items, gifts, coupons, deadlines, "only today", "last units", stock scarcity or any other commercial promise; and the phrases "¿Sigues ahí?" or "Quedé esperando tu respuesta". ' +
-      'At most one emoji. No greeting, no signature. Output only the message text.',
+      'No emojis. No greeting, no signature. Output only the message text.',
     'Never claim that you (or the business) already sent, shared, attached or explained any information ("ya te compartí", "ya te envié", "como te comenté"): you only know what is in the conversation, and the customer may never have received it.',
     NEUTRAL_SPANISH_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
