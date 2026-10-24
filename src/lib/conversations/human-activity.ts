@@ -40,3 +40,38 @@ export async function hasRecentHumanReply(
     return false
   }
 }
+
+/** How long after our last outgoing message (bot or human) a customer's
+ *  text still counts as the same conversation, not a new visit. */
+export const ONGOING_CONVERSATION_HOURS = 6
+
+/**
+ * True when we sent anything to this conversation within the last
+ * ONGOING_CONVERSATION_HOURS. The `returning_message` welcome uses it to
+ * stay quiet mid-conversation (the AI answers instead of re-sending
+ * "Sigue explorando nuestro menú…"). Fails open (false) on a read error.
+ */
+export async function hasRecentOutgoingMessage(
+  db: SupabaseClient,
+  conversationId: string,
+  hours: number = ONGOING_CONVERSATION_HOURS,
+): Promise<boolean> {
+  const since = new Date(Date.now() - hours * 3600_000).toISOString()
+  try {
+    const { data, error } = await db
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .neq('sender_type', 'customer')
+      .gte('created_at', since)
+      .limit(1)
+    if (error) {
+      console.error('[human-activity] recent outgoing lookup failed:', error.message)
+      return false
+    }
+    return (data?.length ?? 0) > 0
+  } catch (err) {
+    console.error('[human-activity] recent outgoing lookup threw:', err)
+    return false
+  }
+}
