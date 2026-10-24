@@ -52,8 +52,13 @@ import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-a
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
-import { handoffClosingText } from "@/lib/ai/auto-reply";
-import { lastBusinessMessageIs, runDebounced, summarizePendingBurst } from "@/lib/ai/debounce";
+import { handoffClosingText, runAutoReplyForPendingBurst } from "@/lib/ai/auto-reply";
+import {
+  lastBusinessMessageIs,
+  runDebounced,
+  summarizePendingBurst,
+  type BurstScope,
+} from "@/lib/ai/debounce";
 import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
@@ -1124,7 +1129,7 @@ async function sendListAndSuspend(
 /** Default for CollectAiNodeConfig.non_text_reply_text when a node
  *  doesn't configure one. */
 const DEFAULT_NON_TEXT_REPLY_TEXT =
-  "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?";
+  "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?";
 
 /** Default for CollectAiNodeConfig.nudge_text / UnmatchedTextHandling.nudge_text
  *  when a node is nudge-eligible but doesn't configure its own wording.
@@ -2172,7 +2177,9 @@ async function transcribeCollectAiAudio(
  * usable (text, a transcribed voice note, a photo with vision on);
  * otherwise the fixed non-text reply — once per batch of files, not
  * once per file. `own` is the inbound that triggered this turn (absent
- * on a rerun / cron recovery, where only the burst is read).
+ * on a rerun / cron recovery, where only the burst is read — `scope`
+ * then says which messages are still unanswered, and when there are
+ * none the turn does nothing).
  */
 async function collectAiTurnForBurst(
   db: AdminClient,
@@ -2180,12 +2187,16 @@ async function collectAiTurnForBurst(
   node: FlowNodeRow,
   nodes: Map<string, FlowNodeRow>,
   own: { text: string; hasUsableContent: boolean; isImageMessage: boolean } | null,
+  scope: BurstScope = {},
 ): Promise<"advanced" | "handed_off" | "completed"> {
   let usable = Boolean(own?.hasUsableContent);
   if (!usable) {
     const burst = run.conversation_id
-      ? await summarizePendingBurst(db, run.conversation_id)
+      ? await summarizePendingBurst(db, run.conversation_id, own ? {} : scope)
       : null;
+    // Nothing unanswered (e.g. the previous turn already covered it):
+    // never send the file notice to a customer who wrote text.
+    if (!own && burst && burst.count === 0) return "advanced";
     usable = Boolean(burst?.hasText);
     if (!usable && (burst?.hasImage || own?.isImageMessage)) {
       try {
@@ -2212,8 +2223,11 @@ async function collectAiTurnForBurst(
  * several quick messages in a row get ONE extraction and ONE reply
  * instead of one per message. A follower returns `debounced` (consumed —
  * the owner answers for it). If messages keep arriving while the owner
- * is answering, it runs once more for them, as long as the run is still
- * waiting on this same node.
+ * is answering, it runs once more for only those messages: through this
+ * node while the run still waits on it, through the collect_ai node the
+ * run moved to, or — when the run left collect_ai (advanced to another
+ * kind of node, completed, handed off) — through the general assistant,
+ * since the flow already consumed them and nobody else would answer.
  */
 async function handleCollectAiInboundDebounced(
   db: AdminClient,
@@ -2240,17 +2254,38 @@ async function handleCollectAiInboundDebounced(
   }
 
   let outcome: "advanced" | "handed_off" | "completed" = "advanced";
-  let current: FlowRunRow | null = run;
-  let first = true;
-  const role = await runDebounced(db, run.conversation_id, async () => {
-    if (!first) {
-      // Rerun for messages that arrived meanwhile — only if the run is
-      // still waiting on this node (it may have advanced or ended).
-      current = await loadActiveRunForContact(db, run.account_id, run.contact_id ?? "");
-      if (!current || current.id !== run.id || current.current_node_key !== node.node_key) return;
+  const conversationId = run.conversation_id;
+  const role = await runDebounced(db, conversationId, async ({ rerunSince }) => {
+    if (rerunSince === null) {
+      outcome = await collectAiTurnForBurst(db, run, node, nodes, own);
+      return;
     }
-    outcome = await collectAiTurnForBurst(db, current!, node, nodes, first ? own : null);
-    first = false;
+    // Rerun for messages that arrived meanwhile — the run may have
+    // advanced or ended during the previous turn.
+    if (!run.contact_id) return;
+    const current = await loadActiveRunForContact(db, run.account_id, run.contact_id);
+    // Same run only: `nodes` belongs to this run's flow.
+    const currentNode =
+      current?.id !== run.id || !current.current_node_key
+        ? undefined
+        : current.current_node_key === node.node_key
+          ? node
+          : nodes.get(current.current_node_key);
+    if (current && currentNode?.node_type === "collect_ai") {
+      outcome = await collectAiTurnForBurst(db, current, currentNode, nodes, null, {
+        since: rerunSince,
+      });
+      return;
+    }
+    await runAutoReplyForPendingBurst(
+      {
+        accountId: run.account_id,
+        conversationId,
+        contactId: run.contact_id,
+        configOwnerUserId: run.user_id,
+      },
+      rerunSince,
+    );
   });
   if (role === "follower") {
     return { consumed: true, flow_run_id: run.id, outcome: "debounced" };
@@ -2276,7 +2311,7 @@ export async function recoverCollectAiDebounce(
     const nodes = await loadAllNodes(db, run.flow_id);
     const node = nodes.get(run.current_node_key);
     if (!node || node.node_type !== "collect_ai") return false;
-    await collectAiTurnForBurst(db, run, node, nodes, null);
+    await collectAiTurnForBurst(db, run, node, nodes, null, { orphaned: true });
     return true;
   } catch (err) {
     console.error(
