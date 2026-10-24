@@ -1263,6 +1263,56 @@ const STALE_INTERACTIVE_TEXT_NO_PHONE =
   "Recibimos tu mensaje. Todavía no nos compartiste tu número de contacto, pero un asesor va a seguir la conversación por este mismo chat en breve. 🙂";
 
 /**
+ * The text of an info-only menu option (ubicación, horarios, catálogo…):
+ * a list row / button whose target is a plain `send_message` that then
+ * ends the flow. Used when a customer re-taps such an option from an old
+ * menu — they get the same answer the live menu gives instead of a
+ * generic "ya tenemos tus datos" and a handoff. Returns null when the
+ * option isn't info-only (quotes, projects, advisor — those need a
+ * human or a live flow), the text needs run variables, or anything
+ * can't be read: the caller then falls back to the stale-tap notice.
+ */
+async function findInfoOnlyOptionText(
+  db: AdminClient,
+  accountId: string,
+  replyId: string,
+): Promise<string | null> {
+  try {
+    const { data: flows } = await db
+      .from("flows")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("status", "active");
+    for (const flow of (flows ?? []) as { id: string }[]) {
+      const nodes = await loadAllNodes(db, flow.id);
+      for (const node of nodes.values()) {
+        let nextKey: string | undefined;
+        if (node.node_type === "send_list") {
+          const cfg = node.config as unknown as SendListNodeConfig;
+          nextKey = cfg.sections
+            ?.flatMap((s) => s.rows ?? [])
+            .find((r) => r.reply_id === replyId)?.next_node_key;
+        } else if (node.node_type === "send_buttons") {
+          const cfg = node.config as unknown as SendButtonsNodeConfig;
+          nextKey = cfg.buttons?.find((b) => b.reply_id === replyId)?.next_node_key;
+        }
+        if (!nextKey) continue;
+        const target = nodes.get(nextKey);
+        if (target?.node_type !== "send_message") return null;
+        const cfg = target.config as unknown as SendMessageNodeConfig;
+        const after = cfg.next_node_key ? nodes.get(cfg.next_node_key) : undefined;
+        const text = cfg.text?.trim();
+        if (!text || text.includes("{{") || (after && after.node_type !== "end")) return null;
+        return text;
+      }
+    }
+  } catch (err) {
+    console.error("[flows] info-only option lookup failed:", err);
+  }
+  return null;
+}
+
+/**
  * Pure decision for whether /api/flows/cron should send an inactivity
  * nudge right now. No I/O — the cron route does the DB reads/writes
  * and the actual send; this only computes the boolean.
@@ -3174,6 +3224,27 @@ export async function dispatchInboundToFlows(
         input.contactId,
       );
       const replyId = input.message.reply_id;
+      // An info-only option (ubicación, horarios, catálogo) is simply
+      // answered again — nothing to hand to a human.
+      const infoText = await findInfoOnlyOptionText(db, input.accountId, replyId);
+      if (infoText) {
+        try {
+          await engineSendText({
+            accountId: input.accountId,
+            userId: input.userId,
+            conversationId: input.conversationId,
+            contactId: input.contactId,
+            text: infoText,
+            aiGenerated: false,
+          });
+          return { consumed: true, outcome: "stale_info_answered" };
+        } catch (err) {
+          console.error(
+            "[flows] stale info answer send failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
       const alreadyHandled = Object.values(contactState.selected_options).some(
         (ids) => ids.includes(replyId),
       );
