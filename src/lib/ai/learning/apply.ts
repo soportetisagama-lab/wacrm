@@ -160,7 +160,7 @@ export async function setDocumentStatus(
 export async function rollbackLearnedRun(
   db: SupabaseClient,
   accountId: string,
-  runId: string,
+  runId: string | null,
   manualSince: Date | null,
 ): Promise<number> {
   const base = () =>
@@ -170,14 +170,18 @@ export async function rollbackLearnedRun(
       .eq('account_id', accountId)
       .neq('source', 'manual')
       .eq('status', 'active')
-  const { data: fromRun, error } = await base().eq('learning_run_id', runId)
-  if (error) return 0
+  let fromRun: { id: unknown }[] = []
+  if (runId) {
+    const { data, error } = await base().eq('learning_run_id', runId)
+    if (error) return 0
+    fromRun = data ?? []
+  }
   let manual: { id: unknown }[] = []
   if (manualSince) {
     const { data } = await base().is('learning_run_id', null).gte('created_at', manualSince.toISOString())
     manual = data ?? []
   }
-  const docs = [...(fromRun ?? []), ...manual]
+  const docs = [...fromRun, ...manual]
   if (docs.length === 0) return 0
   let n = 0
   for (const d of docs) {
