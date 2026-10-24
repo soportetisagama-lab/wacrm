@@ -7,6 +7,7 @@ import {
   type GenerateResult,
 } from './types'
 import { HANDOFF_SENTINEL, SEND_DOCUMENT_SENTINEL_RE, aiRequestTimeoutMs } from './defaults'
+import { stripContextAnnotations } from './annotations'
 import {
   buildExtractionPrompt,
   buildExtractionSchema,
@@ -88,11 +89,11 @@ export function parseGeneration(
   const handoff = raw.includes(HANDOFF_SENTINEL)
   const docMatch = raw.match(SEND_DOCUMENT_SENTINEL_RE)
   const sendDocument = docMatch && documentKeys.includes(docMatch[1]) ? docMatch[1] : null
-  const text = raw
-    .split(HANDOFF_SENTINEL)
-    .join('')
-    .replace(SEND_DOCUMENT_SENTINEL_RE, '')
-    .trim()
+  // Transcript notes ("[Asesor]", "[Se envió: …]") the model copied are
+  // stripped too — they're for the model, never for the customer.
+  const text = stripContextAnnotations(
+    raw.split(HANDOFF_SENTINEL).join('').replace(SEND_DOCUMENT_SENTINEL_RE, '').trim(),
+  ).trim()
   // The model "thought out loud" instead of replying (observed: an
   // English monologue ending in "Handoff." without the sentinel) —
   // never send that to the customer; treat it as the handoff it meant.
@@ -238,7 +239,8 @@ export function parseExtraction(
       ? obj.send_document
       : null
 
-  const replyText = typeof obj.reply_text === 'string' ? obj.reply_text.trim() : ''
+  const replyText =
+    typeof obj.reply_text === 'string' ? stripContextAnnotations(obj.reply_text.trim()).trim() : ''
   // Same guard as parseGeneration: deliberation in `reply_text` is
   // dropped and turned into a handoff instead of reaching the customer.
   const leaked = looksLikeLeakedReasoning(replyText)

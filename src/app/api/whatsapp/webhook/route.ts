@@ -1859,7 +1859,9 @@ async function processMessage(
     !welcomeStartedFromPhone &&
     !interactiveReplyId &&
     message.type !== 'button' &&
-    message.type !== 'reaction'
+    message.type !== 'reaction' &&
+    // A photo captioned "ok"/"gracias" still has to be looked at.
+    message.type !== 'image'
       ? await routeAcknowledgement({
           db: supabaseAdmin(),
           accountId,

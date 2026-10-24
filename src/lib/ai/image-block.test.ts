@@ -41,4 +41,19 @@ describe('fetchImageBlock', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
     expect(await fetchImageBlock('https://storage.example/img.jpg')).toBeNull()
   })
+
+  it('normalizes the mime type and sniffs it when the header is missing or generic', async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okImageResponse('application/octet-stream', jpeg)))
+    expect(await fetchImageBlock('https://storage.example/a')).toMatchObject({ mimeType: 'image/jpeg' })
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okImageResponse('image/JPG; charset=binary', jpeg)))
+    expect(await fetchImageBlock('https://storage.example/b')).toMatchObject({ mimeType: 'image/jpeg' })
+  })
+
+  it('drops a format neither provider accepts instead of failing the whole request', async () => {
+    const unknown = new Uint8Array([0x00, 0x01, 0x02, 0x03])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okImageResponse('image/heic', unknown)))
+    expect(await fetchImageBlock('https://storage.example/c.heic')).toBeNull()
+  })
 })
