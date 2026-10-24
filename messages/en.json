@@ -2291,6 +2291,30 @@
       "notConfigured": "No agent configured yet — finish Setup first.",
       "replyFailed": "Couldn't get a reply.",
       "unreachable": "Couldn't reach the agent."
+    },
+    "learning": {
+      "tab": "Learning",
+      "memoryTitle": "Customer memory",
+      "memoryDescription": "What the bot remembers about each customer so it does not ask the same thing again. Updated automatically every 10 minutes from conversations that went quiet. It never stores prices or personal data and only admins can see it.",
+      "notReady": "Memory is not active on this line yet: migration 079 still has to be applied to the database.",
+      "searchPlaceholder": "Search by customer or content",
+      "empty": "No memory saved yet.",
+      "emptyHint": "It fills in by itself once a conversation has been quiet for 2 hours or is closed.",
+      "noName": "Unnamed customer",
+      "updatedAt": "Updated {date}",
+      "clear": "Clear memory",
+      "confirmClear": "Clear this customer's memory? The bot will only learn again from their new messages.",
+      "cleared": "Memory cleared",
+      "clearFailed": "Could not clear the memory.",
+      "loadFailed": "Could not load the memory.",
+      "fields": {
+        "busca": "Looking for",
+        "medidas": "Sizes",
+        "tipo_negocio": "Business type",
+        "enviado": "Already sent",
+        "tono": "Tone",
+        "notas": "Notes"
+      }
     }
   },
   "InteractiveBuilder": {
