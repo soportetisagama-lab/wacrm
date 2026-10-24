@@ -138,6 +138,8 @@ export interface ExtractArgs {
   documents?: DocumentOption[]
   /** Learned memory of this customer, already rendered. */
   customerMemory?: string | null
+  /** Learned rules (lib/ai/learning/rules.ts). */
+  learnedRules?: string[]
 }
 
 export interface ExtractResult {
@@ -171,7 +173,7 @@ export interface ExtractResult {
  * handoff-on-error handling for this node).
  */
 export async function extractWithReply(args: ExtractArgs): Promise<ExtractResult> {
-  const { config, fields, knownValues, systemContext, messages, documents = [], customerMemory } = args
+  const { config, fields, knownValues, systemContext, messages, documents = [], customerMemory, learnedRules } = args
   const timeoutMs = aiRequestTimeoutMs()
   const schema = buildExtractionSchema(fields, documents)
   const systemPrompt = buildExtractionPrompt({
@@ -180,6 +182,7 @@ export async function extractWithReply(args: ExtractArgs): Promise<ExtractResult
     systemContext,
     documents,
     customerMemory,
+    learnedRules,
   })
   const providerArgs = {
     apiKey: config.apiKey,

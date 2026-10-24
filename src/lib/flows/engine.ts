@@ -53,6 +53,7 @@ import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
 import { loadCustomerMemory } from "@/lib/ai/learning/memory";
+import { loadLearnedRules } from "@/lib/ai/learning/rules";
 import { handoffClosingText, runAutoReplyForPendingBurst } from "@/lib/ai/auto-reply";
 import {
   lastBusinessMessageIs,
@@ -1402,6 +1403,7 @@ async function runCollectAiTurn(
       // then never exposes a `send_document` slot at all (schema.ts).
       documents: cfg.documents?.map((d) => ({ key: d.key, label: d.label })),
       customerMemory: await loadCustomerMemory(db, run.account_id, run.contact_id),
+      learnedRules: await loadLearnedRules(db, run.account_id),
     });
     // Fire-and-forget, same as dispatchInboundToAiReply's own call site
     // — logAiUsage never throws, and awaiting it would only add latency
