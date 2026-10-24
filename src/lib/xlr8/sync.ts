@@ -145,6 +145,10 @@ export async function syncXlr8Estados(
 
   const total: Xlr8SyncSummary = { revisados: 0, agregados: 0, quitados: 0, sinContacto: 0 };
   for (const acc of (accounts ?? []) as { id: string; owner_user_id: string }[]) {
+    // An account without contacts has nothing to sync. Creating the status
+    // tags there would also make a fresh signup account look "used", and
+    // accept_invitation then refuses to move that user into a team.
+    if (!(await hasContacts(admin, acc.id))) continue;
     const r = await syncAccount(admin, acc.id, acc.owner_user_id, items);
     total.revisados += r.revisados;
     total.agregados += r.agregados;
@@ -152,6 +156,15 @@ export async function syncXlr8Estados(
     total.sinContacto += r.sinContacto;
   }
   return total;
+}
+
+async function hasContacts(admin: SupabaseClient, accountId: string): Promise<boolean> {
+  const { count, error } = await admin
+    .from('contacts')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId);
+  if (error) throw new Error(`contacts: ${error.message}`);
+  return (count ?? 0) > 0;
 }
 
 /** Shared tags of the account for `defs`, creating the missing ones (owner as author). */
