@@ -3971,6 +3971,7 @@ describe("photos on a menu and debounced collect_ai", () => {
   async function collectAiBurstWithRerun(opts: {
     follower: string | null;
     activeRun: (run: FlowRunRow) => FlowRunRow | null;
+    handoff?: boolean;
   }) {
     const { db } = makeFakeDb();
     const base = db as unknown as { from: (t: string) => unknown };
@@ -3989,6 +3990,9 @@ describe("photos on a menu and debounced collect_ai", () => {
         }
         rows = [...added, ...rows];
         windowQueue.push(new Date(Date.now() + 60_000).toISOString(), null);
+      }
+      if (opts.handoff && mockExtract.mock.calls.length === 1) {
+        return extractResult({ handoff: true, fields: { equipos: "mesa" }, replyText: "Te paso con un asesor." }) as never;
       }
       return extractResult({ replyText: mockExtract.mock.calls.length === 1 ? "¿Para qué medida?" : "Anotado, en acero." }) as never;
     });
@@ -4116,6 +4120,18 @@ describe("photos on a menu and debounced collect_ai", () => {
       configOwnerUserId: "user-1",
     });
     expect(since).toBeGreaterThanOrEqual(before);
+  });
+
+  it("when the collect_ai turn handed off, a message that landed meanwhile is left for the advisor (no bot reply)", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    await collectAiBurstWithRerun({
+      follower: "y también en acero",
+      activeRun: () => null,
+      handoff: true,
+    });
+
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(runAutoReplyForPendingBurst).not.toHaveBeenCalled();
   });
 
   it("the owner of a collect_ai burst runs a single extraction", async () => {
