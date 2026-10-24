@@ -1,4 +1,9 @@
-import { UNTRUSTED_CUSTOMER_CONTENT_GUARD, NEUTRAL_SPANISH_GUIDANCE, HUMAN_STYLE_GUIDANCE } from './defaults'
+import {
+  UNTRUSTED_CUSTOMER_CONTENT_GUARD,
+  NEUTRAL_SPANISH_GUIDANCE,
+  HUMAN_STYLE_GUIDANCE,
+  TRANSCRIPT_ANNOTATIONS_GUIDANCE,
+} from './defaults'
 
 // ============================================================
 // Structured extraction — one field a `collect_ai` flow node (or any
@@ -161,7 +166,9 @@ export function buildExtractionPrompt(args: {
       'If the customer answers something other than what you asked (e.g. you asked what kind of space and they replied "160 metros"), store what they DID give in the field it belongs to (here, the size/measurements field) and, in `reply_text`, briefly acknowledge it and ask again for what is still missing with DIFFERENT words plus two or three concrete examples (e.g. "¿Es para un restaurante, una cafetería, una tienda u otro tipo de negocio?"). ' +
       'Never repeat your previous question verbatim — check your last message in the conversation and always rephrase. ' +
       'Set `done: true` only once every required field has a real value; in that case `reply_text` should be a short closing confirmation, not another question. ' +
-      "Set `handoff: true` if the customer explicitly asks for a human, seems upset, or the conversation has gone somewhere you cannot resolve by collecting these fields — prefer handing off over guessing or over-probing.",
+      "Set `handoff: true` only if the customer asks for a human (or accepts your offer to pass them to one), raises a serious complaint or is clearly angry, or the conversation keeps getting stuck on the same point after you already tried. " +
+        'Mild impatience ("ya te dije", "otra vez") is not a reason: apologize briefly and continue from what they already gave, without asking for it again. ' +
+        'If they ask something you do not know, say so honestly in `reply_text` and offer to pass them to an advisor — never invent it.',
   )
 
   if (documents && documents.length > 0) {
@@ -176,6 +183,7 @@ export function buildExtractionPrompt(args: {
 
   parts.push(NEUTRAL_SPANISH_GUIDANCE)
   parts.push(HUMAN_STYLE_GUIDANCE)
+  parts.push(TRANSCRIPT_ANNOTATIONS_GUIDANCE)
   parts.push(UNTRUSTED_CUSTOMER_CONTENT_GUARD)
 
   if (systemContext && systemContext.trim()) {

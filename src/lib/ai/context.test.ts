@@ -62,7 +62,7 @@ describe('buildConversationContext', () => {
     const out = await buildConversationContext(fakeDb(rows), 'conv-1')
     expect(out).toEqual([
       { role: 'user', content: 'first' },
-      { role: 'assistant', content: 'second' },
+      { role: 'assistant', content: '[Asesor] second' },
       { role: 'user', content: 'third' },
     ])
   })
@@ -221,7 +221,7 @@ describe('buildConversationContext', () => {
       expect(out).toEqual([{ role: 'user', content: 'is this covered under warranty?' }])
     })
 
-    it('drops a real photo with no persisted copy and no caption', async () => {
+    it('says a photo arrived (but could not be opened) when it has no persisted copy and no caption', async () => {
       const out = await buildConversationContext(
         fakeDb([
           {
@@ -236,7 +236,9 @@ describe('buildConversationContext', () => {
         undefined,
         { includeImages: true },
       )
-      expect(out).toEqual([])
+      expect(out).toEqual([
+        { role: 'user', content: '[El cliente envió una foto que no se pudo abrir]' },
+      ])
     })
 
     it('falls back to caption-only when the persisted copy fails to fetch', async () => {
@@ -258,5 +260,48 @@ describe('buildConversationContext', () => {
       )
       expect(out).toEqual([{ role: 'user', content: 'is this covered under warranty?' }])
     })
+  })
+})
+
+describe('buildConversationContext — annotations', () => {
+  it('surfaces a shared location, files the business sent and the options of a menu', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        { sender_type: 'customer', content_type: 'text', content_text: 'la 2' },
+        {
+          sender_type: 'bot',
+          content_type: 'interactive',
+          content_text: '¿Qué necesitas?',
+          interactive_payload: {
+            kind: 'list',
+            body: '¿Qué necesitas?',
+            sections: [{ rows: [{ id: 'a', title: 'Cotizar' }, { id: 'b', title: 'Catálogo' }] }],
+          },
+        },
+        { sender_type: 'bot', content_type: 'document', content_text: null, filename: 'catalogo.pdf' },
+        { sender_type: 'customer', content_type: 'location', content_text: 'Tienda, Av. Lima 123, -12.04,-77.03' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([
+      { role: 'user', content: '[Ubicación compartida] Tienda, Av. Lima 123, -12.04,-77.03' },
+      { role: 'assistant', content: '[Se envió: catalogo.pdf]' },
+      { role: 'assistant', content: '¿Qué necesitas?\nOpciones: 1) Cotizar 2) Catálogo' },
+      { role: 'user', content: 'la 2' },
+    ])
+  })
+
+  it('stamps the first message and any message after a long pause with Peru date/time', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        { sender_type: 'customer', content_type: 'text', content_text: 'sigo interesado', created_at: '2024-01-03T15:00:00Z' },
+        { sender_type: 'bot', content_type: 'text', content_text: 'Claro', created_at: '2024-01-02T15:01:00Z' },
+        { sender_type: 'customer', content_type: 'text', content_text: 'hola', created_at: '2024-01-02T15:00:00Z' },
+      ]),
+      'conv-1',
+    )
+    expect(out[0].content).toMatch(/^\[\S+ 02\/01 10:00\] hola$/)
+    expect(out[1].content).toBe('Claro')
+    expect(out[2].content).toMatch(/^\[\S+ 03\/01 10:00\] sigo interesado$/)
   })
 })
