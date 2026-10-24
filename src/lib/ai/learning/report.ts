@@ -17,7 +17,15 @@ export interface DailyReportSummary {
   /** Short reasons for what was discarded tonight (guard / judge / exam). */
   discarded?: { text: string; reason: string }[]
   /** Exam comparison tonight: base vs candidate. */
-  exam?: { base: number | null; candidate: number | null; cases: number; approved: boolean; note?: string }
+  exam?: {
+    base: number | null
+    candidate: number | null
+    /** Score of the bot as it stays after tonight. */
+    after: number | null
+    cases: number
+    approved: boolean
+    note?: string
+  }
   rollback?: { done: boolean; items: number; previous: number | null; current: number | null }
   model?: string
   errors?: string[]
