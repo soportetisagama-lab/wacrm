@@ -143,7 +143,7 @@ const FIRST_REPLY_MENU_HINT = '\n\nSi quieres ver todas nuestras opciones, escri
  * match. Sent once per batch of files (see sendNonTextFallback).
  */
 export const AUTO_REPLY_NON_TEXT_FALLBACK_TEXT =
-  'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?'
+  'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?'
 
 // ============================================================
 // Debounce — coalesce a burst of messages arriving seconds apart into a
@@ -768,8 +768,9 @@ export async function dispatchInboundToAiReply(
       const transcript = await transcribeBeforeBurst(db, args)
       base = { ...args, audio: undefined, isTextMessage: Boolean(transcript) }
     }
-    await runDebounced(db, args.conversationId, async () => {
-      await runAutoReplyNow(await argsForPendingBurst(db, base))
+    await runDebounced(db, args.conversationId, async ({ rerunSince }) => {
+      const next = await argsForPendingBurst(db, base, rerunSince)
+      if (next) await runAutoReplyNow(next)
     })
   } catch (err) {
     console.error('[ai auto-reply] debounce wrapper failed:', err)
@@ -817,11 +818,23 @@ async function transcribeBeforeBurst(
  * wrote, not only on the message that happened to arrive first: a photo
  * followed by a question is answered as text; three PDFs alone get the
  * file notice. Falls back to `args` when the burst can't be read.
+ *
+ * On a rerun (`rerunSince` set) `args` describes a message the previous
+ * turn already answered, so only what arrived from that turn's start
+ * counts — and null (answer nothing) when nothing did, instead of
+ * answering the same message twice.
  */
 async function argsForPendingBurst(
   db: ReturnType<typeof supabaseAdmin>,
   args: DispatchArgs,
-): Promise<DispatchArgs> {
+  rerunSince: number | null = null,
+): Promise<DispatchArgs | null> {
+  if (rerunSince !== null) {
+    const burst = await summarizePendingBurst(db, args.conversationId, { since: rerunSince })
+    if (!burst) return args
+    if (burst.count === 0) return null
+    return { ...args, isTextMessage: burst.hasText, isImageMessage: burst.hasImage }
+  }
   const burst = await summarizePendingBurst(db, args.conversationId)
   if (!burst) return args
   return {
@@ -832,14 +845,40 @@ async function argsForPendingBurst(
 }
 
 /**
+ * Answer, with the general assistant, what the customer sent from
+ * `since` on — used by collect_ai (lib/flows/engine.ts) when its run
+ * left the node while a message of the burst was still pending: that
+ * message was consumed by the flow, so without this nobody answers it.
+ * The caller already holds the debounce window. Never throws.
+ */
+export async function runAutoReplyForPendingBurst(
+  args: Omit<DispatchArgs, 'isTextMessage' | 'isImageMessage' | 'audio'>,
+  since: number,
+): Promise<void> {
+  try {
+    const next = await argsForPendingBurst(
+      supabaseAdmin(),
+      { ...args, isTextMessage: true, isImageMessage: false },
+      since,
+    )
+    if (next) await runAutoReplyNow(next)
+  } catch (err) {
+    console.error('[ai auto-reply] pending burst reply failed:', err)
+  }
+}
+
+/**
  * Cron-sweep entry (/api/flows/cron): answer a debounce window whose
- * owner instance died mid-wait. The sweep doesn't know what the burst
- * held, so it reads it; if it can't, it answers as text (as before).
+ * owner instance died mid-wait, or that an owner left set after its last
+ * rerun. The sweep doesn't know what the burst held, so it reads it
+ * (BurstScope `orphaned`); if it can't, it answers as text (as before);
+ * if nothing is pending, it does nothing.
  */
 export async function runAutoReplyForOrphanedWindow(
   args: Omit<DispatchArgs, 'isTextMessage' | 'isImageMessage' | 'audio'>,
 ): Promise<void> {
-  const burst = await summarizePendingBurst(supabaseAdmin(), args.conversationId)
+  const burst = await summarizePendingBurst(supabaseAdmin(), args.conversationId, { orphaned: true })
+  if (burst && burst.count === 0) return
   await runAutoReplyNow({
     ...args,
     isTextMessage: burst ? burst.hasText : true,
