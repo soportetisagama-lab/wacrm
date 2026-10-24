@@ -19,10 +19,15 @@ export async function POST() {
     const limit = checkRateLimit(`ai-kb-reindex:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
-    const { data: docs, error } = await supabase
-      .from('ai_knowledge_documents')
-      .select('id, content')
-      .eq('account_id', accountId)
+    // Learned documents keep their own on/off state (migration 079):
+    // rules have no chunks, archived / rolled-back ones stay inactive.
+    const load = (columns: string) =>
+      supabase.from('ai_knowledge_documents').select(columns).eq('account_id', accountId)
+    let { data: rawDocs, error } = await load('id, content, source, status')
+    if (error?.code === '42703') ({ data: rawDocs, error } = await load('id, content'))
+    const docs = ((rawDocs ?? []) as unknown as { id: string; content: string; source?: string; status?: string }[]).filter(
+      (d) => d.source !== 'self_review',
+    )
     if (error) {
       console.error('[ai/knowledge/reindex] fetch error:', error)
       return NextResponse.json(
@@ -54,6 +59,13 @@ export async function POST() {
     for (const doc of docs ?? []) {
       try {
         await ingestDocument(supabase, accountId, { embeddingsApiKey }, doc.id, doc.content)
+        if (doc.status && doc.status !== 'active') {
+          await supabase
+            .from('ai_knowledge_chunks')
+            .update({ active: false })
+            .eq('document_id', doc.id)
+            .eq('account_id', accountId)
+        }
         reindexed += 1
       } catch (err) {
         // One bad document (e.g. a mid-run embeddings rate-limit) should

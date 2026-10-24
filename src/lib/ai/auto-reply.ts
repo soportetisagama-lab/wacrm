@@ -14,6 +14,7 @@ import { buildHandoffSummary } from './handoff'
 import { writeHandoffBrief } from './handoff-brief'
 import { logAiUsage } from './usage'
 import { loadCustomerMemory } from './learning/memory'
+import { loadLearnedRules } from './learning/rules'
 import { isAiKeyPaused, isAiOutOfServiceError } from './availability'
 import { notifyAdminsAiUnavailable } from './availability-notify'
 import { recentUserMessages } from './query'
@@ -558,6 +559,7 @@ export async function runAutoReplyNow(
       contactName: await loadContactName(db, contactId),
       now: new Date(),
       customerMemory: await loadCustomerMemory(db, accountId, contactId),
+      learnedRules: await loadLearnedRules(db, accountId),
     })
 
     // An empty completion (the model spent its whole budget without
