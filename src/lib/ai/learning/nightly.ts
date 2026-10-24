@@ -8,6 +8,7 @@ import { runSelfReview } from './self-review'
 import { EVAL_MIN_CASES, EVAL_TARGET_CASES, growEvalSet, loadEvalCases } from './eval-set'
 import { countMemoryUpdates, trimSummary, writeDailyReport, type DailyReportSummary } from './report'
 import { limaDateKey, limaHour } from './time'
+import { examBaseModel, runExam, saveExamRun } from './exam'
 
 // ============================================================
 // Nightly learning run, 03:00 Lima, once per line and day. Started from
@@ -16,7 +17,7 @@ import { limaDateKey, limaHour } from './time'
 // so two server instances never run the same night twice.
 //
 // Steps: grow the exam set from hard chats → self-review of the bot's
-// replies → daily report. Fully automatic; nobody has to approve it.
+// replies → exam of the live bot → daily report. Fully automatic; nobody has to approve it.
 // ============================================================
 
 export const NIGHT_START_HOUR_LIMA = 3
@@ -111,6 +112,7 @@ export async function runNightForAccount(
   try {
     discarded += await stepEvalSet(ctx)
     discarded += await stepSelfReview(ctx, runId)
+    await stepExam(ctx, runId)
   } catch (err) {
     errorText = err instanceof Error ? err.message : String(err)
     status = isLearningStopError(err) ? 'skipped' : 'failed'
@@ -161,4 +163,27 @@ async function stepSelfReview(ctx: NightContext, parentRunId: string): Promise<n
     ]
   }
   return result.rejected
+}
+
+/** Tonight's exam of the live bot (score kept for tomorrow's compare). */
+async function stepExam(ctx: NightContext, runId: string): Promise<void> {
+  const cases = await loadEvalCases(ctx.db, ctx.accountId)
+  if (cases.length === 0) {
+    ctx.summary.exam = { base: null, candidate: null, cases: 0, approved: false, note: 'Todavía no hay examen' }
+    return
+  }
+  const deps = { db: ctx.db, accountId: ctx.accountId, config: ctx.config, openai: ctx.openai }
+  const model = examBaseModel(ctx.config, ctx.openai)
+  const result = await runExam(deps, cases, [{ label: 'base', model, rules: [] }])
+  const score = result.total > 0 ? result.scores[0] : null
+  ctx.summary.exam = {
+    base: score,
+    candidate: null,
+    cases: result.total,
+    approved: false,
+    note: result.reliable ? undefined : `Examen con menos de ${EVAL_MIN_CASES} casos: no se aprueba nada`,
+  }
+  if (score === null) return
+  await saveExamRun(ctx.db, ctx.accountId, runId, 'baseline', score, result, result.passed[0], 0)
+  await saveExamRun(ctx.db, ctx.accountId, runId, 'after', score, result, result.passed[0], 0)
 }

@@ -108,27 +108,32 @@ export function isModelUnavailable(status: number, message: string): boolean {
 
 class ModelUnavailableError extends AiError {}
 
-async function callOnce(args: JudgeCallArgs, model: string): Promise<JudgeCallResult> {
-  const { apiKey, system, user, schemaName, schema } = args
+interface RawCall {
+  apiKey: string
+  model: string
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  maxTokens: number
+  timeoutMs: number
+  responseFormat?: Record<string, unknown>
+  onUsage?: (usage: AiUsage, model: string) => void
+}
+
+/** One HTTP call. Returns the message text + usage; never touches the
+ *  bot's circuit breaker. */
+async function rawCall(c: RawCall): Promise<{ content: string; usage: AiUsage | null }> {
   let res: Response
   try {
     res = await fetch(OPENAI_URL, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${c.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        max_completion_tokens: args.maxTokens ?? DEFAULT_MAX_TOKENS,
-        ...reasoningParams(model),
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: schemaName, schema, strict: true },
-        },
+        model: c.model,
+        messages: c.messages,
+        max_completion_tokens: c.maxTokens,
+        ...reasoningParams(c.model),
+        ...(c.responseFormat ? { response_format: c.responseFormat } : {}),
       }),
-      signal: AbortSignal.timeout(args.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(c.timeoutMs),
     })
   } catch (err) {
     throw toNetworkError(err)
@@ -149,34 +154,28 @@ async function callOnce(args: JudgeCallArgs, model: string): Promise<JudgeCallRe
     completion: body?.usage?.completion_tokens,
     total: body?.usage?.total_tokens,
   })
-  if (usage && args.onUsage) args.onUsage(usage, model)
+  if (usage && c.onUsage) c.onUsage(usage, c.model)
   if (msg?.refusal) {
     throw new AiError('OpenAI refused the request.', { code: 'empty_response' })
   }
   const content = msg?.content
-  if (!content || typeof content !== 'string') {
+  if (!content || typeof content !== 'string' || !content.trim()) {
     throw new AiError('OpenAI returned an empty response.', { code: 'empty_response' })
   }
-  try {
-    return { data: JSON.parse(content), usage, model }
-  } catch {
-    throw new AiError('OpenAI returned malformed JSON.', { code: 'invalid_extraction' })
-  }
+  return { content, usage }
 }
 
 /**
- * One structured call. Retries once with `fallbackModel` when the judge
- * model isn't available to the key (and remembers that for the
- * process). Throws AiError on HTTP/network failure, refusal or
- * unparseable output — never pauses the bot's key.
+ * Run `once` with the judge model, then once more with `fallbackModel`
+ * when the first is not available to the key (remembered for the
+ * process). Out-of-service errors pause only the learning jobs.
  */
-export async function callOpenAiJson(args: JudgeCallArgs): Promise<JudgeCallResult> {
-  const { apiKey } = args
+async function withModelFallback<T>(target: LearningOpenAi, once: (model: string) => Promise<T>): Promise<T> {
+  const { apiKey } = target
   if (isAiKeyPaused(apiKey) || isLearningKeyPaused(apiKey)) {
     throw new AiError('Learning skipped: the OpenAI key is paused.', { code: 'learning_paused' })
   }
-
-  const models = [args.model, args.fallbackModel].filter(
+  const models = [target.model, target.fallbackModel].filter(
     (m, i, all): m is string => Boolean(m) && all.indexOf(m) === i,
   )
   const usable = models.filter((m) => !unavailableModels.has(`${apiKey}|${m}`))
@@ -187,7 +186,7 @@ export async function callOpenAiJson(args: JudgeCallArgs): Promise<JudgeCallResu
   let lastErr: unknown = null
   for (const model of usable) {
     try {
-      return await callOnce(args, model)
+      return await once(model)
     } catch (err) {
       lastErr = err
       if (err instanceof ModelUnavailableError) {
@@ -202,4 +201,63 @@ export async function callOpenAiJson(args: JudgeCallArgs): Promise<JudgeCallResu
     }
   }
   throw lastErr
+}
+
+/**
+ * One structured call. Retries once with `fallbackModel` when the judge
+ * model isn't available to the key (and remembers that for the
+ * process). Throws AiError on HTTP/network failure, refusal or
+ * unparseable output — never pauses the bot's key.
+ */
+export async function callOpenAiJson(args: JudgeCallArgs): Promise<JudgeCallResult> {
+  return withModelFallback(args, async (model) => {
+    const { content, usage } = await rawCall({
+      apiKey: args.apiKey,
+      model,
+      messages: [
+        { role: 'system', content: args.system },
+        { role: 'user', content: args.user },
+      ],
+      maxTokens: args.maxTokens ?? DEFAULT_MAX_TOKENS,
+      timeoutMs: args.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      responseFormat: {
+        type: 'json_schema',
+        json_schema: { name: args.schemaName, schema: args.schema, strict: true },
+      },
+      onUsage: args.onUsage,
+    })
+    try {
+      return { data: JSON.parse(content), usage, model }
+    } catch {
+      throw new AiError('OpenAI returned malformed JSON.', { code: 'invalid_extraction' })
+    }
+  })
+}
+
+export interface TextCallArgs extends LearningOpenAi {
+  system: string
+  messages: { role: 'user' | 'assistant'; content: string }[]
+  maxTokens?: number
+  timeoutMs?: number
+  onUsage?: (usage: AiUsage, model: string) => void
+}
+
+/**
+ * Plain-text completion for the exam runner (the bot's reply to an exam
+ * question). Same safety as callOpenAiJson: no bot-key pause, model
+ * fallback. `fallbackModel` is not used when the caller pins a model
+ * on purpose (model comparison): pass it as null then.
+ */
+export async function callOpenAiText(args: TextCallArgs): Promise<{ text: string; usage: AiUsage | null; model: string }> {
+  return withModelFallback(args, async (model) => {
+    const { content, usage } = await rawCall({
+      apiKey: args.apiKey,
+      model,
+      messages: [{ role: 'system', content: args.system }, ...args.messages],
+      maxTokens: args.maxTokens ?? 800,
+      timeoutMs: args.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      onUsage: args.onUsage,
+    })
+    return { text: content, usage, model }
+  })
 }
