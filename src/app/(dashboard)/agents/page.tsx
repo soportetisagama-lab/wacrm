@@ -1,18 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Sparkles, Settings2, BarChart3 } from 'lucide-react';
+import { Bot, Sparkles, Settings2, BarChart3, Brain } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AiPlayground } from '@/components/agents/ai-playground';
 import { AiUsageCard } from '@/components/agents/ai-usage';
+import { AiLearning } from '@/components/agents/ai-learning';
 import { AiConfig } from '@/components/settings/ai-config';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 
-type Tab = 'playground' | 'setup' | 'usage';
+type Tab = 'playground' | 'setup' | 'usage' | 'learning';
 
 export default function AgentsPage() {
   const { accountRole } = useAuth();
+  const t = useTranslations('Agents.learning');
   const canViewUsage = accountRole ? canEditSettings(accountRole) : false;
   const [tab, setTab] = useState<Tab>('playground');
   const [decided, setDecided] = useState(false);
@@ -67,6 +70,11 @@ export default function AgentsPage() {
                 <BarChart3 className="mr-1.5 h-4 w-4" /> Usage
               </TabsTrigger>
             )}
+            {canViewUsage && (
+              <TabsTrigger value="learning">
+                <Brain className="mr-1.5 h-4 w-4" /> {t('tab')}
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="playground" className="mt-4">
@@ -80,6 +88,12 @@ export default function AgentsPage() {
           {canViewUsage && (
             <TabsContent value="usage" className="mt-4">
               <AiUsageCard />
+            </TabsContent>
+          )}
+
+          {canViewUsage && (
+            <TabsContent value="learning" className="mt-4">
+              <AiLearning />
             </TabsContent>
           )}
         </Tabs>
