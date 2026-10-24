@@ -47,8 +47,14 @@ export function exampleContent(question: string, answer: string): string {
 
 /**
  * Activate one proposal. Returns the new document id, or null when it
- * failed the final guard or the insert failed (nothing half-applied:
- * a document whose chunks failed to index is archived again).
+ * failed the final guard, another caller already took it, or the insert
+ * failed (nothing half-applied: a document whose chunks failed to index
+ * is archived again and the proposal goes back to pending).
+ *
+ * Idempotent: the candidate is first claimed with a conditional update
+ * (pending → accepted). Only the caller that wins the claim creates a
+ * document, so a double click on "Aprobar ya" — or the night running
+ * at the same time — can never create two.
  */
 export async function applyProposal(
   db: SupabaseClient,
@@ -58,6 +64,23 @@ export async function applyProposal(
   runId: string | null,
 ): Promise<string | null> {
   if (!isApplicable(p)) return null
+  const { data: claimed } = await db
+    .from('ai_learning_candidates')
+    .update({ verdict: 'accepted', decided_at: new Date().toISOString(), rejected_by: null })
+    .eq('id', p.candidateId)
+    .eq('account_id', accountId)
+    .eq('verdict', 'pending')
+    .select('id')
+  if (!claimed?.length) return null
+
+  const release = async () => {
+    await db
+      .from('ai_learning_candidates')
+      .update({ verdict: 'pending', decided_at: null })
+      .eq('id', p.candidateId)
+      .eq('account_id', accountId)
+  }
+
   const { data: doc, error } = await db
     .from('ai_knowledge_documents')
     .insert({
@@ -72,6 +95,7 @@ export async function applyProposal(
     .maybeSingle()
   if (error || !doc) {
     console.error('[ai-learning] apply insert failed:', error?.message)
+    await release()
     return null
   }
   const docId = doc.id as string
@@ -87,6 +111,7 @@ export async function applyProposal(
         .eq('document_id', docId)
       if (!count) {
         await setDocumentStatus(db, accountId, docId, 'archived')
+        await release()
         console.error('[ai-learning] example indexing failed:', err instanceof Error ? err.message : err)
         return null
       }
@@ -94,7 +119,7 @@ export async function applyProposal(
   }
   await db
     .from('ai_learning_candidates')
-    .update({ verdict: 'accepted', knowledge_document_id: docId, decided_at: new Date().toISOString(), rejected_by: null })
+    .update({ knowledge_document_id: docId })
     .eq('id', p.candidateId)
     .eq('account_id', accountId)
   if (p.kind === 'rule') invalidateLearnedRules(accountId)
@@ -126,19 +151,34 @@ export async function setDocumentStatus(
 }
 
 /**
- * Automatic rollback: deactivate everything learned since `since`
- * (documents → 'rolled_back', chunks off, candidates → 'rolled_back').
- * Returns how many documents were rolled back.
+ * Automatic rollback of one night: deactivate what that run applied
+ * (documents with its `learning_run_id`) plus what an admin approved by
+ * hand ("Aprobar ya", no run id) after that run started. Documents →
+ * 'rolled_back', chunks off, candidates → 'rolled_back'. Returns how
+ * many documents were rolled back.
  */
-export async function rollbackLearnedSince(db: SupabaseClient, accountId: string, since: Date): Promise<number> {
-  const { data: docs, error } = await db
-    .from('ai_knowledge_documents')
-    .select('id')
-    .eq('account_id', accountId)
-    .neq('source', 'manual')
-    .eq('status', 'active')
-    .gte('created_at', since.toISOString())
-  if (error || !docs?.length) return 0
+export async function rollbackLearnedRun(
+  db: SupabaseClient,
+  accountId: string,
+  runId: string,
+  manualSince: Date | null,
+): Promise<number> {
+  const base = () =>
+    db
+      .from('ai_knowledge_documents')
+      .select('id')
+      .eq('account_id', accountId)
+      .neq('source', 'manual')
+      .eq('status', 'active')
+  const { data: fromRun, error } = await base().eq('learning_run_id', runId)
+  if (error) return 0
+  let manual: { id: unknown }[] = []
+  if (manualSince) {
+    const { data } = await base().is('learning_run_id', null).gte('created_at', manualSince.toISOString())
+    manual = data ?? []
+  }
+  const docs = [...(fromRun ?? []), ...manual]
+  if (docs.length === 0) return 0
   let n = 0
   for (const d of docs) {
     if (await setDocumentStatus(db, accountId, d.id as string, 'rolled_back')) n += 1
