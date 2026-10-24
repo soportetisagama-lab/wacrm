@@ -206,3 +206,12 @@ describe('processSocialEvent', () => {
     expect(tables.conversation_referrals[0]).toMatchObject({ channel: 'messenger', source_id: 'AD-1', headline: 'Cocinas' })
   })
 })
+
+describe('claimInboundEvent — claim failure', () => {
+  it('discards the event when the claim fails for any reason other than a duplicate', async () => {
+    const db = {
+      from: () => ({ insert: async () => ({ error: { code: '08006', message: 'connection lost' } }) }),
+    } as unknown as Parameters<typeof claimInboundEvent>[0]
+    expect(await claimInboundEvent(db, 'instagram', 'mid-x', ACCOUNT)).toBe(false)
+  })
+})

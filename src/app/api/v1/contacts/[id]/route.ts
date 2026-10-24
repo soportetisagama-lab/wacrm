@@ -8,6 +8,7 @@
 // array of tag names) to replace the contact's tags.
 // ============================================================
 
+import { channelOf } from '@/lib/channels/types';
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import {
@@ -52,6 +53,25 @@ export async function PATCH(
     // Verify the contact is in this account before mutating anything.
     const existing = await getContactById(ctx.supabase, ctx.accountId, id);
     if (!existing) return fail('not_found', 'Contact not found', 404);
+
+    // Instagram / Facebook contacts never carry a phone (migration 081):
+    // otherwise WhatsApp messages from that number would land in the
+    // social chat. Refused explicitly instead of silently ignored.
+    if ('phone' in body && body.phone !== null) {
+      const { data: raw } = await ctx.supabase
+        .from('contacts')
+        .select('*')
+        .eq('id', id)
+        .eq('account_id', ctx.accountId)
+        .maybeSingle();
+      if (channelOf(raw) !== 'whatsapp') {
+        return fail(
+          'bad_request',
+          'Los contactos de Instagram y Facebook no usan teléfono',
+          400,
+        );
+      }
+    }
 
     // Build a partial update from the provided scalar fields. A field
     // is updated only when its key is PRESENT (so omitted fields are

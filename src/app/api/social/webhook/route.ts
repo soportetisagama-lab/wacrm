@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server'
 
-import { verifyHubSignature } from '@/lib/whatsapp/webhook-signature'
+import { sameSecret, verifyHubSignature } from '@/lib/whatsapp/webhook-signature'
 import { processSocialWebhookBody } from '@/lib/social/inbound'
 import { channelForObject } from '@/lib/social/parse'
 
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     console.error('[social webhook] META_SOCIAL_VERIFY_TOKEN is not set — verification refused')
     return NextResponse.json({ error: 'Verification failed' }, { status: 403 })
   }
-  if (token !== expected) {
+  if (!sameSecret(token, expected)) {
     return NextResponse.json({ error: 'Verification token mismatch' }, { status: 403 })
   }
   return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })

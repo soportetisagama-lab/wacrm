@@ -216,7 +216,10 @@ export function ContactDetailView({
     // by. whatsapp_user_id itself isn't editable from this form (only
     // the webhook sets it), so this only blocks a contact that has
     // neither.
-    if (!editPhone.trim() && !contact?.whatsapp_user_id) {
+    // Instagram / Facebook contacts never carry a phone (see
+    // migration 081) — the network id identifies them.
+    const isSocialContact = channelOf(contact) !== 'whatsapp';
+    if (!isSocialContact && !editPhone.trim() && !contact?.whatsapp_user_id) {
       toast.error(t('toastPhoneRequired'));
       return;
     }
@@ -227,7 +230,7 @@ export function ContactDetailView({
       .update({
         name: editName.trim() || null,
         // Asesores can't change the number (migration 072 enforces it).
-        ...(isAgent ? {} : { phone: editPhone.trim() || null }),
+        ...(isAgent || isSocialContact ? {} : { phone: editPhone.trim() || null }),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),
@@ -541,15 +544,25 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      {t('phone')} <span className="text-red-400">*</span>
+                      {t('phone')}{' '}
+                      {channelOf(contact) === 'whatsapp' && <span className="text-red-400">*</span>}
                     </Label>
                     <Input
                       value={editPhone}
                       onChange={(e) => setEditPhone(e.target.value)}
-                      disabled={isAgent}
-                      title={isAgent ? t('phoneLockedAgent') : undefined}
+                      disabled={isAgent || channelOf(contact) !== 'whatsapp'}
+                      title={
+                        channelOf(contact) !== 'whatsapp'
+                          ? t('socialNoPhone')
+                          : isAgent
+                            ? t('phoneLockedAgent')
+                            : undefined
+                      }
                       className="bg-muted border-border text-foreground h-8 text-sm disabled:cursor-not-allowed disabled:opacity-70"
                     />
+                    {channelOf(contact) !== 'whatsapp' && (
+                      <p className="text-xs text-muted-foreground">{t('socialNoPhone')}</p>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">{t('email')}</Label>

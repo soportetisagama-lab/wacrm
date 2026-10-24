@@ -703,7 +703,8 @@
       "dupSimilar": "Ya existe un contacto con un número muy similar.",
       "loadingTags": "Cargando etiquetas...",
       "noTagsAvailable": "No hay etiquetas disponibles. Crea etiquetas en Configuración.",
-      "phoneRequired": "El número de teléfono es obligatorio"
+      "phoneRequired": "El número de teléfono es obligatorio",
+      "socialNoPhone": "Los contactos de Instagram y Facebook no usan teléfono"
     },
     "detailView": {
       "phoneLockedAgent": "Solo ATC o administración pueden cambiar el número de un contacto.",
@@ -767,7 +768,8 @@
       "toastCustomFieldsSaved": "Campos personalizados guardados",
       "toastCustomFieldsFailed": "Error al guardar los campos personalizados",
       "toastTemplateSent": "Plantilla \"{name}\" enviada",
-      "toastTemplateFailed": "Error al enviar la plantilla: {reason}"
+      "toastTemplateFailed": "Error al enviar la plantilla: {reason}",
+      "socialNoPhone": "Los contactos de Instagram y Facebook no usan teléfono"
     },
     "importModal": {
       "title": "Importar contactos",

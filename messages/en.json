@@ -703,7 +703,8 @@
       "dupSimilar": "A contact with a very similar number already exists.",
       "loadingTags": "Loading tags...",
       "noTagsAvailable": "No tags available. Create tags in Settings.",
-      "phoneRequired": "Phone number is required"
+      "phoneRequired": "Phone number is required",
+      "socialNoPhone": "Instagram and Facebook contacts do not use a phone number"
     },
     "detailView": {
       "phoneLockedAgent": "Only ATC or admins can change a contact's phone number.",
@@ -767,7 +768,8 @@
       "toastCustomFieldsSaved": "Custom fields saved",
       "toastCustomFieldsFailed": "Failed to save custom fields",
       "toastTemplateSent": "Template \"{name}\" sent",
-      "toastTemplateFailed": "Failed to send template: {reason}"
+      "toastTemplateFailed": "Failed to send template: {reason}",
+      "socialNoPhone": "Instagram and Facebook contacts do not use a phone number"
     },
     "importModal": {
       "title": "Import Contacts",

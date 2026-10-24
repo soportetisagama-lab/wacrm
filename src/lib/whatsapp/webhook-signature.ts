@@ -60,3 +60,14 @@ export function verifyHubSignature(
   if (a.length !== b.length) return false
   return crypto.timingSafeEqual(a, b)
 }
+
+/**
+ * Constant-time comparison of two secrets (e.g. a webhook verify token).
+ * Both sides are hashed first so lengths match and nothing leaks through
+ * an early exit on length.
+ */
+export function sameSecret(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest()
+  const hb = crypto.createHash('sha256').update(b).digest()
+  return crypto.timingSafeEqual(ha, hb)
+}

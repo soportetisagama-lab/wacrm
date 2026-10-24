@@ -76,9 +76,10 @@ export async function claimInboundEvent(
     .insert({ channel, mid, account_id: accountId })
   if (!error) return true
   if (isUniqueViolation(error)) return false
-  // Can't tell — fail open on the claim, the message insert below still works.
-  console.error('[social webhook] dedupe claim failed:', error.message)
-  return true
+  // Can't tell whether it's a duplicate: drop it rather than risk storing
+  // (and answering) the same message twice. Logged loudly so it's visible.
+  console.error(`[social webhook] dedupe claim failed — ${channel} event ${mid} discarded:`, error.message)
+  return false
 }
 
 async function releaseInboundEvent(db: SupabaseClient, channel: SocialChannel, mid: string) {

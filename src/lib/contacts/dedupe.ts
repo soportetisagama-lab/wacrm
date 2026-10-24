@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone, phonesMatch } from "@/lib/whatsapp/phone-utils";
+import { channelOf } from "@/lib/channels/types";
 
 /**
  * Contact de-duplication helpers, shared by the WhatsApp webhook, the
@@ -50,8 +51,15 @@ export async function findExistingContact(
 
   if (error || !data) return null;
 
+  // Only WhatsApp contacts are "the person with this number": an
+  // Instagram / Messenger contact never owns a phone (migration 081
+  // blocks it), but should one slip through, a WhatsApp message must
+  // still never land in that social chat. Filtered in JS, not with
+  // .eq('channel'), so this keeps working before migration 080.
   return (
-    (data as ExistingContact[]).find((c) => phonesMatch(c.phone, phone)) ?? null
+    (data as ExistingContact[]).find(
+      (c) => channelOf(c as { channel?: string | null }) === "whatsapp" && phonesMatch(c.phone, phone),
+    ) ?? null
   );
 }
 

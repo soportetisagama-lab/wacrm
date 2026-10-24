@@ -1,5 +1,6 @@
 'use client';
 
+import { channelOf } from '@/lib/channels/types';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -56,7 +57,9 @@ export function ContactForm({
   const isEdit = !!contact;
   // Asesores can't change an existing contact's number (enforced in the
   // DB too — migration 072); they still set it when creating one.
-  const phoneLocked = isEdit && isAgent;
+  // Instagram / Facebook contacts never carry a phone (migration 081).
+  const isSocialContact = isEdit && channelOf(contact) !== 'whatsapp';
+  const phoneLocked = (isEdit && isAgent) || isSocialContact;
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -132,7 +135,7 @@ export function ContactForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!phone.trim()) {
+    if (!isSocialContact && !phone.trim()) {
       toast.error(t('phoneRequired'));
       return;
     }
@@ -257,7 +260,7 @@ export function ContactForm({
 
           <div className="space-y-2">
             <Label htmlFor="cf-phone" className="text-muted-foreground">
-              {t('phoneLabel')} <span className="text-red-400">*</span>
+              {t('phoneLabel')} {!isSocialContact && <span className="text-red-400">*</span>}
             </Label>
             <Input
               id="cf-phone"
@@ -269,7 +272,7 @@ export function ContactForm({
               onBlur={checkDuplicate}
               placeholder={t('phonePlaceholder')}
               disabled={phoneLocked}
-              title={phoneLocked ? t('phoneLockedAgent') : undefined}
+              title={isSocialContact ? t('socialNoPhone') : phoneLocked ? t('phoneLockedAgent') : undefined}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"
             />
             {dupMatch ? (
@@ -300,7 +303,7 @@ export function ContactForm({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {phoneLocked ? t('phoneLockedAgent') : t('phoneHint')}
+                {isSocialContact ? t('socialNoPhone') : phoneLocked ? t('phoneLockedAgent') : t('phoneHint')}
               </p>
             )}
           </div>

@@ -67,3 +67,13 @@ describe("verifyMetaWebhookSignature", () => {
     });
   });
 });
+
+describe("sameSecret", () => {
+  it("compares secrets in constant time, any length", async () => {
+    const { sameSecret } = await import("./webhook-signature");
+    expect(sameSecret("verify-me", "verify-me")).toBe(true);
+    expect(sameSecret("verify-me", "verify-mf")).toBe(false);
+    expect(sameSecret("short", "a-much-longer-secret")).toBe(false);
+    expect(sameSecret("", "x")).toBe(false);
+  });
+});
