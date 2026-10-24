@@ -15,7 +15,11 @@ vi.mock('./providers/anthropic', () => ({
 }))
 vi.mock('./usage', () => ({ logAiUsage: h.logAiUsage }))
 
-import { classifyFirstInboundContext, parseClassification } from './classify-first-inbound'
+import {
+  classifyFirstInboundContext,
+  isLocationOrHoursQuery,
+  parseClassification,
+} from './classify-first-inbound'
 
 function config(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
@@ -147,6 +151,26 @@ describe('classifyFirstInboundContext — clear context', () => {
     expect(result.hasContext).toBe(true)
     expect(h.generateAnthropicStructured).toHaveBeenCalledTimes(1)
     expect(h.generateOpenAiStructured).not.toHaveBeenCalled()
+  })
+})
+
+describe('classifyFirstInboundContext — location/hours regex backstop', () => {
+  it('counts a location/hours question as context without calling the model', async () => {
+    const result = await classifyFirstInboundContext(
+      fakeDb,
+      'acct-1',
+      'conv-1',
+      '¿Dónde están ubicados y qué horarios tienen?',
+    )
+    expect(result.hasContext).toBe(true)
+    expect(h.generateOpenAiStructured).not.toHaveBeenCalled()
+  })
+
+  it('matches short forms too, and ignores plain greetings', () => {
+    expect(isLocationOrHoursQuery('¿Horario?')).toBe(true)
+    expect(isLocationOrHoursQuery('Cuál es su dirección')).toBe(true)
+    expect(isLocationOrHoursQuery('a qué hora abren')).toBe(true)
+    expect(isLocationOrHoursQuery('Hola, buenas tardes')).toBe(false)
   })
 })
 
