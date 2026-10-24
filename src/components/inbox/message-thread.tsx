@@ -61,6 +61,8 @@ import {
 import { deleteAccountMedia } from '@/lib/storage/upload-media';
 import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
+import { ChannelIcon, socialIdentity } from '@/components/channels/channel-badge';
+import { CHANNEL_LABEL, channelOf } from '@/lib/channels/types';
 import { LineTransferButton } from './line-transfer-button';
 import { CallContactButton, callContact } from '@/components/calls/call-contact-button';
 import { MobileThreadTags } from './mobile-thread-tags';
@@ -1106,6 +1108,13 @@ export function MessageThread({
 
   const contactDisplayName =
     contact?.name || contact?.phone || contact?.whatsapp_user_id || 'Customer';
+  // Instagram / Messenger chats: no phone, no calls, no templates, no
+  // line transfers (all WhatsApp-only).
+  const channel = channelOf(conversation?.channel ? conversation : contact);
+  const isSocial = channel !== 'whatsapp';
+  const contactSubtitle = isSocial
+    ? `${CHANNEL_LABEL[channel]}${contact && socialIdentity(contact) ? ` · ${socialIdentity(contact)}` : ''}`
+    : null;
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -1375,13 +1384,15 @@ export function MessageThread({
               {displayName.charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1 pl-1">
-              <h2 className="overflow-hidden text-[clamp(14px,4.3vw,17px)] leading-tight font-bold whitespace-nowrap [mask-image:linear-gradient(90deg,#000_85%,transparent)]">
+              <h2 className="flex items-center gap-1.5 overflow-hidden text-[clamp(14px,4.3vw,17px)] leading-tight font-bold whitespace-nowrap [mask-image:linear-gradient(90deg,#000_85%,transparent)]">
+                {isSocial && <ChannelIcon channel={channel} size={16} />}
                 {displayName}
               </h2>
               <p className="overflow-hidden text-[clamp(11px,3.4vw,13px)] whitespace-nowrap text-white/85">
-                {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
+                {contactSubtitle ?? (contact.phone || contact.whatsapp_username || t('noPhoneNumber'))}
               </p>
             </div>
+            {!isSocial && (
             <button
               type="button"
               onClick={() => callContact(contact.id, contactDisplayName)}
@@ -1391,6 +1402,7 @@ export function MessageThread({
             >
               <Phone className="h-5 w-5" />
             </button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t('moreOptions')}
@@ -1412,7 +1424,7 @@ export function MessageThread({
                     {t('refresh')}
                   </DropdownMenuItem>
                 )}
-                {canTransfer && (
+                {canTransfer && !isSocial && (
                   <DropdownMenuItem onClick={() => setTransferOpen(true)}>
                     <ArrowRightLeft className="mr-2 h-4 w-4" />
                     {tTransfer('button')}
@@ -1486,14 +1498,15 @@ export function MessageThread({
           <div className="min-w-0">
             <h2
               className={cn(
-                'text-foreground truncate font-semibold',
+                'text-foreground flex min-w-0 items-center gap-1.5 font-semibold',
                 embedded ? 'text-base' : 'text-sm'
               )}
             >
-              {displayName}
+              <ChannelIcon channel={channel} size={16} />
+              <span className="truncate">{displayName}</span>
             </h2>
             <p className={cn('text-muted-foreground truncate', embedded ? 'text-sm' : 'text-xs')}>
-              {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
+              {contactSubtitle ?? (contact.phone || contact.whatsapp_username || t('noPhoneNumber'))}
             </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
@@ -1560,7 +1573,7 @@ export function MessageThread({
               up `onRefresh`. */}
           {/* Outbound WhatsApp call (permission + cost check happen in the
               call manager). Phones get it from the "⋮" menu instead. */}
-          {contact && (
+          {contact && !isSocial && (
             <CallContactButton
               contactId={contact.id}
               name={contactDisplayName}
@@ -1593,12 +1606,12 @@ export function MessageThread({
             open={transferOpen}
             onOpenChange={setTransferOpen}
             onAvailableChange={setCanTransfer}
-            triggerClassName="hidden xl:inline-flex"
+            triggerClassName={isSocial ? "hidden" : "hidden xl:inline-flex"}
           />
 
           {/* Phones: contact / refresh / transfer behind one "⋮" button,
               so the name and the status/assign dropdowns keep their room. */}
-          {(onOpenContactMobile || onRefresh || canTransfer || contact) && (
+          {(onOpenContactMobile || onRefresh || (canTransfer && !isSocial) || (contact && !isSocial)) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t('moreOptions')}
@@ -1614,7 +1627,7 @@ export function MessageThread({
                     {t('showContact')}
                   </DropdownMenuItem>
                 )}
-                {contact && (
+                {contact && !isSocial && (
                   <DropdownMenuItem onClick={() => callContact(contact.id, contactDisplayName)}>
                     <Phone className="mr-2 h-4 w-4" />
                     {tCalls('callNow')}
@@ -1626,7 +1639,7 @@ export function MessageThread({
                     {t('refresh')}
                   </DropdownMenuItem>
                 )}
-                {canTransfer && (
+                {canTransfer && !isSocial && (
                   <DropdownMenuItem onClick={() => setTransferOpen(true)}>
                     <ArrowRightLeft className="mr-2 h-4 w-4" />
                     {tTransfer('button')}
@@ -1866,6 +1879,7 @@ export function MessageThread({
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
         awaitingCustomer={sessionInfo.awaitingCustomer}
+        channel={channel}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onSendInteractive={handleSendInteractive}

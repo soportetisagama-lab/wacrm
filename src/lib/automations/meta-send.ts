@@ -16,6 +16,7 @@ import {
   type RecipientIdentifier,
 } from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
+import { isSocialContact, sendSocialOutbound, SocialSendError } from '@/lib/social/send'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -122,12 +123,31 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone, whatsapp_user_id')
+    .select('*')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
   if (contactErr || !contact) {
     throw new Error('contact not found for this account')
+  }
+
+  // Instagram / Messenger contact: no templates there (WhatsApp-only);
+  // text goes through the Graph Send API.
+  if (isSocialContact(contact)) {
+    if (input.kind === 'template') {
+      throw new SocialSendError(
+        'unsupported',
+        'Las plantillas de WhatsApp no se pueden enviar por Instagram ni Messenger.',
+        400,
+      )
+    }
+    const { messageId } = await sendSocialOutbound(db, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contact,
+      outbound: { kind: 'text', text: input.text },
+    })
+    return persistAutomationSend(db, input, messageId)
   }
 
   // Phone wins when present; falls back to the contact's BSUID for
@@ -203,6 +223,14 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     waMessageId = await attempt(recipient)
   }
 
+  return persistAutomationSend(db, input, waMessageId)
+}
+
+async function persistAutomationSend(
+  db: ReturnType<typeof supabaseAdmin>,
+  input: SendInput,
+  waMessageId: string,
+): Promise<{ whatsapp_message_id: string }> {
   // Persist the sent message so it appears in the inbox with a real
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.

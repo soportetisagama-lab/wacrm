@@ -3,6 +3,7 @@ import {
   FileText,
   KeyRound,
   LayoutGrid,
+  MessagesSquare,
   Palette,
   PlugZap,
   Shield,
@@ -27,6 +28,7 @@ export const SETTINGS_SECTIONS = [
   'security',
   'appearance',
   'whatsapp',
+  'social',
   'templates',
   'quick-replies',
   'fields',
@@ -53,6 +55,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
+  social: { id: 'social', label: 'Instagram & Messenger', icon: MessagesSquare, group: 'workspace' },
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
@@ -79,7 +82,8 @@ export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[
  *    `canViewTeamMembers` (+gerencia/jefe_linea) — the one Workspace
  *    item Gerencia/Jefe de Línea get without full settings access.
  *  - Everything else (`overview` + the rest of Workspace — whatsapp,
- *    templates, quick-replies, fields, deals, api): `canEditSettings`
+ *    social (Instagram/Messenger), templates, quick-replies, fields,
+ *    deals, api): `canEditSettings`
  *    only. Overview is a hub of links into those same sections, so it
  *    rides the same gate rather than getting its own.
  */

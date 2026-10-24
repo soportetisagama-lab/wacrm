@@ -48,6 +48,12 @@ import {
 } from '@/lib/whatsapp/recipient';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import {
+  isSocialContact,
+  sendSocialOutbound,
+  SocialSendError,
+  type SocialOutbound,
+} from '@/lib/social/send';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -204,7 +210,6 @@ export async function sendMessageToConversation(
     templateMessageParams,
     interactivePayload,
     replyToMessageId,
-    senderId,
   } = params;
 
   if (!conversationId) {
@@ -240,6 +245,45 @@ export async function sendMessageToConversation(
   const contact = conversation.contact;
   if (!contact) {
     throw new SendMessageError('bad_request', 'Contact not found', 400);
+  }
+
+  // Instagram / Messenger: Graph Send API instead of WhatsApp. No
+  // templates there, and Meta's 24 h window is enforced inside
+  // sendSocialOutbound (refused with a clear message when closed).
+  if (isSocialContact(contact)) {
+    if (messageType === 'template') {
+      throw new SendMessageError(
+        'unsupported_channel',
+        'Las plantillas solo existen en WhatsApp. En Instagram y Messenger responde con texto o imagen.',
+        400
+      );
+    }
+    const outbound: SocialOutbound =
+      messageType === 'interactive'
+        ? { kind: 'interactive', payload: interactivePayload! }
+        : isMediaKind
+          ? {
+              kind: 'media',
+              mediaKind: messageType as (typeof MEDIA_KINDS)[number],
+              url: mediaUrl!,
+              caption: contentText,
+            }
+          : { kind: 'text', text: contentText! };
+    let socialMid: string;
+    try {
+      ({ messageId: socialMid } = await sendSocialOutbound(db, {
+        accountId,
+        conversationId,
+        contact,
+        outbound,
+      }));
+    } catch (err) {
+      if (err instanceof SocialSendError) {
+        throw new SendMessageError(err.code, err.message, err.status);
+      }
+      throw err;
+    }
+    return persistSentMessage(db, accountId, params, contact.id, socialMid, null);
   }
 
   // Phone wins when present (unchanged behavior for every contact
@@ -461,6 +505,34 @@ export async function sendMessageToConversation(
       .eq('id', contact.id);
   }
 
+  return persistSentMessage(db, accountId, params, contact.id, waMessageId, templateRow);
+}
+
+/**
+ * Persist an outbound message that Meta accepted (WhatsApp or
+ * Instagram/Messenger), refresh the conversation preview and pause any
+ * active Flow run for the contact.
+ */
+async function persistSentMessage(
+  db: SupabaseClient,
+  accountId: string,
+  params: SendMessageParams,
+  contactId: string,
+  waMessageId: string,
+  templateRow: MessageTemplate | null
+): Promise<SendMessageResult> {
+  const {
+    conversationId,
+    messageType,
+    contentText,
+    mediaUrl,
+    templateName,
+    templateParams,
+    interactivePayload,
+    replyToMessageId,
+    senderId,
+  } = params;
+
   // Persist the sent message. Field names MUST match the messages
   // schema (see 001_initial_schema.sql).
   // Interactive messages persist the body as content_text (so the
@@ -541,7 +613,7 @@ export async function sendMessageToConversation(
         end_reason: 'agent_replied',
       })
       .eq('account_id', accountId)
-      .eq('contact_id', contact.id)
+      .eq('contact_id', contactId)
       .eq('status', 'active');
     if (pauseErr) {
       console.error('[flows] pause-on-agent-send failed:', pauseErr.message);

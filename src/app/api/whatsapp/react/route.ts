@@ -85,8 +85,10 @@ export async function POST(request: Request) {
     // username-only contacts with no phone on file (migration 042).
     const recipient = contact ? resolveRecipient(contact) : null;
     if (!recipient) {
+      // Also the case for Instagram / Messenger contacts (no phone, no
+      // BSUID): reactions are only sent through WhatsApp.
       return NextResponse.json(
-        { error: 'Contact has no phone number or WhatsApp ID' },
+        { error: 'Las reacciones solo están disponibles en chats de WhatsApp.' },
         { status: 400 },
       );
     }

@@ -1,5 +1,7 @@
 'use client';
 
+import { ChannelBadge, socialIdentity } from '@/components/channels/channel-badge';
+import { channelOf } from '@/lib/channels/types';
 import { CallContactButton } from '@/components/calls/call-contact-button';
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -421,12 +423,19 @@ export function ContactDetailView({
                   <SheetDescription className="text-muted-foreground text-xs mt-0.5">
                     {t('contactDetailsDesc')}
                   </SheetDescription>
-                  <CallContactButton
-                    contactId={contact.id}
-                    name={contact.name || contact.phone || t('unnamed')}
-                    withLabel
-                    className="mt-1.5 border border-border"
-                  />
+                  {channelOf(contact) === 'whatsapp' ? (
+                    <CallContactButton
+                      contactId={contact.id}
+                      name={contact.name || contact.phone || t('unnamed')}
+                      withLabel
+                      className="mt-1.5 border border-border"
+                    />
+                  ) : (
+                    <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                      <ChannelBadge channel={channelOf(contact)} />
+                      {socialIdentity(contact)}
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     {contact.phone ? (
                       <button

@@ -32,6 +32,21 @@ export function verifyMetaWebhookSignature(
     return false
   }
 
+  return verifyHubSignature(rawBody, signatureHeader, secret)
+}
+
+/**
+ * The HMAC check itself, against an explicit secret — shared by the
+ * WhatsApp webhook (above) and the Instagram/Messenger webhook
+ * (lib/social), which may use a different Meta app. An empty secret
+ * always fails (fail closed).
+ */
+export function verifyHubSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string | null | undefined,
+): boolean {
+  if (!secret) return false
   if (!signatureHeader) return false
   if (!signatureHeader.startsWith('sha256=')) return false
 

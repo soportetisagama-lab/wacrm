@@ -20,6 +20,28 @@ import {
   type RecipientIdentifier,
 } from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
+import { isSocialContact, sendSocialOutbound, type SocialOutbound } from '@/lib/social/send'
+
+/**
+ * Instagram / Messenger contacts go through the Graph Send API instead of
+ * WhatsApp (lib/social/send.ts). Returns Meta's message id, or null when
+ * the contact is a WhatsApp one and the caller should carry on as before.
+ */
+async function sendIfSocial(
+  accountId: string,
+  conversationId: string,
+  contact: { channel?: string | null; channel_user_id?: string | null },
+  outbound: SocialOutbound,
+): Promise<string | null> {
+  if (!isSocialContact(contact)) return null
+  const { messageId } = await sendSocialOutbound(supabaseAdmin(), {
+    accountId,
+    conversationId,
+    contact,
+    outbound,
+  })
+  return messageId
+}
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -73,12 +95,20 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone, whatsapp_user_id')
+    .select('*')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
   if (contactErr || !contact) {
     throw new Error('contact not found for this account')
+  }
+
+  const socialMid = await sendIfSocial(args.accountId, args.conversationId, contact, {
+    kind: 'text',
+    text: args.text,
+  })
+  if (socialMid) {
+    return persistBotText(db, args, socialMid)
   }
 
   // Phone wins when present; falls back to the contact's BSUID for
@@ -140,6 +170,14 @@ export async function engineSendText(
     waMessageId = await attempt(recipient)
   }
 
+  return persistBotText(db, args, waMessageId)
+}
+
+async function persistBotText(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: SendTextEngineArgs,
+  waMessageId: string,
+): Promise<{ whatsapp_message_id: string }> {
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
     sender_type: 'bot',
@@ -194,12 +232,22 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone, whatsapp_user_id')
+    .select('*')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
   if (contactErr || !contact) {
     throw new Error('contact not found for this account')
+  }
+
+  const socialMid = await sendIfSocial(args.accountId, args.conversationId, contact, {
+    kind: 'media',
+    mediaKind: args.kind,
+    url: args.link,
+    caption: args.caption,
+  })
+  if (socialMid) {
+    return persistBotMedia(db, args, socialMid)
   }
 
   // Phone wins when present; falls back to the contact's BSUID for
@@ -264,6 +312,14 @@ export async function engineSendMedia(
     waMessageId = await attempt(recipient)
   }
 
+  return persistBotMedia(db, args, waMessageId)
+}
+
+async function persistBotMedia(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: SendMediaEngineArgs,
+  waMessageId: string,
+): Promise<{ whatsapp_message_id: string }> {
   // content_type='image'|'video'|'document' — these are already in the
   // messages_content_type_check constraint (migration 001 + 010).
   // content_text carries the caption (or empty) so the conversation
@@ -359,12 +415,20 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone, whatsapp_user_id')
+    .select('*')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
   if (contactErr || !contact) {
     throw new Error('contact not found for this account')
+  }
+
+  const socialMid = await sendIfSocial(input.accountId, input.conversationId, contact, {
+    kind: 'interactive',
+    payload: interactivePayloadOf(input),
+  })
+  if (socialMid) {
+    return persistBotInteractive(db, input, socialMid)
   }
 
   // Phone wins when present; falls back to the contact's BSUID for
@@ -446,6 +510,33 @@ async function sendInteractiveViaMeta(
     waMessageId = await attempt(recipient)
   }
 
+  return persistBotInteractive(db, input, waMessageId)
+}
+
+function interactivePayloadOf(input: SendInput): InteractiveMessagePayload {
+  return input.kind === 'buttons'
+    ? {
+        kind: 'buttons',
+        body: input.bodyText,
+        header: input.headerText,
+        footer: input.footerText,
+        buttons: input.buttons,
+      }
+    : {
+        kind: 'list',
+        body: input.bodyText,
+        header: input.headerText,
+        footer: input.footerText,
+        button_label: input.buttonLabel,
+        sections: input.sections,
+      }
+}
+
+async function persistBotInteractive(
+  db: ReturnType<typeof supabaseAdmin>,
+  input: SendInput,
+  waMessageId: string,
+): Promise<{ whatsapp_message_id: string }> {
   // Persist the bot's prompt to the messages table so it appears in
   // the inbox. content_type='interactive' is supported as of
   // migration 010; sender_type='bot' distinguishes flow sends from
@@ -457,23 +548,7 @@ async function sendInteractiveViaMeta(
   // when their reply arrives. We DO persist the structured payload so
   // the inbox thread re-renders the buttons/rows the bot sent (round-
   // trip), matching the composer + automation send paths.
-  const interactivePayload: InteractiveMessagePayload =
-    input.kind === 'buttons'
-      ? {
-          kind: 'buttons',
-          body: input.bodyText,
-          header: input.headerText,
-          footer: input.footerText,
-          buttons: input.buttons,
-        }
-      : {
-          kind: 'list',
-          body: input.bodyText,
-          header: input.headerText,
-          footer: input.footerText,
-          button_label: input.buttonLabel,
-          sections: input.sections,
-        }
+  const interactivePayload = interactivePayloadOf(input)
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,

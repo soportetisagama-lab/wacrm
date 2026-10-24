@@ -24,6 +24,7 @@ describe('isSectionVisible', () => {
     const workspaceOnly = [
       'overview',
       'whatsapp',
+      'social',
       'templates',
       'quick-replies',
       'fields',
@@ -46,6 +47,7 @@ describe('visibleSections', () => {
       'security',
       'appearance',
       'whatsapp',
+      'social',
       'templates',
       'quick-replies',
       'fields',

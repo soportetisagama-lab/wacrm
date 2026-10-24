@@ -1141,6 +1141,13 @@ const NO_PHONE_HANDOFF_MESSAGE =
 const NO_PHONE_HANDOFF_PREFIX =
   "Para que un asesor pueda llamarte, necesitamos tu número de teléfono. Compártelo con el botón de WhatsApp o escríbelo aquí.";
 
+/** NO_PHONE_HANDOFF_MESSAGE / _PREFIX for Instagram and Messenger chats,
+ *  where the customer can only type the number. */
+const SOCIAL_NO_PHONE_HANDOFF_MESSAGE =
+  "Para que un asesor pueda llamarte, escríbenos aquí tu número de teléfono y un asesor continuará tu consulta.";
+const SOCIAL_NO_PHONE_HANDOFF_PREFIX =
+  "Para que un asesor pueda llamarte, escríbenos aquí tu número de teléfono.";
+
 /** After-hours text for a collect_ai handoff that gathered nothing — the
  *  configured "ya tengo tu información" line would be false here. */
 const NO_DATA_AFTER_HOURS_HANDOFF_MESSAGE =
@@ -1161,10 +1168,18 @@ async function handoffTextForContact(
   try {
     const { data } = await db
       .from("contacts")
-      .select("phone")
+      .select("*")
       .eq("id", contactId)
       .maybeSingle();
     if (!data || (data.phone ?? "").trim() !== "") return text;
+    // Instagram / Messenger: there's no WhatsApp share button there.
+    if (data.channel && data.channel !== "whatsapp") {
+      return text === DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+        ? SOCIAL_NO_PHONE_HANDOFF_MESSAGE
+        : `${SOCIAL_NO_PHONE_HANDOFF_PREFIX}
+
+${text}`;
+    }
   } catch {
     return text;
   }

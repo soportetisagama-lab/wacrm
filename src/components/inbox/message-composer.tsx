@@ -1,5 +1,6 @@
 "use client";
 
+import { CHANNEL_LABEL, type Channel } from "@/lib/channels/types";
 import {
   useState,
   useRef,
@@ -209,6 +210,10 @@ interface MessageComposerProps {
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
   ref?: Ref<MessageComposerHandle>;
+  /** Conversation's network. Instagram / Messenger have no templates:
+   *  outside the 24 h window nothing can be sent until the customer
+   *  writes again. Defaults to WhatsApp. */
+  channel?: Channel;
 }
 
 function formatDuration(seconds: number): string {
@@ -233,6 +238,7 @@ export function MessageComposer({
   replyTo,
   onClearReply,
   ref,
+  channel = "whatsapp",
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
 
@@ -344,7 +350,8 @@ export function MessageComposer({
   const readOnly = !canSend;
   // Templates (the only way back in after the 24h window) are ATC and
   // above — an agent (asesor) never sees the template buttons.
-  const canTemplates = useCan("send-templates");
+  const isSocial = channel !== "whatsapp";
+  const canTemplates = useCan("send-templates") && !isSocial;
   // Same line for "draft with AI": an agent (asesor) never sees it.
   const canDraft = useCan("draft-with-ai");
   // Media (like free-form text) is only allowed inside the 24h window.
@@ -1173,7 +1180,9 @@ export function MessageComposer({
       {sessionExpired && (
         <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
           <p className="text-xs text-amber-400">
-            {awaitingCustomer
+            {isSocial
+              ? t("socialWindowClosedHint", { network: CHANNEL_LABEL[channel] })
+              : awaitingCustomer
               ? canTemplates
                 ? t("awaitingCustomerHint")
                 : t("awaitingCustomerHintNoTemplates")
@@ -1506,7 +1515,9 @@ export function MessageComposer({
               readOnly
                 ? t("readOnlyPlaceholder")
                 : sessionExpired
-                  ? awaitingCustomer
+                  ? isSocial
+                    ? t("socialWindowClosedPlaceholder")
+                    : awaitingCustomer
                     ? canTemplates
                       ? t("awaitingCustomerPlaceholder")
                       : t("awaitingCustomerPlaceholderNoTemplates")

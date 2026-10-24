@@ -1,5 +1,7 @@
 "use client";
 
+import { ChannelBadge, ChannelIcon, socialIdentity } from '@/components/channels/channel-badge';
+import { CHANNEL_LABEL, channelOf } from '@/lib/channels/types';
 import { CallContactButton } from '@/components/calls/call-contact-button';
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -272,6 +274,8 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
   const displayName =
     contact.name || contact.phone || contact.whatsapp_user_id || 'Unknown';
   const initials = displayName.charAt(0).toUpperCase();
+  const contactChannel = channelOf(contact);
+  const isSocialContact = contactChannel !== 'whatsapp';
 
   return (
     <div className="flex h-full w-64 flex-col bg-card 2xl:w-70">
@@ -301,17 +305,27 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
             {contact.company && (
               <p className="text-xs text-muted-foreground">{contact.company}</p>
             )}
-            <CallContactButton
-              contactId={contact.id}
-              name={displayName}
-              withLabel
-              className="mt-2 border border-border"
-            />
+            <ChannelBadge channel={contactChannel} className="mt-2" />
+            {!isSocialContact && (
+              <CallContactButton
+                contactId={contact.id}
+                name={displayName}
+                withLabel
+                className="mt-2 border border-border"
+              />
+            )}
           </div>
 
-          {/* Phone */}
+          {/* Phone — or, for Instagram / Messenger, the network identity */}
           <div className="mt-4 space-y-2">
-            {contact.phone ? (
+            {isSocialContact ? (
+              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">
+                <ChannelIcon channel={contactChannel} size={16} />
+                <span className="flex-1 truncate text-left">
+                  {socialIdentity(contact) ?? CHANNEL_LABEL[contactChannel]}
+                </span>
+              </div>
+            ) : contact.phone ? (
               <button
                 onClick={handleCopyPhone}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"

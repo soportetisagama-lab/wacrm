@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Minimal in-memory stand-in for the supabase-js query builder, for the
-// learning tests only. Supports the calls the learning code makes:
+// learning tests and the Instagram/Messenger inbound tests. Supports the calls the learning code makes:
 // select / insert / update / upsert, eq / neq / gt / gte / lt / in,
 // order / limit / maybeSingle, `{ count, head }`, and rpc (returns []).
 // `.or()` filters are ignored (they only narrow message types).
@@ -21,7 +21,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
   private payload: Row | Row[] | null = null
   private conflict: string[] = []
   private returning = false
-  private single = false
+  private one = false
   private head = false
   private orderBy: { col: string; asc: boolean } | null = null
   private max: number | null = null
@@ -105,7 +105,11 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
     return this
   }
   maybeSingle() {
-    this.single = true
+    this.one = true
+    return this
+  }
+  single() {
+    this.one = true
     return this
   }
 
@@ -120,6 +124,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
       const made: Row[] = list.map((p) => ({ id: fakeId(), created_at: now, updated_at: now, ...p }))
       // ai_job_runs lock: UNIQUE (job, run_key)
       if (this.table === 'ai_job_runs' && made.some((m) => this.rows().some((r) => r.job === m.job && r.run_key === m.run_key))) {
+        return { data: null, error: { code: '23505', message: 'duplicate' } }
+      }
+      // social_inbound_events: PRIMARY KEY (channel, mid)
+      if (this.table === 'social_inbound_events' && made.some((m) => this.rows().some((r) => r.channel === m.channel && r.mid === m.mid))) {
         return { data: null, error: { code: '23505', message: 'duplicate' } }
       }
       this.rows().push(...made)
@@ -149,12 +157,12 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
     }
     if (this.max !== null) rows = rows.slice(0, this.max)
     if (this.head) return { data: null, error: null, count: rows.length }
-    return this.single ? { data: rows[0] ?? null, error: null } : { data: rows, error: null }
+    return this.one ? { data: rows[0] ?? null, error: null } : { data: rows, error: null }
   }
 
   private out(rows: Row[]) {
     if (!this.returning) return { data: null, error: null }
-    return this.single ? { data: rows[0] ?? null, error: null } : { data: rows, error: null }
+    return this.one ? { data: rows[0] ?? null, error: null } : { data: rows, error: null }
   }
 
   then<A, B>(

@@ -1,5 +1,7 @@
 "use client";
 
+import { ChannelIcon } from "@/components/channels/channel-badge";
+import { channelOf } from "@/lib/channels/types";
 import { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -406,9 +408,10 @@ export function ConversationList({
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone ?? "";
+        const username = c.contact?.channel_username?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
         const phoneMatches = qDigits.length > 0 && toDigits(phone).includes(qDigits);
-        return name.includes(q) || phoneMatches || lastMsg.includes(q);
+        return name.includes(q) || phoneMatches || lastMsg.includes(q) || (!!username && username.includes(q.replace(/^@/, "")));
       });
     }
 
@@ -987,7 +990,8 @@ const ConversationItem = memo(function ConversationItem({
           />
         }
       >
-      {/* Avatar */}
+      {/* Avatar — with the network's mark in the corner. */}
+      <div className="relative shrink-0">
       <div
         className={cn(
           "flex shrink-0 items-center justify-center rounded-full text-sm font-medium",
@@ -1007,6 +1011,12 @@ const ConversationItem = memo(function ConversationItem({
         ) : (
           initials
         )}
+      </div>
+        <ChannelIcon
+          channel={channelOf(conversation.channel ? conversation : contact)}
+          size={embedded ? 18 : 16}
+          className="absolute -right-0.5 -bottom-0.5 ring-2 ring-card"
+        />
       </div>
 
       {/* Content — overflow-hidden on this and both inner rows is a

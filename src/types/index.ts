@@ -122,6 +122,14 @@ export interface Contact {
   /** The contact's WhatsApp @username, if Meta reported one. Display
    *  only — whatsapp_user_id (BSUID) is the stable identifier. */
   whatsapp_username?: string | null;
+  /** Network this contact writes from (migration 080). Absent on rows
+   *  read before the migration — treat as 'whatsapp' (see channelOf). */
+  channel?: 'whatsapp' | 'instagram' | 'messenger' | 'tiktok';
+  /** Instagram IGSID / Messenger PSID — the id these contacts are keyed
+   *  by, since they have no phone. Null for WhatsApp contacts. */
+  channel_user_id?: string | null;
+  /** Instagram @username, when Meta reported one. Display only. */
+  channel_username?: string | null;
   name?: string;
   email?: string;
   company?: string;
@@ -204,6 +212,8 @@ export interface Conversation {
   id: string;
   user_id: string;
   contact_id: string;
+  /** Same as the contact's channel (migration 080). */
+  channel?: 'whatsapp' | 'instagram' | 'messenger' | 'tiktok';
   status: ConversationStatus;
   assigned_agent_id?: string;
   last_message_text?: string;

@@ -1,5 +1,7 @@
 'use client';
 
+import { ChannelIcon, socialIdentity } from '@/components/channels/channel-badge';
+import { channelOf } from '@/lib/channels/types';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
@@ -605,8 +607,11 @@ export default function ContactsPage() {
                         <span className="italic text-muted-foreground">{t('unnamed')}</span>
                       )}
                     </p>
-                    <p className="truncate font-mono text-[13px] text-muted-foreground/80">
-                      {contact.phone || '-'}
+                    <p className="flex items-center gap-1 truncate font-mono text-[13px] text-muted-foreground/80">
+                      {channelOf(contact) !== 'whatsapp' && (
+                        <ChannelIcon channel={channelOf(contact)} size={14} />
+                      )}
+                      {contact.phone || socialIdentity(contact) || '-'}
                     </p>
                     {contact.tags && contact.tags.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -746,7 +751,12 @@ export default function ContactsPage() {
                     {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone || <span className="text-muted-foreground">-</span>}
+                    <span className="inline-flex items-center gap-1.5">
+                      {channelOf(contact) !== 'whatsapp' && (
+                        <ChannelIcon channel={channelOf(contact)} size={14} />
+                      )}
+                      {contact.phone || socialIdentity(contact) || <span className="text-muted-foreground">-</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
                     {contact.email || <span className="text-muted-foreground">-</span>}
