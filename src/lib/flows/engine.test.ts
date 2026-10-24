@@ -1139,6 +1139,71 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
     ).toBe(true);
   });
 
+  describe("info-only menu options are re-answered, not handed off", () => {
+    const MENU_NODES = [
+      {
+        node_key: "topics",
+        node_type: "send_list",
+        config: {
+          text: "Menú",
+          button_label: "Ver",
+          sections: [
+            {
+              rows: [
+                { reply_id: "location_hours", title: "Ubicación", next_node_key: "answer_location" },
+                { reply_id: "human", title: "Asesor", next_node_key: "collect_advisor_context" },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        node_key: "answer_location",
+        node_type: "send_message",
+        config: { text: "Visítanos en Av. Ejemplo 123.", next_node_key: "end" },
+      },
+      { node_key: "collect_advisor_context", node_type: "collect_ai", config: {} },
+      { node_key: "end", node_type: "end", config: {} },
+    ] as unknown as Partial<FlowNodeRow>[];
+
+    it("re-tapping 'Ubicación y horarios' sends the option's own text and does not hand off", async () => {
+      vi.mocked(engineSendText).mockClear();
+      const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+        conversationGate: { assigned_agent_id: null },
+        flows: [{ id: "flow-1" }],
+        flowNodes: MENU_NODES,
+        contactState: { selected_options: { topics: ["location_hours"] } },
+      });
+      adminDbHolder.current = db;
+
+      const result = await dispatchInboundToFlows(tapInput("location_hours"));
+
+      expect(result).toEqual({ consumed: true, outcome: "stale_info_answered" });
+      expect(engineSendText).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Visítanos en Av. Ejemplo 123." }),
+      );
+      expect(conversationUpdates.some((u) => u.status === "pending")).toBe(false);
+    });
+
+    it("re-tapping a non-informational option keeps the old notice and handoff", async () => {
+      vi.mocked(engineSendText).mockClear();
+      const { db, conversationUpdates } = makeReentryOverrideFakeDb({
+        conversationGate: { assigned_agent_id: null },
+        flows: [{ id: "flow-1" }],
+        flowNodes: MENU_NODES,
+        contactState: { selected_options: { topics: ["human"] } },
+      });
+      adminDbHolder.current = db;
+
+      const result = await dispatchInboundToFlows(tapInput("human"));
+
+      expect(result).toEqual({ consumed: true, outcome: "already_selected_notice" });
+      expect(
+        conversationUpdates.some((u) => u.status === "pending" && u.ai_autoreply_disabled === true),
+      ).toBe(true);
+    });
+  });
+
   it("a contact with no flow_contact_state row at all still gets a reply (never throws, never silent)", async () => {
     const { db } = makeReentryOverrideFakeDb({
       conversationGate: { assigned_agent_id: null },
@@ -2114,7 +2179,9 @@ describe("handleCollectAiReply", () => {
 
   it("model handoff:true sends the courtesy message then hands off immediately, ignoring max_turns", async () => {
     const { db } = makeFakeDb();
-    const run = makeRun({ ai_turn_count: 1 });
+    // Data already collected: a handoff with nothing collected sends its
+    // own "ya tenemos tu solicitud" text out of hours instead.
+    const run = makeRun({ ai_turn_count: 1, vars: ONE_FIELD_COLLECTED });
     const node = makeNode({ config: collectAiConfig({ max_turns: 6 }) });
     mockExtract.mockResolvedValue(
       extractResult({ handoff: true, replyText: "Ok, te comunico con un asesor." }),
