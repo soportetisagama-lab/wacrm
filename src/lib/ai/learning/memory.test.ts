@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildMemoryTranscript,
+  failureCount,
+  MAX_MEMORY_FAILURES,
   MEMORY_SCHEMA,
   pickStaleConversations,
   renderCustomerMemory,
@@ -112,5 +114,27 @@ describe('prompt injection of the memory', () => {
     })
     expect(p.indexOf('- Medidas: 2 m')).toBeGreaterThan(-1)
     expect(p.endsWith(NO_PRICES_GUIDANCE)).toBe(true)
+  })
+})
+
+describe('memory hardening', () => {
+  it('drops fields with bare 3+ digit figures but keeps measurements', () => {
+    expect(
+      sanitizeMemory({ notas: 'le ofrecieron 1200', medidas: '120 x 60 cm, tanque de 500 litros', busca: 'te lo dejo en 800' }),
+    ).toEqual({ medidas: '120 x 60 cm, tanque de 500 litros' })
+  })
+
+  it('hides the failure counter from the stored view and the prompt', () => {
+    const raw = { busca: 'horno', _fallos: { n: 2, at: '2026-10-20T10:00:00Z' } }
+    expect(sanitizeMemory(raw)).toEqual({ busca: 'horno' })
+    expect(renderCustomerMemory(raw)).toBe('- Busca: horno')
+  })
+
+  it('counts failures per version of the conversation', () => {
+    const raw = { _fallos: { n: 2, at: '2026-10-20T10:00:00Z' } }
+    expect(failureCount(raw, '2026-10-20T10:00:00Z')).toBe(2)
+    expect(failureCount(raw, '2026-10-21T10:00:00Z')).toBe(0)
+    expect(failureCount(null, null)).toBe(0)
+    expect(MAX_MEMORY_FAILURES).toBe(3)
   })
 })
