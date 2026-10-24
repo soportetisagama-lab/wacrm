@@ -842,20 +842,20 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
 })
 
 describe('dispatchInboundToAiReply — document send (Opción B)', () => {
-  const CATALOGO = {
-    key: 'catalogo',
-    label: 'Catálogo de productos',
+  const FOLLETO = {
+    key: 'folleto',
+    label: 'Folleto de productos',
     media_type: 'document' as const,
-    media_url: 'https://storage.example/catalogo.pdf',
-    filename: 'catalogo.pdf',
+    media_url: 'https://storage.example/folleto.pdf',
+    filename: 'folleto.pdf',
   }
 
   it('sends the matching document via engineSendMedia when generateReply returns sendDocument, alongside the normal reply', async () => {
-    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [FOLLETO] }))
     h.generateReply.mockResolvedValue({
       text: '¡Acá tienes!',
       handoff: false,
-      sendDocument: 'catalogo',
+      sendDocument: 'folleto',
     })
 
     await dispatchInboundToAiReply(ARGS)
@@ -863,8 +863,8 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
     expect(h.engineSendMedia).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'document',
-        link: 'https://storage.example/catalogo.pdf',
-        filename: 'catalogo.pdf',
+        link: 'https://storage.example/folleto.pdf',
+        filename: 'folleto.pdf',
       }),
     )
     expect(h.engineSendText).toHaveBeenCalledWith(
@@ -873,7 +873,7 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
   })
 
   it('never calls engineSendMedia when generateReply returns no sendDocument', async () => {
-    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [FOLLETO] }))
     h.generateReply.mockResolvedValue({ text: 'Hola!', handoff: false, sendDocument: null })
 
     await dispatchInboundToAiReply(ARGS)
@@ -886,7 +886,7 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
     h.generateReply.mockResolvedValue({
       text: '¡Acá tienes!',
       handoff: false,
-      sendDocument: 'catalogo',
+      sendDocument: 'folleto',
     })
 
     await dispatchInboundToAiReply(ARGS)
@@ -898,13 +898,13 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
   })
 
   it('sends the document even on a turn that also ends in handoff', async () => {
-    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
-    h.generateReply.mockResolvedValue({ text: '', handoff: true, sendDocument: 'catalogo' })
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [FOLLETO] }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true, sendDocument: 'folleto' })
 
     await dispatchInboundToAiReply(ARGS)
 
     expect(h.engineSendMedia).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'document', link: 'https://storage.example/catalogo.pdf' }),
+      expect.objectContaining({ kind: 'document', link: 'https://storage.example/folleto.pdf' }),
     )
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
@@ -912,11 +912,11 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
   })
 
   it('a failed document send is logged but the normal reply still goes out', async () => {
-    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [CATALOGO] }))
+    h.loadAiConfig.mockResolvedValue(aiConfig({ documents: [FOLLETO] }))
     h.generateReply.mockResolvedValue({
       text: '¡Acá tienes!',
       handoff: false,
-      sendDocument: 'catalogo',
+      sendDocument: 'folleto',
     })
     h.engineSendMedia.mockRejectedValue(new Error('Meta rejected the media'))
 
@@ -1287,15 +1287,15 @@ describe('runAutoReplyNow — handoff closing once, complaints, documents, promp
       aiConfig({
         documents: [
           {
-            key: 'catalogo',
-            label: 'Catálogo',
+            key: 'folleto',
+            label: 'Folleto',
             media_type: 'document',
-            media_url: 'https://storage.example/catalogo.pdf',
+            media_url: 'https://storage.example/folleto.pdf',
           },
         ],
       }),
     )
-    h.generateReply.mockResolvedValue({ text: '', handoff: false, sendDocument: 'catalogo' })
+    h.generateReply.mockResolvedValue({ text: '', handoff: false, sendDocument: 'folleto' })
     await runAutoReplyNow(ARGS)
     expect(h.engineSendMedia).toHaveBeenCalledTimes(1)
     expect(h.engineSendText).not.toHaveBeenCalled()

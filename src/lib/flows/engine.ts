@@ -65,6 +65,15 @@ import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import {
+  CATALOG_PROMPT_RULE,
+  CATALOG_REQUEST_NOTE,
+  CATALOG_REQUEST_REPLY,
+  CATALOG_REQUEST_REPLY_AFTER_HOURS,
+  isCatalogOption,
+  mentionsCatalog,
+  withoutCatalogDocuments,
+} from "@/lib/catalog-request";
+import {
   type CollectAiNodeConfig,
   type CollectInputNodeConfig,
   type ConditionNodeConfig,
@@ -1016,7 +1025,9 @@ async function sendButtonsAndSuspend(
   // is configured — never silently sends nothing.
   const contactState = await loadFlowContactState(db, run.account_id, run.contact_id!);
   const alreadySelected = new Set(contactState.selected_options[node.node_key] ?? []);
-  const visibleButtons = cfg.buttons.filter((b) => !alreadySelected.has(b.reply_id));
+  // Línea Maxi: nunca se ofrece la opción "Catálogo" (lib/catalog-request).
+  const offeredButtons = cfg.buttons.filter((b) => !isCatalogOption(b.reply_id, b.title));
+  const visibleButtons = offeredButtons.filter((b) => !alreadySelected.has(b.reply_id));
   if (visibleButtons.length === 0) {
     if (cfg.all_selected_node_key) {
       return { outcome: "redirect", node_key: cfg.all_selected_node_key };
@@ -1024,10 +1035,10 @@ async function sendButtonsAndSuspend(
     // A single-button node is a confirmation ("Sí, estoy en Perú") —
     // once the contact confirmed it, re-asking on every return is just
     // noise. Follow that button as if tapped again.
-    if (cfg.buttons.length === 1 && cfg.buttons[0].next_node_key) {
-      return { outcome: "redirect", node_key: cfg.buttons[0].next_node_key };
+    if (offeredButtons.length === 1 && offeredButtons[0].next_node_key) {
+      return { outcome: "redirect", node_key: offeredButtons[0].next_node_key };
     }
-    visibleButtons.push(...cfg.buttons);
+    visibleButtons.push(...offeredButtons);
   }
 
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
@@ -1075,14 +1086,18 @@ async function sendListAndSuspend(
   // every section is gone, not just one section.
   const contactState = await loadFlowContactState(db, run.account_id, run.contact_id!);
   const alreadySelected = new Set(contactState.selected_options[node.node_key] ?? []);
-  let visibleSections = cfg.sections
+  // Línea Maxi: nunca se ofrece la fila "Catálogo" (lib/catalog-request).
+  const offeredSections = cfg.sections
+    .map((s) => ({ ...s, rows: s.rows.filter((r) => !isCatalogOption(r.reply_id, r.title)) }))
+    .filter((s) => s.rows.length > 0);
+  let visibleSections = offeredSections
     .map((s) => ({ ...s, rows: s.rows.filter((r) => !alreadySelected.has(r.reply_id)) }))
     .filter((s) => s.rows.length > 0);
   if (visibleSections.length === 0) {
     if (cfg.all_selected_node_key) {
       return { outcome: "redirect", node_key: cfg.all_selected_node_key };
     }
-    visibleSections = cfg.sections;
+    visibleSections = offeredSections;
   }
 
   const { whatsapp_message_id } = await engineSendInteractiveList({
@@ -1397,11 +1412,12 @@ async function runCollectAiTurn(
       config,
       fields: cfg.fields,
       knownValues,
-      systemContext: cfg.system_context,
+      // Línea Maxi: el catálogo lo envía un asesor (lib/catalog-request).
+      systemContext: [cfg.system_context, CATALOG_PROMPT_RULE].filter(Boolean).join("\n\n"),
       messages,
       // Empty/omitted when the node offers no documents — the schema
       // then never exposes a `send_document` slot at all (schema.ts).
-      documents: cfg.documents?.map((d) => ({ key: d.key, label: d.label })),
+      documents: withoutCatalogDocuments(cfg.documents).map((d) => ({ key: d.key, label: d.label })),
       customerMemory: await loadCustomerMemory(db, run.account_id, run.contact_id),
       learnedRules: await loadLearnedRules(db, run.account_id),
     });
@@ -1668,7 +1684,7 @@ async function sendCollectAiDocumentIfRequested(
   result: ExtractResult | null,
 ): Promise<void> {
   if (!result?.sendDocument) return;
-  const doc = cfg.documents?.find((d) => d.key === result.sendDocument);
+  const doc = withoutCatalogDocuments(cfg.documents).find((d) => d.key === result.sendDocument);
   // Absent despite passing parseExtraction's own key check would mean
   // cfg.documents changed between building the schema and this call —
   // stale, not a bug to crash over. Silently skip; reply_text still sends.
@@ -2647,6 +2663,64 @@ async function handOffOnHumanRequest(
   return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
 }
 
+/** Línea Maxi: true cuando el cliente pide el catálogo, escribiéndolo o
+ *  tocando una opción "Catálogo" de un menú antiguo. */
+function isCatalogRequest(message: ParsedInbound): boolean {
+  if (message.kind === "text") return mentionsCatalog(message.text);
+  if (message.kind === "interactive_reply") {
+    return isCatalogOption(message.reply_id, message.reply_title);
+  }
+  return false;
+}
+
+/** Línea Maxi: el catálogo lo envía un asesor, nunca el bot. Responde
+ *  que un asesor lo enviará, termina el run activo (si hay) y deja la
+ *  conversación en cola con el motivo "El cliente pidió el catálogo". */
+async function handOffOnCatalogRequest(
+  db: AdminClient,
+  input: DispatchInboundInput,
+  activeRun: FlowRunRow | null,
+): Promise<DispatchInboundResult> {
+  try {
+    await engineSendText({
+      accountId: input.accountId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      text: isWithinBusinessHours()
+        ? CATALOG_REQUEST_REPLY
+        : fillBusinessHoursPlaceholders(CATALOG_REQUEST_REPLY_AFTER_HOURS),
+      aiGenerated: false,
+    });
+  } catch (err) {
+    console.error(
+      "[flows] catalog-request ack send failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+  if (activeRun) {
+    await logEvent(db, activeRun.id, "handoff", activeRun.current_node_key, {
+      reason: "customer_requested_catalog",
+      note: CATALOG_REQUEST_NOTE,
+    });
+    await endRun(db, activeRun.id, "handed_off", "customer_requested_catalog");
+  }
+  const text =
+    input.message.kind === "text"
+      ? input.message.text.trim()
+      : input.message.kind === "interactive_reply"
+        ? input.message.reply_title.trim()
+        : "";
+  await markConversationPendingHandoff(
+    db,
+    input.conversationId,
+    text
+      ? `📚 ${CATALOG_REQUEST_NOTE} ("${text.slice(0, 80)}").`
+      : `📚 ${CATALOG_REQUEST_NOTE}.`,
+  );
+  return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
+}
+
 async function endRun(
   db: AdminClient,
   runId: string,
@@ -3035,6 +3109,9 @@ export async function dispatchInboundToFlows(
           outcome: "duplicate_inbound_ignored",
         };
       }
+      if (isCatalogRequest(input.message)) {
+        return handOffOnCatalogRequest(db, input, activeRun);
+      }
       if (isHumanRequest(input.message)) {
         return handOffOnHumanRequest(db, input, activeRun);
       }
@@ -3066,6 +3143,9 @@ export async function dispatchInboundToFlows(
       !(await findReentryFlow(db, input.accountId, input.message))
     ) {
       return { consumed: false, outcome: "no_match" };
+    }
+    if (isCatalogRequest(input.message)) {
+      return handOffOnCatalogRequest(db, input, null);
     }
     if (isHumanRequest(input.message)) {
       return handOffOnHumanRequest(db, input, null);

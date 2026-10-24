@@ -230,7 +230,7 @@ describe("matchesKeywordTrigger", () => {
     it("matches the word inside a real sentence", () => {
       expect(matchesKeywordTrigger("quiero el menú", cfg)).toBe(true);
       expect(matchesKeywordTrigger("muéstrame el menú", cfg)).toBe(true);
-      expect(matchesKeywordTrigger("No deseo ver el catálogo, quiero el menú", cfg)).toBe(true);
+      expect(matchesKeywordTrigger("No deseo ver el folleto, quiero el menú", cfg)).toBe(true);
     });
 
     it("does not match when the keyword is embedded inside a longer word", () => {
@@ -632,7 +632,7 @@ describe("findEntryFlow — reentry_keywords", () => {
       db,
       "acct-1",
       "conv-1",
-      textMessage("No deseo ver el catálogo, quiero el menú"),
+      textMessage("No deseo ver el folleto, quiero el menú"),
       false,
     );
     expect(flow?.id).toBe("flow-faq");
@@ -1071,11 +1071,11 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
       conversationGate: { assigned_agent_id: null },
       flows: [],
       flowNodes: [],
-      contactState: { selected_options: { topics: ["catalog", "quote_inox"] } },
+      contactState: { selected_options: { topics: ["folleto", "quote_inox"] } },
     });
     adminDbHolder.current = db;
 
-    const result = await dispatchInboundToFlows(tapInput("catalog"));
+    const result = await dispatchInboundToFlows(tapInput("folleto"));
 
     expect(result).toEqual({ consumed: true, outcome: "already_selected_notice" });
     expect(engineSendText).toHaveBeenCalledWith(
@@ -1095,7 +1095,7 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
       conversationGate: { assigned_agent_id: null },
       flows: [],
       flowNodes: [],
-      contactState: { selected_options: { topics: ["catalog"] } },
+      contactState: { selected_options: { topics: ["folleto"] } },
     });
     adminDbHolder.current = db;
 
@@ -1119,7 +1119,7 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
       conversationGate: { assigned_agent_id: null },
       flows: [],
       flowNodes: [],
-      contactState: { selected_options: { topics: ["catalog"] } },
+      contactState: { selected_options: { topics: ["folleto"] } },
       contactPhone: null,
     });
     adminDbHolder.current = db;
@@ -1148,7 +1148,7 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
     });
     adminDbHolder.current = db;
 
-    const result = await dispatchInboundToFlows(tapInput("catalog"));
+    const result = await dispatchInboundToFlows(tapInput("folleto"));
 
     expect(result).toEqual({ consumed: true, outcome: "stale_interactive_notice" });
     expect(engineSendText).toHaveBeenCalled();
@@ -1159,11 +1159,11 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
       conversationGate: { assigned_agent_id: "agent-1" },
       flows: [],
       flowNodes: [],
-      contactState: { selected_options: { topics: ["catalog"] } },
+      contactState: { selected_options: { topics: ["folleto"] } },
     });
     adminDbHolder.current = db;
 
-    const result = await dispatchInboundToFlows(tapInput("catalog"));
+    const result = await dispatchInboundToFlows(tapInput("folleto"));
 
     expect(result).toEqual({ consumed: false, outcome: "no_match" });
     expect(engineSendText).not.toHaveBeenCalled();
@@ -1272,7 +1272,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       sections: [
         {
           rows: [
-            { reply_id: "catalog", title: "Catálogo", next_node_key: "answer_catalog" },
+            { reply_id: "folleto", title: "Folleto", next_node_key: "answer_folleto" },
             { reply_id: "location", title: "Ubicación", next_node_key: "answer_location" },
           ],
         },
@@ -1292,7 +1292,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       flows: [FLOW_WITH_TOPICS],
       flowNodes: [TWO_OPTION_LIST_NODE],
       priorRunCount: 1,
-      contactState: { selected_options: { topics: ["catalog"] } },
+      contactState: { selected_options: { topics: ["folleto"] } },
     });
     adminDbHolder.current = db;
 
@@ -1317,7 +1317,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       flows: [FLOW_WITH_TOPICS],
       flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
       priorRunCount: 1,
-      contactState: { selected_options: { topics: ["catalog", "location"] } },
+      contactState: { selected_options: { topics: ["folleto", "location"] } },
     });
     adminDbHolder.current = db;
 
@@ -1346,7 +1346,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       flows: [FLOW_WITH_TOPICS],
       flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
       priorRunCount: 1,
-      contactState: { selected_options: { topics: ["catalog", "location"] } },
+      contactState: { selected_options: { topics: ["folleto", "location"] } },
     });
     adminDbHolder.current = db;
 
@@ -1374,7 +1374,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       flows: [FLOW_WITH_TOPICS],
       flowNodes: [TWO_OPTION_LIST_NODE, humanHandoffNode],
       priorRunCount: 1,
-      contactState: { selected_options: { topics: ["catalog", "location"] } },
+      contactState: { selected_options: { topics: ["folleto", "location"] } },
       // Simulates the exact real-world sequence: this contact already
       // has a `handoff` flow_run_event logged moments ago from an
       // earlier run — e.g. they already tapped "hablar con un asesor"
@@ -1415,7 +1415,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
       flows: [FLOW_WITH_TOPICS],
       flowNodes: [nodeNoRedirect],
       priorRunCount: 1,
-      contactState: { selected_options: { topics: ["catalog", "location"] } },
+      contactState: { selected_options: { topics: ["folleto", "location"] } },
     });
     adminDbHolder.current = db;
 
@@ -1427,7 +1427,7 @@ describe("send_list — flow_contact_state option exclusion (never show the same
           {
             title: undefined,
             rows: [
-              { id: "catalog", title: "Catálogo", description: undefined },
+              { id: "folleto", title: "Folleto", description: undefined },
               { id: "location", title: "Ubicación", description: undefined },
             ],
           },
@@ -2294,11 +2294,11 @@ describe("handleCollectAiReply", () => {
   describe("document send (Opción B)", () => {
     const DOCUMENTS: CollectAiNodeConfig["documents"] = [
       {
-        key: "catalogo",
-        label: "Catálogo de productos",
+        key: "folleto",
+        label: "Folleto de productos",
         media_type: "document",
-        media_url: "https://storage.example/catalogo.pdf",
-        filename: "catalogo.pdf",
+        media_url: "https://storage.example/folleto.pdf",
+        filename: "folleto.pdf",
       },
     ];
 
@@ -2307,7 +2307,7 @@ describe("handleCollectAiReply", () => {
       const run = makeRun();
       const node = makeNode({ config: collectAiConfig({ documents: DOCUMENTS }) });
       mockExtract.mockResolvedValue(
-        extractResult({ sendDocument: "catalogo", replyText: "¡Acá tienes! ¿En qué ciudad estás?" }),
+        extractResult({ sendDocument: "folleto", replyText: "¡Acá tienes! ¿En qué ciudad estás?" }),
       );
 
       await handleCollectAiReply(db, run, node, new Map());
@@ -2315,8 +2315,8 @@ describe("handleCollectAiReply", () => {
       expect(mockSendMedia).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: "document",
-          link: "https://storage.example/catalogo.pdf",
-          filename: "catalogo.pdf",
+          link: "https://storage.example/folleto.pdf",
+          filename: "folleto.pdf",
         }),
       );
       // The document doesn't replace the conversational reply.
@@ -2341,7 +2341,7 @@ describe("handleCollectAiReply", () => {
       const run = makeRun();
       // No `documents` configured at all on this node.
       const node = makeNode({ config: collectAiConfig() });
-      mockExtract.mockResolvedValue(extractResult({ sendDocument: "catalogo" }));
+      mockExtract.mockResolvedValue(extractResult({ sendDocument: "folleto" }));
 
       const outcome = await handleCollectAiReply(db, run, node, new Map());
 
@@ -2354,7 +2354,7 @@ describe("handleCollectAiReply", () => {
       const run = makeRun();
       const node = makeNode({ config: collectAiConfig({ documents: DOCUMENTS }) });
       mockExtract.mockResolvedValue(
-        extractResult({ sendDocument: "catalogo", replyText: "¿En qué ciudad estás?" }),
+        extractResult({ sendDocument: "folleto", replyText: "¿En qué ciudad estás?" }),
       );
       mockSendMedia.mockRejectedValue(new Error("Meta rejected the media"));
 
@@ -3302,7 +3302,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     const result = await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.3" },
+      { kind: "text", text: "¿tendrían folleto?", meta_message_id: "wamid.3" },
       new Map([["topics", node]]),
     );
 
@@ -3378,7 +3378,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     const result = await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust" },
+      { kind: "text", text: "¿tendrían folleto?", meta_message_id: "wamid.exhaust" },
       new Map([["topics", node]]),
     );
     vi.useRealTimers();
@@ -3404,7 +3404,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     const result = await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust-dup" },
+      { kind: "text", text: "¿tendrían folleto?", meta_message_id: "wamid.exhaust-dup" },
       new Map([["topics", node]]),
     );
     vi.useRealTimers();
@@ -3436,7 +3436,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.exhaust-after-hours" },
+      { kind: "text", text: "¿tendrían folleto?", meta_message_id: "wamid.exhaust-after-hours" },
       new Map([["topics", node]]),
     );
     vi.useRealTimers();
@@ -3456,7 +3456,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     const result = await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "¿tendrían catálogo?", meta_message_id: "wamid.4" },
+      { kind: "text", text: "¿tendrían folleto?", meta_message_id: "wamid.4" },
       new Map([["topics", node]]),
     );
 
@@ -3611,25 +3611,25 @@ describe("handleReplyForActiveRun — text_routes", () => {
     expect(result.outcome).toBe("fallback_fired");
   });
 
-  it("also_marks_selected records the equivalent reply_id — typing 'catálogo' excludes the row exactly like tapping it would", async () => {
+  it("also_marks_selected records the equivalent reply_id — typing 'folleto' excludes the row exactly like tapping it would", async () => {
     const { db, rpcCalls } = makeFakeDb();
     const run = makeRun({ current_node_key: "topics" });
     const node = topicsNode({
       text_routes: [
         {
-          keywords: ["catalogo", "catálogo"],
-          node_key: "answer_catalog",
-          also_marks_selected: "catalog",
+          keywords: ["folleto", "folleto"],
+          node_key: "answer_folleto",
+          also_marks_selected: "folleto",
         },
       ],
     });
-    const catalogNode = makeNode({ node_key: "answer_catalog", node_type: "end", config: {} });
+    const folletoNode = makeNode({ node_key: "answer_folleto", node_type: "end", config: {} });
 
     await handleReplyForActiveRun(
       db,
       run,
-      { kind: "text", text: "me pasas el catálogo?", meta_message_id: "wamid.route-7" },
-      new Map([["topics", node], ["answer_catalog", catalogNode]]),
+      { kind: "text", text: "me pasas el folleto?", meta_message_id: "wamid.route-7" },
+      new Map([["topics", node], ["answer_folleto", folletoNode]]),
     );
 
     expect(
@@ -3637,7 +3637,7 @@ describe("handleReplyForActiveRun — text_routes", () => {
         (c) =>
           c.name === "record_flow_option_selected" &&
           (c.args as { p_node_key: string; p_reply_id: string }).p_node_key === "topics" &&
-          (c.args as { p_node_key: string; p_reply_id: string }).p_reply_id === "catalog",
+          (c.args as { p_node_key: string; p_reply_id: string }).p_reply_id === "folleto",
       ),
     ).toBe(true);
   });

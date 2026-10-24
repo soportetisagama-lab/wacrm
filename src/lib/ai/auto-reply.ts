@@ -18,6 +18,7 @@ import { loadLearnedRules } from './learning/rules'
 import { isAiKeyPaused, isAiOutOfServiceError } from './availability'
 import { notifyAdminsAiUnavailable } from './availability-notify'
 import { recentUserMessages } from './query'
+import { CATALOG_PROMPT_RULE, withoutCatalogDocuments } from '@/lib/catalog-request'
 import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
 import {
   DEBOUNCE_SWEEP_GRACE_SECONDS,
@@ -403,6 +404,8 @@ export async function runAutoReplyNow(
 
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
+    // Línea Maxi: la IA nunca envía el catálogo (lib/catalog-request).
+    const aiDocuments = withoutCatalogDocuments(config.documents)
 
     // Deterministic, user-configured responders win over the LLM — the
     // caller already excludes messages a Flow consumed. Message-level
@@ -550,10 +553,11 @@ export async function runAutoReplyNow(
     )
 
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      // Línea Maxi: el catálogo lo envía un asesor (lib/catalog-request).
+      userPrompt: [config.systemPrompt, CATALOG_PROMPT_RULE].filter(Boolean).join('\n\n'),
       mode: 'auto_reply',
       knowledge,
-      documents: config.documents,
+      documents: aiDocuments,
       lineTransferContext: await loadLineTransferContext(db, conversationId, contactId),
       outboundTransferNote: await loadOutboundTransferContext(db, conversationId, contactId),
       contactName: await loadContactName(db, contactId),
@@ -571,7 +575,7 @@ export async function runAutoReplyNow(
       config,
       systemPrompt,
       messages,
-      documents: config.documents,
+      documents: aiDocuments,
     }).catch((err: unknown) => {
       if (err instanceof AiError && err.code === 'empty_response') {
         console.error('[ai auto-reply] empty model response, handing off:', err.message)
@@ -618,7 +622,7 @@ export async function runAutoReplyNow(
     // failed send is logged but never blocks the rest of the turn.
     let documentSent = false
     if (sendDocument) {
-      const doc = config.documents.find((d) => d.key === sendDocument)
+      const doc = aiDocuments.find((d) => d.key === sendDocument)
       // Absent despite parseGeneration's own key check would mean
       // config.documents changed between building the prompt and this
       // call — stale, not a bug to crash over.
