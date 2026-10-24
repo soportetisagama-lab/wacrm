@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkLearnable, findPersonalData, hasPrice, redactSensitive } from './guards'
+import { checkLearnable, findPersonalData, hasAmount, hasBareFigure, hasPrice, redactSensitive } from './guards'
 
 describe('hasPrice', () => {
   it.each([
@@ -81,4 +81,36 @@ describe('redactSensitive', () => {
   it('masks addresses', () => {
     expect(redactSensitive('envíen a Av. Arequipa 1234, Lince')).toContain('[dirección]')
   })
+})
+
+describe('amounts without currency in a price context', () => {
+  it.each(['te lo dejo en 1200', 'sale a 350', 'me lo dejas en 800?', 'quedaría en 1,500', 'por 450 te lo llevas'])(
+    'flags %s',
+    (t) => {
+      expect(hasPrice(t)).toBe(true)
+      expect(hasAmount(t)).toBe(true)
+    },
+  )
+  it.each(['llega en 15 días', 'a 30 minutos de Lima', 'una mesa de 120 cm', 'en 2 m de largo', 'para 150 personas'])(
+    'passes %s',
+    (t) => {
+      expect(hasPrice(t)).toBe(false)
+    },
+  )
+  it('redacts only the figure', () => {
+    expect(redactSensitive('me lo dejas en 800 y la mesa de 120 cm')).toBe('me lo dejas en [monto] y la mesa de 120 cm')
+    expect(redactSensitive('sale a 350 nomás')).toBe('sale a [monto] nomás')
+  })
+})
+
+describe('hasBareFigure', () => {
+  it.each(['pedido 4521', 'le ofrecieron 1200', 'código 1234567'])('flags %s', (t) => {
+    expect(hasBareFigure(t)).toBe(true)
+  })
+  it.each(['120 x 60 x 90 cm', 'tanque de 500 litros', '200 unidades', '1500 mm', '2 mesas', 'cocina de 6 quemadores'])(
+    'passes %s',
+    (t) => {
+      expect(hasBareFigure(t)).toBe(false)
+    },
+  )
 })
