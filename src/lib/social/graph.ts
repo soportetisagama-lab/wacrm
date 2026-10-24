@@ -23,6 +23,9 @@ export const PAGE_SUBSCRIBED_FIELDS = [
   'messages',
   'messaging_postbacks',
   'messaging_referrals',
+  // Messages delivered while another app (Meta's inbox, Meta Business
+  // AI…) controls the thread — handover protocol / conversation routing.
+  'standby',
 ]
 
 export class GraphApiError extends Error {
@@ -43,6 +46,17 @@ export class GraphApiError extends Error {
 export function isOutsideWindowError(err: unknown): boolean {
   if (!(err instanceof GraphApiError)) return false
   return err.subcode === 2018278 || err.subcode === 2534022 || /outside of allowed window/i.test(err.message)
+}
+
+/**
+ * Meta refused the send because another app controls the thread
+ * (handover protocol / conversation routing). Meta doesn't document a
+ * single stable subcode for this, so match on the message too.
+ */
+export function isThreadControlError(err: unknown): boolean {
+  if (!(err instanceof GraphApiError)) return false
+  if (isOutsideWindowError(err)) return false
+  return /thread (control|owner)|handover|not (the )?(thread )?owner|does not (have|own) (the )?thread/i.test(err.message)
 }
 
 async function graphFetch<T>(
@@ -134,6 +148,23 @@ export async function sendSocialAttachment(
 ): Promise<string> {
   return sendMessagePayload(args, {
     attachment: { type: args.type, payload: { url: args.url, is_reusable: false } },
+  })
+}
+
+/**
+ * Handover protocol: make this app the thread owner for one person
+ * (`POST /me/take_thread_control`, `me` = the Page of the token; works
+ * for Messenger PSIDs and Instagram IGSIDs). Meta only allows it when
+ * the Page's conversation routing gives this app control.
+ */
+export async function takeThreadControl(args: SocialSendTarget & { metadata?: string }): Promise<void> {
+  await graphFetch<{ success?: boolean }>('me/take_thread_control', {
+    method: 'POST',
+    accessToken: args.accessToken,
+    body: {
+      recipient: { id: args.recipientId },
+      metadata: args.metadata ?? 'CRM SAGAMA toma la conversación',
+    },
   })
 }
 

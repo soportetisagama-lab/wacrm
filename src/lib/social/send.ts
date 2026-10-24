@@ -29,12 +29,50 @@ import {
   GraphApiError,
   SOCIAL_TEXT_LIMIT,
   isOutsideWindowError,
+  isThreadControlError,
   sendSocialAttachment,
   sendSocialText,
   splitForChannel,
+  takeThreadControl,
   type SocialAttachmentType,
+  type SocialSendTarget,
 } from './graph'
 import { toSocialMenu } from './interactive'
+import { clearStandby, lastInboundWasStandby } from './thread-control'
+
+async function tryTakeThreadControl(channel: SocialChannel, target: SocialSendTarget, reason: string): Promise<boolean> {
+  try {
+    await takeThreadControl(target)
+    clearStandby(channel, target.recipientId)
+    console.log(`[social] ${channel}: took thread control (${reason})`)
+    return true
+  } catch (err) {
+    const e = err instanceof GraphApiError ? err : null
+    console.warn(
+      `[social] ${channel}: take_thread_control failed (${reason}) code=${e?.code ?? '-'} subcode=${e?.subcode ?? '-'}:`,
+      err instanceof Error ? err.message : err,
+    )
+    return false
+  }
+}
+
+/**
+ * Run one Send API call; if Meta refuses it because another app controls
+ * the thread, take thread control and retry that call once.
+ */
+async function withThreadControl<T>(
+  channel: SocialChannel,
+  target: SocialSendTarget,
+  send: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await send()
+  } catch (err) {
+    if (!isThreadControlError(err)) throw err
+    if (!(await tryTakeThreadControl(channel, target, 'send refused'))) throw err
+    return send()
+  }
+}
 
 export type SocialSendErrorCode =
   | 'not_configured'
@@ -199,6 +237,15 @@ export async function sendSocialOutbound(
   }
   const target = { accessToken, recipientId }
   const limit = SOCIAL_TEXT_LIMIT[channel]
+  // The customer's last message came as standby: another app owns the
+  // thread, so take it before sending (a failure here is retried below).
+  if (lastInboundWasStandby(channel, recipientId)) {
+    await tryTakeThreadControl(channel, target, 'last inbound was standby')
+  }
+  const sendText = (a: Omit<Parameters<typeof sendSocialText>[0], keyof SocialSendTarget>) =>
+    withThreadControl(channel, target, () => sendSocialText({ ...target, ...a }))
+  const sendAttachment = (a: Omit<Parameters<typeof sendSocialAttachment>[0], keyof SocialSendTarget>) =>
+    withThreadControl(channel, target, () => sendSocialAttachment({ ...target, ...a }))
 
   try {
     const out = args.outbound
@@ -206,18 +253,18 @@ export async function sendSocialOutbound(
       const parts = splitForChannel(out.text, limit)
       if (parts.length === 0) throw new SocialSendError('unsupported', 'El mensaje está vacío.', 400)
       let messageId = ''
-      for (const part of parts) messageId = await sendSocialText({ ...target, text: part })
+      for (const part of parts) messageId = await sendText({ text: part })
       return { messageId }
     }
 
     if (out.kind === 'media') {
       const type = attachmentTypeFor(channel, out.mediaKind)
-      let messageId = await sendSocialAttachment({ ...target, type, url: out.url })
+      let messageId = await sendAttachment({ type, url: out.url })
       // Neither network takes a caption on an attachment: it goes as its own text.
       const caption = out.caption?.trim()
       if (caption) {
         for (const part of splitForChannel(caption, limit)) {
-          messageId = await sendSocialText({ ...target, text: part })
+          messageId = await sendText({ text: part })
         }
       }
       return { messageId }
@@ -230,8 +277,7 @@ export async function sendSocialOutbound(
       // Quick replies ride on the LAST chunk, so the chips stay under the text.
       for (let i = 0; i < parts.length; i++) {
         const isLast = i === parts.length - 1
-        messageId = await sendSocialText({
-          ...target,
+        messageId = await sendText({
           text: parts[i],
           quickReplies: isLast ? menu.quickReplies : undefined,
         })
@@ -240,7 +286,7 @@ export async function sendSocialOutbound(
     }
     let messageId = ''
     for (const part of splitForChannel(menu.text, limit)) {
-      messageId = await sendSocialText({ ...target, text: part })
+      messageId = await sendText({ text: part })
     }
     return { messageId }
   } catch (err) {
@@ -250,6 +296,13 @@ export async function sendSocialOutbound(
         'window_closed',
         `${label} rechazó el envío: la ventana de 24 horas está cerrada.`,
         400,
+      )
+    }
+    if (isThreadControlError(err)) {
+      throw new SocialSendError(
+        'meta_error',
+        `${label}: otra app controla esta conversación (la bandeja de Meta o su IA) y no se pudo tomar el control. Revisa el enrutamiento de conversaciones de la página.`,
+        502,
       )
     }
     const message = err instanceof GraphApiError || err instanceof Error ? err.message : String(err)

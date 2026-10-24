@@ -45,6 +45,7 @@ import {
   type SocialInboundEvent,
 } from './parse'
 import type { SocialConfigRow } from './send'
+import { noteInboundControl } from './thread-control'
 
 /** Sent when nothing answered a contact's first message (see step 6). */
 export const SOCIAL_FALLBACK_HANDOFF_TEXT =
@@ -305,7 +306,15 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
   if (!config.enabled) return
   const accountId = config.account_id
 
+  // Dedupe by mid also covers a message Meta delivers both as
+  // `messaging` and as `standby`.
   if (!(await claimInboundEvent(db, event.channel, event.mid, accountId))) return
+  if (event.kind === 'message') {
+    noteInboundControl(event.channel, event.senderId, event.standby === true)
+    if (event.standby) {
+      console.log(`[social webhook] ${event.channel} message arrived as standby (another app controls the thread)`)
+    }
+  }
 
   const contactOutcome = await findOrCreateSocialContact(db, config, event)
   if (!contactOutcome) {

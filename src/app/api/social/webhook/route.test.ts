@@ -127,4 +127,19 @@ describe('POST /api/social/webhook', () => {
     const bad = '{not json'
     expect((await POST(post(bad, sign(bad)))).status).toBe(400)
   })
+
+  it('logs one content-free diagnostic line per signed POST', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    try {
+      const sb = JSON.stringify({
+        object: 'page',
+        entry: [{ id: 'PAGE-1', standby: [{ sender: { id: 'PSID-9' }, message: { mid: 'm9', text: 'Hola secreto' } }] }],
+      })
+      await POST(post(sb, sign(sb)))
+      const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[social-webhook]'))
+      expect(lines).toEqual(['[social-webhook] object=page entries=1 PAGE-1:standby[message]'])
+    } finally {
+      log.mockRestore()
+    }
+  })
 })

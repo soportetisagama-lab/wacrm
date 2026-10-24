@@ -54,6 +54,12 @@ export interface SocialInboundEvent {
   referral: SocialReferral | null
   /** Instagram: content Meta withholds (e.g. some story types). */
   unsupported: boolean
+  /**
+   * Delivered as `standby`: another app (Meta's inbox, Meta Business AI…)
+   * controls the thread through the handover protocol / conversation
+   * routing. Stored like any message; the next send takes thread control.
+   */
+  standby?: boolean
 }
 
 interface RawEnvelope {
@@ -62,6 +68,8 @@ interface RawEnvelope {
     id?: string
     time?: number
     messaging?: Array<Record<string, unknown>>
+    standby?: Array<Record<string, unknown>>
+    changes?: Array<Record<string, unknown>>
   }>
 }
 
@@ -128,9 +136,13 @@ export function parseSocialWebhook(body: unknown): SocialInboundEvent[] {
   const events: SocialInboundEvent[] = []
   for (const entry of env.entry) {
     const externalId = str(entry?.id)
-    if (!externalId || !Array.isArray(entry.messaging)) continue
+    if (!externalId) continue
+    const items: Array<{ raw: unknown; standby: boolean }> = [
+      ...(Array.isArray(entry.messaging) ? entry.messaging : []).map((raw) => ({ raw, standby: false })),
+      ...(Array.isArray(entry.standby) ? entry.standby : []).map((raw) => ({ raw, standby: true })),
+    ]
 
-    for (const raw of entry.messaging) {
+    for (const { raw, standby } of items) {
       const ev = obj(raw)
       if (!ev) continue
       const senderId = str(obj(ev.sender)?.id)
@@ -157,9 +169,13 @@ export function parseSocialWebhook(body: unknown): SocialInboundEvent[] {
           replyToMid: str(obj(message.reply_to)?.mid),
           referral: parseReferral(message.referral) ?? parseReferral(ev.referral),
           unsupported: message.is_unsupported === true,
+          ...(standby ? { standby: true } : {}),
         })
         continue
       }
+      // Standby: only the customer's own messages matter (echoes were
+      // dropped above; postbacks/referrals belong to the controlling app).
+      if (standby) continue
 
       const postback = obj(ev.postback)
       if (postback) {
@@ -202,6 +218,59 @@ export function parseSocialWebhook(body: unknown): SocialInboundEvent[] {
     }
   }
   return events
+}
+
+/** Messaging-event fields worth naming in the diagnostic log line. */
+const EVENT_TYPE_KEYS = [
+  'message',
+  'postback',
+  'referral',
+  'reaction',
+  'read',
+  'delivery',
+  'optin',
+  'pass_thread_control',
+  'take_thread_control',
+  'request_thread_control',
+  'app_roles',
+] as const
+
+function eventTypes(list: unknown): string[] {
+  if (!Array.isArray(list)) return []
+  const counts = new Map<string, number>()
+  for (const raw of list) {
+    const ev = obj(raw)
+    if (!ev) continue
+    let type: string = EVENT_TYPE_KEYS.find((k) => ev[k] !== undefined) ?? 'other'
+    if (type === 'message' && obj(ev.message)?.is_echo === true) type = 'message_echo'
+    counts.set(type, (counts.get(type) ?? 0) + 1)
+  }
+  return [...counts].map(([k, n]) => (n > 1 ? `${k}x${n}` : k))
+}
+
+/**
+ * One-line, content-free summary of a webhook body for the logs:
+ * object, each entry.id and the event types it carries (messaging,
+ * standby, changes + their fields). No text, no sender/recipient ids.
+ */
+export function summarizeSocialWebhook(body: unknown): string {
+  const env = obj(body) as RawEnvelope | null
+  if (!env) return 'invalid body'
+  const object = typeof env.object === 'string' ? env.object : String(env.object)
+  if (!Array.isArray(env.entry)) return `object=${object} entries=0`
+  const parts = env.entry.map((entry) => {
+    const e = obj(entry) ?? {}
+    const id = typeof e.id === 'string' || typeof e.id === 'number' ? String(e.id) : '?'
+    const groups: string[] = []
+    if (Array.isArray(e.messaging)) groups.push(`messaging[${eventTypes(e.messaging).join(',')}]`)
+    if (Array.isArray(e.standby)) groups.push(`standby[${eventTypes(e.standby).join(',')}]`)
+    if (Array.isArray(e.changes)) {
+      const fields = e.changes.map((c) => str(obj(c)?.field) ?? '?')
+      groups.push(`changes[${fields.join(',')}]`)
+    }
+    return `${id}:${groups.length > 0 ? groups.join(' ') : 'empty'}`
+  })
+  return `object=${object} entries=${parts.length} ${parts.join(' | ')}`
 }
 
 /** Spanish preview label for an attachment-only message. */

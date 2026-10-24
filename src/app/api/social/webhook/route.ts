@@ -2,7 +2,7 @@ import { NextResponse, after } from 'next/server'
 
 import { sameSecret, verifyHubSignature } from '@/lib/whatsapp/webhook-signature'
 import { processSocialWebhookBody } from '@/lib/social/inbound'
-import { channelForObject } from '@/lib/social/parse'
+import { channelForObject, summarizeSocialWebhook } from '@/lib/social/parse'
 
 // Instagram (object "instagram") and Messenger (object "page") webhook.
 // Configure this URL in the Meta app for both products, with the verify
@@ -58,6 +58,10 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
+
+  // Diagnostic: what Meta sent (object, entry ids, event types) — no
+  // message content, no sender/recipient ids.
+  console.log(`[social-webhook] ${summarizeSocialWebhook(body)}`)
 
   // Anything that isn't Instagram/Messenger is acknowledged and ignored.
   if (!channelForObject((body as { object?: unknown } | null)?.object)) {

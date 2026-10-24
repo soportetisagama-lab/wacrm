@@ -7,6 +7,7 @@ const admin = fakeDb()
 vi.mock('@/lib/flows/admin-client', () => ({ supabaseAdmin: () => admin.db }))
 
 import { sendSocialOutbound, SocialSendError } from './send'
+import { clearStandby, lastInboundWasStandby, noteInboundControl } from './thread-control'
 
 const fetchMock = vi.fn()
 
@@ -143,5 +144,104 @@ describe('sendSocialOutbound', () => {
         outbound: { kind: 'media', mediaKind: 'document', url: 'https://x/a.pdf' },
       }),
     ).rejects.toMatchObject({ code: 'unsupported' })
+  })
+
+  describe('thread control (handover / conversation routing)', () => {
+    const threadError = () =>
+      new Response(
+        JSON.stringify({ error: { message: '(#10) Cannot send: the app is not the thread owner.', code: 10, error_subcode: 2018300 } }),
+        { status: 400 },
+      )
+    const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+
+    beforeEach(() => clearStandby('messenger', 'PSID-1'))
+
+    it('takes thread control first when the last inbound was standby', async () => {
+      noteInboundControl('messenger', 'PSID-1', true)
+      fetchMock.mockImplementation(async (url: string) =>
+        url.includes('take_thread_control') ? ok({ success: true }) : ok({ message_id: 'm_out' }),
+      )
+      const { messageId } = await sendSocialOutbound(admin.db, {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contact,
+        outbound: { kind: 'text', text: 'Hola' },
+      })
+      expect(messageId).toBe('m_out')
+      expect(fetchMock.mock.calls[0][0]).toContain('/me/take_thread_control')
+      expect(sentBody(0)).toMatchObject({ recipient: { id: 'PSID-1' } })
+      expect(fetchMock.mock.calls[1][0]).toContain('/me/messages')
+      expect(lastInboundWasStandby('messenger', 'PSID-1')).toBe(false)
+    })
+
+    it('does not take control when the last inbound was a normal message', async () => {
+      noteInboundControl('messenger', 'PSID-1', true)
+      noteInboundControl('messenger', 'PSID-1', false)
+      await sendSocialOutbound(admin.db, {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contact,
+        outbound: { kind: 'text', text: 'Hola' },
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0][0]).toContain('/me/messages')
+    })
+
+    it('on a thread-control error takes control and retries the send once', async () => {
+      let sends = 0
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.includes('take_thread_control')) return ok({ success: true })
+        sends++
+        return sends === 1 ? threadError() : ok({ message_id: 'm_retry' })
+      })
+      const { messageId } = await sendSocialOutbound(admin.db, {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contact,
+        outbound: { kind: 'text', text: 'Hola' },
+      })
+      expect(messageId).toBe('m_retry')
+      const urls = fetchMock.mock.calls.map((c) => c[0] as string)
+      expect(urls).toHaveLength(3)
+      expect(urls[0]).toContain('/me/messages')
+      expect(urls[1]).toContain('/me/take_thread_control')
+      expect(urls[2]).toContain('/me/messages')
+    })
+
+    it('retries only once and explains it when control cannot be taken', async () => {
+      fetchMock.mockImplementation(async (url: string) =>
+        url.includes('take_thread_control')
+          ? new Response(JSON.stringify({ error: { message: 'Not allowed', code: 10 } }), { status: 400 })
+          : threadError(),
+      )
+      const err = await sendSocialOutbound(admin.db, {
+        accountId: 'acct-1',
+        conversationId: 'conv-1',
+        contact,
+        outbound: { kind: 'text', text: 'Hola' },
+      }).catch((e) => e)
+      expect(err).toBeInstanceOf(SocialSendError)
+      expect(err.message).toMatch(/otra app controla esta conversación/)
+      // send -> take (fails) -> no retry
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not treat the 24 h window error as a thread-control error', async () => {
+      fetchMock.mockImplementation(async () =>
+        new Response(
+          JSON.stringify({ error: { message: 'This message is sent outside of allowed window.', code: 10, error_subcode: 2018278 } }),
+          { status: 400 },
+        ),
+      )
+      await expect(
+        sendSocialOutbound(admin.db, {
+          accountId: 'acct-1',
+          conversationId: 'conv-1',
+          contact,
+          outbound: { kind: 'text', text: 'Hola' },
+        }),
+      ).rejects.toMatchObject({ code: 'window_closed' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
   })
 })

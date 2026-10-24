@@ -25,6 +25,7 @@ import { fakeDb } from '@/lib/ai/learning/fake-db.testutil'
 import { encrypt } from '@/lib/whatsapp/encryption'
 import { claimInboundEvent, processSocialEvent, SOCIAL_FALLBACK_HANDOFF_TEXT } from './inbound'
 import type { SocialInboundEvent } from './parse'
+import { lastInboundWasStandby } from './thread-control'
 
 const ACCOUNT = 'acct-1'
 
@@ -109,6 +110,23 @@ describe('processSocialEvent', () => {
     expect(tables.messages.filter((m) => m.sender_type === 'customer')).toHaveLength(1)
     expect(tables.contacts).toHaveLength(1)
     expect(dispatchInboundToFlows).toHaveBeenCalledTimes(1)
+  })
+
+  it('processes a standby message like a normal one, marks the thread and dedupes by mid', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()] })
+    await processSocialEvent(db, event({ standby: true }))
+    // Same mid delivered again (as messaging or standby): dropped.
+    await processSocialEvent(db, event())
+    await processSocialEvent(db, event({ standby: true }))
+    const customerMsgs = tables.messages.filter((m) => m.sender_type === 'customer')
+    expect(customerMsgs).toHaveLength(1)
+    expect(customerMsgs[0]).toMatchObject({ message_id: 'mid-1', content_text: 'Hola, quiero una cotización' })
+    expect(dispatchInboundToFlows).toHaveBeenCalledTimes(1)
+    expect(lastInboundWasStandby('instagram', 'IGSID-9')).toBe(true)
+
+    // A later normal message means we control the thread again.
+    await processSocialEvent(db, event({ mid: 'mid-2', text: 'Gracias' }))
+    expect(lastInboundWasStandby('instagram', 'IGSID-9')).toBe(false)
   })
 
   it('ignores events for pages/accounts that are not configured or disabled', async () => {
