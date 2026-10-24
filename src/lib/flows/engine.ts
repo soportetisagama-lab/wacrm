@@ -2264,8 +2264,9 @@ async function handleCollectAiInboundDebounced(
       return;
     }
     // Rerun for messages that arrived meanwhile — the run may have
-    // advanced or ended during the previous turn.
-    if (!run.contact_id) return;
+    // advanced or ended during the previous turn. A handoff means an
+    // advisor takes over: the bot must not answer what came in after it.
+    if (outcome === "handed_off" || !run.contact_id) return;
     const current = await loadActiveRunForContact(db, run.account_id, run.contact_id);
     // Same run only: `nodes` belongs to this run's flow.
     const currentNode =
