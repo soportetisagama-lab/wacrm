@@ -1236,11 +1236,12 @@ const ALREADY_HANDLED_OPTION_TEXT =
  *  option from before flow_contact_state existed, or one the record
  *  write itself failed for. Deliberately still not silent: from the
  *  customer's side a WhatsApp button never shows as "expired", so an
- *  old message always looks tappable — an honest "we have what you
- *  told us, someone will reach out" beats guessing wrong and staying
- *  quiet, or pretending nothing happened. */
+ *  old message always looks tappable — an honest "someone will follow
+ *  up in this chat" beats guessing wrong and staying quiet. It must
+ *  never claim we already have the customer's data: nothing was
+ *  necessarily asked yet. */
 const STALE_INTERACTIVE_TEXT =
-  "Recibimos tu mensaje. Ya tenemos tus datos — en un momento un asesor se va a comunicar contigo. 🙂";
+  "Recibimos tu mensaje. Un asesor va a seguir la conversación por este mismo chat en breve. 🙂";
 
 /** Same STALE-tap situation as STALE_INTERACTIVE_TEXT, but for a
  *  contact whose phone is still missing (BSUID-only — see
