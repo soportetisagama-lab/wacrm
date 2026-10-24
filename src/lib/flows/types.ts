@@ -713,6 +713,13 @@ export interface DispatchInboundResult {
     | "already_selected_notice"
     | "stale_interactive_notice"
     | "no_match";
+  /**
+   * Set when a welcome flow just started (and is waiting on its menu)
+   * for a message that already carried a concrete question — the
+   * webhook then also runs the general assistant so the question gets
+   * answered right after the welcome. See findEntryFlowWithContext.
+   */
+  answer_with_ai?: boolean;
 }
 
 // ============================================================

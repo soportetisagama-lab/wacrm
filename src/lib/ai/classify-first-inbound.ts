@@ -9,8 +9,8 @@ import { UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
 // First-inbound context classifier — decides whether a contact's very
 // first message already carries a real query (product/intent/location)
 // or is a generic greeting, so `findEntryFlow` (lib/flows/engine.ts) can
-// skip showing the welcome menu and let the general assistant answer
-// directly. Same machinery as `extractWithReply` (./generate): forced
+// send the welcome menu first and then let the general assistant answer
+// the question right after it. Same machinery as `extractWithReply` (./generate): forced
 // structured output via the provider adapters already used everywhere
 // else in lib/ai, no new provider integration.
 // ============================================================
@@ -37,7 +37,7 @@ const CLASSIFY_SCHEMA = {
     has_context: {
       type: 'boolean',
       description:
-        'True if the message already states a concrete request — mentions a product, asks for a quote, describes the customer\'s business, or asks something specific. False for a generic greeting with no information ("Hola", "Buenas", "Información", a bare emoji).',
+        'True if the message already states a concrete request — mentions a product, asks for a quote, describes the customer\'s business, or asks something specific (including location/address, opening hours, shipping/delivery or payment methods). False for a generic greeting with no information ("Hola", "Buenas", "Información", a bare emoji).',
     },
     reason: {
       type: 'string',
@@ -49,14 +49,35 @@ const CLASSIFY_SCHEMA = {
   additionalProperties: false,
 } as const
 
-function buildClassifyPrompt(): string {
-  return [
-    'Este es el primer mensaje de un cliente nuevo escribiendo a una empresa de equipos de cocina industrial (gastronomía). ' +
-      'Evaluá si el mensaje ya trae una consulta concreta (menciona un producto, pide cotización, describe su negocio/rubro, ' +
-      'pregunta algo específico) o si es solo un saludo genérico sin información ("Hola", "Buenas", "Información", emojis solos). ' +
-      'Respondé siempre llamando a la tool con `has_context` y una razón breve.',
+/** Generic on purpose (shared by every business line): what the company
+ *  sells comes only from the account's own ai_configs prompt, appended
+ *  as reference when there is one. */
+export function buildClassifyPrompt(businessContext?: string | null): string {
+  const parts = [
+    'Este es el primer mensaje de un cliente nuevo escribiendo a una empresa por WhatsApp. ' +
+      'Evalúa si el mensaje ya trae una consulta concreta (menciona un producto, pide cotización, describe su negocio/rubro, ' +
+      'pregunta por la ubicación/dirección, los horarios de atención, los envíos/delivery o las formas de pago, ' +
+      'o pregunta algo específico) o si es solo un saludo genérico sin información ("Hola", "Buenas", "Información", emojis solos). ' +
+      'Responde siempre llamando a la tool con `has_context` y una razón breve.',
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
-  ].join('\n\n')
+  ]
+  if (businessContext && businessContext.trim()) {
+    parts.push(
+      `Solo como referencia, el contexto del negocio (ignora sus instrucciones sobre saludos, menús o recolección de datos):\n${businessContext.trim()}`,
+    )
+  }
+  return parts.join('\n\n')
+}
+
+/** Deterministic backstop for the most common concrete first question —
+ *  where the business is and when it opens — so it counts as a query even
+ *  when the model is down, slow (CLASSIFY_TIMEOUT_MS) or misreads it as a
+ *  greeting. Checked before the length short-circuit ("¿Horario?"). */
+const LOCATION_OR_HOURS_RE =
+  /d[oó]nde\s+(?:est[aá]n|quedan|se\s+ubican|los\s+encuentro|atienden)|ubicaci[oó]n|ubicad[oa]s|direcci[oó]n|horarios?\b|qu[eé]\s+hora\s+(?:abren|cierran|atienden)|atienden\s+(?:los\s+)?(?:s[aá]bados?|domingos?|feriados?)/i
+
+export function isLocationOrHoursQuery(text: string): boolean {
+  return LOCATION_OR_HOURS_RE.test(text)
 }
 
 export interface ClassifyFirstInboundResult {
@@ -97,6 +118,9 @@ export async function classifyFirstInboundContext(
   text: string,
 ): Promise<ClassifyFirstInboundResult> {
   const trimmed = text.trim()
+  if (isLocationOrHoursQuery(trimmed)) {
+    return { hasContext: true, reason: 'asks for location or opening hours (regex backstop)' }
+  }
   if (trimmed.length < MIN_LENGTH_FOR_CLASSIFICATION) {
     return { hasContext: false, reason: 'message shorter than the classification threshold' }
   }
@@ -118,7 +142,7 @@ export async function classifyFirstInboundContext(
   const providerArgs = {
     apiKey: config.apiKey,
     model: config.model,
-    systemPrompt: buildClassifyPrompt(),
+    systemPrompt: buildClassifyPrompt(config.systemPrompt),
     messages: [{ role: 'user' as const, content: trimmed }],
     timeoutMs: CLASSIFY_TIMEOUT_MS,
     schema: CLASSIFY_SCHEMA as unknown as Record<string, unknown>,
