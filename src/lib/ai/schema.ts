@@ -4,6 +4,7 @@ import {
   HUMAN_STYLE_GUIDANCE,
   TRANSCRIPT_ANNOTATIONS_GUIDANCE,
   NO_PRICES_GUIDANCE,
+  customerMemoryBlock,
 } from './defaults'
 
 // ============================================================
@@ -131,8 +132,11 @@ export function buildExtractionPrompt(args: {
    *  buildExtractionSchema; omit/empty means no `send_document` slot
    *  exists in the schema at all, so this has nothing to describe. */
   documents?: DocumentOption[]
+  /** Learned memory of this customer, already rendered (see
+   *  customerMemoryBlock in ./defaults). */
+  customerMemory?: string | null
 }): string {
-  const { fields, knownValues, systemContext, documents } = args
+  const { fields, knownValues, systemContext, documents, customerMemory } = args
   const known = fields.filter((f) => knownValues[f.key]?.trim())
   const missing = fields.filter((f) => !knownValues[f.key]?.trim())
 
@@ -190,6 +194,8 @@ export function buildExtractionPrompt(args: {
   if (systemContext && systemContext.trim()) {
     parts.push(`Business context and instructions:\n${systemContext.trim()}`)
   }
+  const memoryBlock = customerMemoryBlock(customerMemory)
+  if (memoryBlock) parts.push(memoryBlock)
   // Last on purpose: overrides any price in the business context above.
   parts.push(NO_PRICES_GUIDANCE)
 
