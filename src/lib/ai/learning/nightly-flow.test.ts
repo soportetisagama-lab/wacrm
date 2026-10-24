@@ -132,25 +132,98 @@ describe('nightly run', () => {
     expect(await runNightForAccount(db, ACC, NOW)).toBe('skipped')
   })
 
-  it('rolls back what was learned in the last 24 h when the exam drops', async () => {
-    const recentDoc = { id: 'doc-recent', account_id: ACC, source: 'self_review', status: 'active', title: 'Regla: x', content: 'Pregunta primero las medidas.', created_at: new Date(NOW.getTime() - 60 * 60_000).toISOString() }
-    const oldDoc = { id: 'doc-old', account_id: ACC, source: 'advisor_learning', status: 'active', title: 'Aprendido: y', content: 'ejemplo', created_at: new Date(NOW.getTime() - 3 * 24 * 60 * 60_000).toISOString() }
-    const { db, tables } = seed({
-      ai_knowledge_documents: [recentDoc, oldDoc],
-      ai_knowledge_chunks: [{ id: 'ch-old', document_id: 'doc-old', account_id: ACC, content: 'ejemplo', active: true }],
-      ai_eval_runs: [{ id: 'prev', account_id: ACC, phase: 'after', score: 90, created_at: new Date(NOW.getTime() - 24 * 60 * 60_000).toISOString() }],
-      ai_learning_candidates: [{ id: 'cand-recent', account_id: ACC, source: 'self_review', verdict: 'accepted', knowledge_document_id: 'doc-recent', created_at: new Date(NOW.getTime() - 25 * 60 * 60_000).toISOString() }],
+  it('rolls back what the previous run applied (by learning_run_id) when the same cases drop', async () => {
+    const h = (hours: number) => new Date(NOW.getTime() - hours * 60 * 60_000).toISOString()
+    const doc = (id: string, runId: string | null, created: string) => ({
+      id,
+      account_id: ACC,
+      source: 'self_review',
+      status: 'active',
+      title: `Regla: ${id}`,
+      content: 'Pregunta primero las medidas.',
+      learning_run_id: runId,
+      created_at: created,
     })
+    const { db, tables } = seed({
+      ai_knowledge_documents: [
+        doc('doc-prev-run', 'run-prev', h(30)), // previous run, older than 24 h: still rolled back
+        doc('doc-older-run', 'run-older', h(2)), // another run: untouched
+        doc('doc-manual', null, h(5)), // "Aprobar ya" after the previous run
+        doc('doc-manual-old', null, h(60)), // hand approval before it: untouched
+      ],
+      ai_learning_candidates: [
+        { id: 'cand-prev', account_id: ACC, source: 'self_review', verdict: 'accepted', knowledge_document_id: 'doc-prev-run', created_at: h(31) },
+      ],
+    })
+    tables.ai_eval_runs = [
+      {
+        id: 'prev',
+        account_id: ACC,
+        job_run_id: 'run-prev',
+        phase: 'after',
+        score: 90,
+        details: tables.ai_eval_cases.map((c) => ({ case_id: c.id, score: 0.9 })),
+        created_at: h(24),
+      },
+    ]
     mockOpenAi(0.5)
     expect(await runNightForAccount(db, ACC, NOW)).toBe('done')
 
-    const byId = Object.fromEntries(tables.ai_knowledge_documents.map((d) => [d.id, d]))
-    expect(byId['doc-recent'].status).toBe('rolled_back')
-    expect(byId['doc-old'].status).toBe('active')
-    expect(tables.ai_learning_candidates.find((c) => c.id === 'cand-recent')?.verdict).toBe('rolled_back')
+    const status = Object.fromEntries(tables.ai_knowledge_documents.map((d) => [d.id, d.status]))
+    expect(status).toMatchObject({
+      'doc-prev-run': 'rolled_back',
+      'doc-older-run': 'active',
+      'doc-manual': 'rolled_back',
+      'doc-manual-old': 'active',
+    })
+    expect(tables.ai_learning_candidates.find((c) => c.id === 'cand-prev')?.verdict).toBe('rolled_back')
     // Nothing new is applied on a rollback night.
-    expect(tables.ai_knowledge_documents.filter((d) => d.status === 'active' && d.source === 'advisor_learning')).toHaveLength(1)
+    expect(tables.ai_knowledge_documents.filter((d) => d.source === 'advisor_learning')).toHaveLength(0)
     expect(tables.ai_daily_reports[0]).toMatchObject({ rolled_back: true, eval_before: 50 })
+  })
+
+  it('does not roll back when the previous exam shares no cases', async () => {
+    const { db, tables } = seed({
+      ai_knowledge_documents: [
+        { id: 'doc-prev', account_id: ACC, source: 'self_review', status: 'active', title: 'Regla', content: 'Saluda breve.', learning_run_id: 'run-prev', created_at: NOW.toISOString() },
+      ],
+    })
+    tables.ai_eval_runs = [
+      {
+        id: 'prev',
+        account_id: ACC,
+        job_run_id: 'run-prev',
+        phase: 'after',
+        score: 95,
+        details: [{ case_id: 'old-case', score: 1 }],
+        created_at: new Date(NOW.getTime() - 24 * 60 * 60_000).toISOString(),
+      },
+    ]
+    mockOpenAi(0.5)
+    await runNightForAccount(db, ACC, NOW)
+    expect(tables.ai_knowledge_documents.find((d) => d.id === 'doc-prev')?.status).toBe('active')
+    expect(tables.ai_daily_reports[0].rolled_back).toBe(false)
+  })
+
+  it('records every other member of a group as duplicate and skips questions already learned', async () => {
+    const { db, tables } = seed()
+    mockOpenAi(0.9)
+    await runNightForAccount(db, ACC, NOW)
+    const advisorRows = tables.ai_learning_candidates.filter((c) => c.source === 'advisor')
+    expect(advisorRows.filter((c) => c.verdict === 'accepted')).toHaveLength(1)
+    expect(advisorRows.filter((c) => c.rejected_by === 'duplicate')).toHaveLength(1)
+
+    // Next night: the same question asked again by a third advisor is
+    // already learned → duplicate, no new document.
+    tables.conversations.push({ id: 'conv-3', account_id: ACC, last_message_at: NOW.toISOString() })
+    tables.messages.push(
+      { id: fakeId(), conversation_id: 'conv-3', sender_type: 'customer', sender_id: null, content_text: '¿Hacen mesas de acero a medida?', created_at: new Date(NOW.getTime() + 60_000).toISOString() },
+      { id: fakeId(), conversation_id: 'conv-3', sender_type: 'agent', sender_id: 'adv-3', content_text: 'Sí, a medida. ¿Qué medidas tienes en mente?', created_at: new Date(NOW.getTime() + 120_000).toISOString() },
+    )
+    const tomorrow = new Date(NOW.getTime() + 24 * 60 * 60_000)
+    await runNightForAccount(db, ACC, tomorrow)
+    expect(tables.ai_knowledge_documents.filter((d) => d.source === 'advisor_learning')).toHaveLength(1)
+    expect(tables.ai_learning_candidates.filter((c) => c.source === 'advisor' && c.rejected_by === 'duplicate')).toHaveLength(2)
   })
 
   it('approves nothing when the exam has fewer than 20 cases', async () => {

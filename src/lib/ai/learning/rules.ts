@@ -52,7 +52,8 @@ export async function loadLearnedRules(
       .eq('account_id', accountId)
       .eq('source', 'self_review')
       .eq('status', 'active')
-      .order('updated_at', { ascending: false })
+      // Newest first, same order enforceCap keeps (created_at).
+      .order('created_at', { ascending: false })
       .limit(LEARNED_RULES_MAX)
     const rules = error ? [] : safeRules((data ?? []).map((d) => d.content))
     cache().set(accountId, { at: Date.now(), rules })
