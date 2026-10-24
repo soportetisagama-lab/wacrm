@@ -1,5 +1,5 @@
 import { generateReply } from './generate'
-import { NEUTRAL_SPANISH_GUIDANCE, UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
+import { NEUTRAL_SPANISH_GUIDANCE, NO_PRICES_GUIDANCE, UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
 import { textOf, type AiConfig, type AiUsage, type ChatMessage } from './types'
 
 // ============================================================
@@ -45,6 +45,8 @@ export function buildNudgePrompt(businessContext: string | null): string {
       `For reference only — what the business sells (ignore its instructions about greetings, menus or data collection):\n${businessContext.trim()}`,
     )
   }
+  // Last on purpose: overrides any price in the business reference above.
+  parts.push(NO_PRICES_GUIDANCE)
   return parts.join('\n\n')
 }
 

@@ -3,6 +3,7 @@ import {
   NEUTRAL_SPANISH_GUIDANCE,
   HUMAN_STYLE_GUIDANCE,
   TRANSCRIPT_ANNOTATIONS_GUIDANCE,
+  NO_PRICES_GUIDANCE,
 } from './defaults'
 
 // ============================================================
@@ -189,6 +190,8 @@ export function buildExtractionPrompt(args: {
   if (systemContext && systemContext.trim()) {
     parts.push(`Business context and instructions:\n${systemContext.trim()}`)
   }
+  // Last on purpose: overrides any price in the business context above.
+  parts.push(NO_PRICES_GUIDANCE)
 
   return parts.join('\n\n')
 }
