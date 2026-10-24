@@ -17,11 +17,17 @@ import { AiError } from '@/lib/ai/types'
 export async function GET() {
   try {
     const { supabase, accountId } = await getCurrentAccount()
-    const { data, error } = await supabase
-      .from('ai_knowledge_documents')
-      .select('id, title, updated_at')
-      .eq('account_id', accountId)
-      .order('updated_at', { ascending: false })
+    const list = () =>
+      supabase
+        .from('ai_knowledge_documents')
+        .select('id, title, updated_at')
+        .eq('account_id', accountId)
+        .order('updated_at', { ascending: false })
+    // Only the documents people wrote: what the AI learned on its own is
+    // shown in Agentes IA > Aprendizaje (admin only). Before migration
+    // 079 there is no `source` column — list everything then.
+    let { data, error } = await list().eq('source', 'manual')
+    if (error?.code === '42703') ({ data, error } = await list())
     if (error) {
       console.error('[ai/knowledge GET] error:', error)
       return NextResponse.json(

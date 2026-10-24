@@ -8,7 +8,11 @@ import { runSelfReview } from './self-review'
 import { EVAL_MIN_CASES, EVAL_TARGET_CASES, growEvalSet, loadEvalCases } from './eval-set'
 import { countMemoryUpdates, trimSummary, writeDailyReport, type DailyReportSummary } from './report'
 import { limaDateKey, limaHour } from './time'
-import { examBaseModel, runExam, saveExamRun } from './exam'
+import { examBaseModel, previousFinalScore, runExam, saveExamRun, type ExamVariant } from './exam'
+import { loadLearnedRules } from './rules'
+import { collectAdvisorProposals, collectRuleProposals } from './proposals'
+import { applyProposal, enforceCap, rollbackLearnedSince, type Proposal } from './apply'
+import { jaccard } from './similarity'
 
 // ============================================================
 // Nightly learning run, 03:00 Lima, once per line and day. Started from
@@ -17,7 +21,10 @@ import { examBaseModel, runExam, saveExamRun } from './exam'
 // so two server instances never run the same night twice.
 //
 // Steps: grow the exam set from hard chats → self-review of the bot's
-// replies → exam of the live bot → daily report. Fully automatic; nobody has to approve it.
+// replies → learning from advisors + rules → blind exam (live vs
+// candidate) → automatic rollback if the live bot got worse than last
+// night, else apply what passed → daily report. Fully automatic; nobody
+// has to approve it.
 // ============================================================
 
 export const NIGHT_START_HOUR_LIMA = 3
@@ -112,7 +119,7 @@ export async function runNightForAccount(
   try {
     discarded += await stepEvalSet(ctx)
     discarded += await stepSelfReview(ctx, runId)
-    await stepExam(ctx, runId)
+    discarded += await stepLearnAndExam(ctx, runId)
   } catch (err) {
     errorText = err instanceof Error ? err.message : String(err)
     status = isLearningStopError(err) ? 'skipped' : 'failed'
@@ -125,7 +132,7 @@ export async function runNightForAccount(
     discarded_count: discarded,
     memory_count: await countMemoryUpdates(db, accountId, ctx.since),
     eval_before: ctx.summary.exam?.base ?? null,
-    eval_after: ctx.summary.exam?.candidate ?? null,
+    eval_after: ctx.summary.exam?.after ?? null,
     rolled_back: ctx.summary.rollback?.done ?? false,
     summary: trimSummary(ctx.summary),
   })
@@ -165,25 +172,156 @@ async function stepSelfReview(ctx: NightContext, parentRunId: string): Promise<n
   return result.rejected
 }
 
-/** Tonight's exam of the live bot (score kept for tomorrow's compare). */
-async function stepExam(ctx: NightContext, runId: string): Promise<void> {
-  const cases = await loadEvalCases(ctx.db, ctx.accountId)
+/** Exam drop (points, 0-100) that counts as "worse than yesterday".
+ *  A small margin keeps the judge's own noise from rolling back good
+ *  learning every night. */
+export const ROLLBACK_TOLERANCE = 3
+const LEARNING_LOOKBACK_MS = 7 * DAY_MS
+const MAX_APPLY_EXAMPLES = 20
+const MAX_APPLY_RULES = 5
+
+export interface NightDecision {
+  rollback: boolean
+  apply: boolean
+  note?: string
+}
+
+/** Pure: what tonight's exam numbers mean. */
+export function decideNight(args: {
+  base: number | null
+  candidate: number | null
+  previous: number | null
+  reliable: boolean
+  ready: number
+}): NightDecision {
+  const { base, candidate, previous, reliable, ready } = args
+  if (base !== null && previous !== null && base < previous - ROLLBACK_TOLERANCE) {
+    return { rollback: true, apply: false, note: 'La nota bajó frente a la noche anterior: se retrocedió lo aprendido en las últimas 24 h' }
+  }
+  if (ready === 0) return { rollback: false, apply: false }
+  if (!reliable) {
+    return { rollback: false, apply: false, note: `Examen con menos de ${EVAL_MIN_CASES} casos: no se aprueba nada` }
+  }
+  if (base === null || candidate === null) return { rollback: false, apply: false, note: 'No se pudo tomar el examen' }
+  if (candidate < base) return { rollback: false, apply: false, note: 'Lo aprendido bajaba la nota del examen: se descartó' }
+  return { rollback: false, apply: true }
+}
+
+/** Pure: top-2 candidate examples per exam case, by word overlap. */
+export function matchExamples(question: string, examples: Proposal[]): string[] {
+  return examples
+    .map((e) => ({ e, s: jaccard(question, e.question ?? e.content) }))
+    .filter((x) => x.s >= 0.15)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 2)
+    .map((x) => x.e.content)
+}
+
+/**
+ * Phase 4: judge tonight's proposals, run the blind exam (live bot vs
+ * live bot + ready proposals), roll back if the live bot got worse than
+ * last night, apply what passed. Everything automatic.
+ */
+async function stepLearnAndExam(ctx: NightContext, runId: string): Promise<number> {
+  const { db, accountId, config, openai } = ctx
+  const pctx = { db, accountId, config, openai, runId }
+  const learnSince = new Date(ctx.now.getTime() - LEARNING_LOOKBACK_MS)
+  const activeRules = await loadLearnedRules(db, accountId, { fresh: true })
+
+  const advisorRun = (await claimJobRun(db, accountId, 'advisor_learning', `${accountId}:${ctx.dateKey}`)) ?? runId
+  const pairs = await loadRecentPairs(db, accountId, learnSince)
+  const examples = await collectAdvisorProposals({ ...pctx, runId: advisorRun }, pairs)
+  const rules = await collectRuleProposals(pctx, activeRules, learnSince)
+  if (advisorRun !== runId) await finishJobRun(db, advisorRun, 'done', { ...examples.stats, discarded: undefined })
+
+  ctx.summary.advisor_learning = {
+    pairs: examples.stats.pairs,
+    candidates: examples.stats.candidates,
+    rejected: examples.stats.rejected,
+    groups: examples.stats.groups,
+  }
+  ctx.summary.discarded = [...(ctx.summary.discarded ?? []), ...examples.stats.discarded, ...rules.stats.discarded]
+  let discarded = examples.stats.rejected + rules.stats.rejected
+
+  const readyExamples = examples.proposals
+    .filter((p) => p.ready)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_APPLY_EXAMPLES)
+  const readyRules = rules.proposals
+    .filter((p) => p.ready)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_APPLY_RULES)
+  const ready = [...readyExamples, ...readyRules]
+
+  const cases = await loadEvalCases(db, accountId)
   if (cases.length === 0) {
-    ctx.summary.exam = { base: null, candidate: null, cases: 0, approved: false, note: 'Todavía no hay examen' }
-    return
+    ctx.summary.exam = { base: null, candidate: null, after: null, cases: 0, approved: false, note: 'Todavía no hay examen: no se aprueba nada' }
+    return discarded
   }
-  const deps = { db: ctx.db, accountId: ctx.accountId, config: ctx.config, openai: ctx.openai }
-  const model = examBaseModel(ctx.config, ctx.openai)
-  const result = await runExam(deps, cases, [{ label: 'base', model, rules: [] }])
-  const score = result.total > 0 ? result.scores[0] : null
+
+  const deps = { db, accountId, config, openai }
+  const model = examBaseModel(config, openai)
+  const base: ExamVariant = { label: 'base', model, rules: activeRules }
+  const variants: ExamVariant[] = [base]
+  if (ready.length > 0 && cases.length >= EVAL_MIN_CASES) {
+    variants.push({
+      label: 'candidato',
+      model,
+      rules: [...activeRules, ...readyRules.map((r) => r.content)],
+      extraKnowledge: (c) => matchExamples(c.question, readyExamples),
+    })
+  }
+  const exam = await runExam(deps, cases, variants)
+  const baseScore = exam.total > 0 ? exam.scores[0] : null
+  const candScore = variants.length > 1 && exam.total > 0 ? exam.scores[1] : null
+  const previous = await previousFinalScore(db, accountId, ctx.now)
+  const decision = decideNight({ base: baseScore, candidate: candScore, previous, reliable: exam.reliable, ready: ready.length })
+
+  let after = baseScore
+  let afterRun: { result: typeof exam; variant: number } = { result: exam, variant: 0 }
+  const learned: string[] = []
+  if (decision.rollback) {
+    const n = await rollbackLearnedSince(db, accountId, ctx.since)
+    // Fresh score of the rolled-back bot, so tomorrow compares to it.
+    const again = n > 0 ? await runExam(deps, cases, [{ ...base, rules: await loadLearnedRules(db, accountId, { fresh: true }) }]) : null
+    after = again && again.total > 0 ? again.scores[0] : baseScore
+    if (again && again.total > 0) afterRun = { result: again, variant: 0 }
+    ctx.summary.rollback = { done: n > 0, items: n, previous, current: baseScore }
+  } else if (decision.apply) {
+    for (const p of ready) {
+      const docId = await applyProposal(db, accountId, config, p, runId)
+      if (docId) learned.push(p.title)
+    }
+    if (readyRules.length) await enforceCap(db, accountId, 'self_review')
+    if (readyExamples.length) await enforceCap(db, accountId, 'advisor_learning')
+    after = candScore
+    afterRun = { result: exam, variant: 1 }
+  } else if (ready.length > 0 && candScore !== null && baseScore !== null && candScore < baseScore) {
+    // The exam said no: discard tonight's ready items.
+    await db
+      .from('ai_learning_candidates')
+      .update({ verdict: 'rejected', rejected_by: 'eval_regression', decided_at: new Date().toISOString() })
+      .in('id', ready.map((p) => p.candidateId))
+    discarded += ready.length
+    ctx.summary.discarded.push(...ready.map((p) => ({ text: p.title, reason: 'Bajaba la nota del examen' })))
+  }
+  ctx.summary.learned = learned
   ctx.summary.exam = {
-    base: score,
-    candidate: null,
-    cases: result.total,
-    approved: false,
-    note: result.reliable ? undefined : `Examen con menos de ${EVAL_MIN_CASES} casos: no se aprueba nada`,
+    base: baseScore,
+    candidate: candScore,
+    after,
+    cases: exam.total,
+    approved: decision.apply && learned.length > 0,
+    note: decision.note,
   }
-  if (score === null) return
-  await saveExamRun(ctx.db, ctx.accountId, runId, 'baseline', score, result, result.passed[0], 0)
-  await saveExamRun(ctx.db, ctx.accountId, runId, 'after', score, result, result.passed[0], 0)
+
+  if (baseScore !== null) {
+    await saveExamRun(db, accountId, runId, 'baseline', baseScore, exam, exam.passed[0], 0)
+    if (candScore !== null) await saveExamRun(db, accountId, runId, 'before', baseScore, exam, exam.passed[0], 0)
+  }
+  if (after !== null) {
+    const { result: ar, variant: v } = afterRun
+    await saveExamRun(db, accountId, runId, 'after', after, ar, ar.passed[v] ?? 0, v)
+  }
+  return discarded
 }
