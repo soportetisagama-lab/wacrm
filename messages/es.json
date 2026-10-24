@@ -2291,6 +2291,30 @@
       "notConfigured": "Todavía no hay un agente configurado — terminá la configuración primero.",
       "replyFailed": "No se pudo obtener una respuesta.",
       "unreachable": "No se pudo conectar con el agente."
+    },
+    "learning": {
+      "tab": "Aprendizaje",
+      "memoryTitle": "Memoria por cliente",
+      "memoryDescription": "Lo que el bot recuerda de cada cliente para no volver a preguntarle lo mismo. Se actualiza sola cada 10 minutos con las conversaciones que quedaron en pausa. Nunca guarda precios ni datos personales y solo la ven los administradores.",
+      "notReady": "La memoria todavía no está activa en esta línea: falta aplicar la migración 079 en la base de datos.",
+      "searchPlaceholder": "Busca por cliente o contenido",
+      "empty": "Todavía no hay memoria guardada.",
+      "emptyHint": "Se completa sola cuando una conversación lleva 2 horas sin mensajes o se cierra.",
+      "noName": "Cliente sin nombre",
+      "updatedAt": "Actualizada el {date}",
+      "clear": "Borrar memoria",
+      "confirmClear": "¿Quieres borrar la memoria de este cliente? El bot solo volverá a aprender de sus mensajes nuevos.",
+      "cleared": "Memoria borrada",
+      "clearFailed": "No se pudo borrar la memoria.",
+      "loadFailed": "No se pudo cargar la memoria.",
+      "fields": {
+        "busca": "Busca",
+        "medidas": "Medidas",
+        "tipo_negocio": "Tipo de negocio",
+        "enviado": "Ya se le envió",
+        "tono": "Tono",
+        "notas": "Notas"
+      }
     }
   },
   "InteractiveBuilder": {

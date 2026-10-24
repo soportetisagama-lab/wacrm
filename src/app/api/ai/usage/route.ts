@@ -12,7 +12,7 @@ const DEFAULT_WINDOW_DAYS = 30
 
 interface UsageRow {
   created_at: string
-  mode: 'auto_reply' | 'draft' | 'flow_collect'
+  mode: string
   provider: string
   model: string
   prompt_tokens: number
@@ -79,7 +79,7 @@ export async function GET(request: Request) {
     let totalTokens = 0
 
     // Per-mode + per-model tallies.
-    const byMode = {
+    const byMode: Record<'auto_reply' | 'draft' | 'flow_collect', { calls: number; tokens: number }> = {
       auto_reply: { calls: 0, tokens: 0 },
       draft: { calls: 0, tokens: 0 },
       flow_collect: { calls: 0, tokens: 0 },
@@ -102,9 +102,13 @@ export async function GET(request: Request) {
       completionTokens += r.completion_tokens
       totalTokens += r.total_tokens
 
-      // `mode` is DB-CHECK-constrained to these three values.
-      byMode[r.mode].calls += 1
-      byMode[r.mode].tokens += r.total_tokens
+      // Only the three charted modes get a card; the rest (context
+      // classification, learning jobs) still count in the totals.
+      const modeBucket = byMode[r.mode as keyof typeof byMode]
+      if (modeBucket) {
+        modeBucket.calls += 1
+        modeBucket.tokens += r.total_tokens
+      }
 
       const mk = `${r.provider}:${r.model}`
       const m =
