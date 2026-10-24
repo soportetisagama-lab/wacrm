@@ -136,6 +136,8 @@ export interface ExtractArgs {
    *  the default — means the schema never offers a `send_document`
    *  slot at all, so this call behaves exactly as before this existed. */
   documents?: DocumentOption[]
+  /** Learned memory of this customer, already rendered. */
+  customerMemory?: string | null
 }
 
 export interface ExtractResult {
@@ -169,10 +171,16 @@ export interface ExtractResult {
  * handoff-on-error handling for this node).
  */
 export async function extractWithReply(args: ExtractArgs): Promise<ExtractResult> {
-  const { config, fields, knownValues, systemContext, messages, documents = [] } = args
+  const { config, fields, knownValues, systemContext, messages, documents = [], customerMemory } = args
   const timeoutMs = aiRequestTimeoutMs()
   const schema = buildExtractionSchema(fields, documents)
-  const systemPrompt = buildExtractionPrompt({ fields, knownValues, systemContext, documents })
+  const systemPrompt = buildExtractionPrompt({
+    fields,
+    knownValues,
+    systemContext,
+    documents,
+    customerMemory,
+  })
   const providerArgs = {
     apiKey: config.apiKey,
     model: config.model,
