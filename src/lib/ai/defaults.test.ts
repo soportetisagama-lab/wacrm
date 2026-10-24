@@ -84,6 +84,15 @@ describe('no prices — business rule: the bot never quotes a price', () => {
     expect(prompt).not.toContain('(a price,')
   })
 
+  it('the draft prompt (suggested to the advisor) also forbids prices, last', () => {
+    const draft = buildSystemPrompt({
+      userPrompt: priceyContext,
+      mode: 'draft',
+      knowledge: ['Lista de precios: lavadero S/ 800'],
+    })
+    expect(draft.endsWith(NO_PRICES_GUIDANCE)).toBe(true)
+  })
+
   it('the rule says: no prices, amounts or discounts even from the knowledge base; an advisor prepares the quote; keep gathering data', () => {
     expect(NO_PRICES_GUIDANCE).toMatch(/never give prices, amounts/)
     expect(NO_PRICES_GUIDANCE).toMatch(/discounts/)

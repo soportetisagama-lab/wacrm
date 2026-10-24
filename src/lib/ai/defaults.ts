@@ -86,7 +86,8 @@ export const TRANSCRIPT_ANNOTATIONS_GUIDANCE =
  * Business rule set by management: the bot NEVER quotes prices — only
  * an advisor does. Shared by every prompt that writes to the customer
  * on its own (auto-reply, collect_ai extraction, inactivity nudge) and
- * placed last in each one, after the business context and knowledge
+ * by the draft suggested to the advisor; always placed
+ * last, after the business context and knowledge
  * excerpts, so a price written there can't override it.
  */
 export const NO_PRICES_GUIDANCE =
@@ -242,7 +243,8 @@ export function buildSystemPrompt(args: {
   }
 
   // Last on purpose: overrides any price in the context or knowledge above.
-  if (mode === 'auto_reply') parts.push(NO_PRICES_GUIDANCE)
+  // Drafts too: the advisor sends them as-is more often than not.
+  parts.push(NO_PRICES_GUIDANCE)
 
   return parts.join('\n\n')
 }
