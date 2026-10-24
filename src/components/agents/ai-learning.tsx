@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/dashboard/skeleton';
+import { AiLearningOverview } from './ai-learning-overview';
 
 const FIELDS = ['busca', 'medidas', 'tipo_negocio', 'enviado', 'tono', 'notas'] as const;
 type Field = (typeof FIELDS)[number];
@@ -91,7 +92,9 @@ export function AiLearning() {
   }
 
   return (
-    <Card>
+    <div className="space-y-4">
+      <AiLearningOverview />
+      <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Brain className="h-4 w-4 text-primary" /> {t('memoryTitle')}
@@ -157,5 +160,6 @@ export function AiLearning() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }
