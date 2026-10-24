@@ -243,17 +243,49 @@ export async function saveExamRun(
   if (error) console.error('[ai-learning] eval run save failed:', error.message)
 }
 
-/** Score of the last 'after' exam before `before` (the previous night's
- *  final state), or null. */
-export async function previousFinalScore(db: SupabaseClient, accountId: string, before: Date): Promise<number | null> {
+export interface PreviousRun {
+  /** ai_job_runs id of the night that produced it (null if unknown). */
+  jobRunId: string | null
+  createdAt: string
+  /** Per-case score (0-1) by case id. */
+  cases: Map<string, number>
+}
+
+/** The last 'after' exam before `before` (the previous night's final
+ *  state) with its per-case scores, or null. */
+export async function previousFinalRun(db: SupabaseClient, accountId: string, before: Date): Promise<PreviousRun | null> {
   const { data } = await db
     .from('ai_eval_runs')
-    .select('score')
+    .select('job_run_id, details, created_at')
     .eq('account_id', accountId)
     .eq('phase', 'after')
     .lt('created_at', before.toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-  return data ? Number(data.score) : null
+  if (!data) return null
+  const cases = new Map<string, number>()
+  for (const d of Array.isArray(data.details) ? (data.details as { case_id?: unknown; score?: unknown }[]) : []) {
+    if (typeof d.case_id === 'string' && typeof d.score === 'number') cases.set(d.case_id, d.score)
+  }
+  return { jobRunId: (data.job_run_id as string | null) ?? null, createdAt: data.created_at as string, cases }
+}
+
+/**
+ * Pure: tonight vs the previous night on the SAME cases only (cases
+ * added or removed in between don't move the comparison). 0-100.
+ */
+export function compareCommonCases(
+  tonight: ExamCaseResult[],
+  variant: number,
+  previous: Map<string, number>,
+): { today: number | null; previous: number | null; common: number } {
+  const common = tonight.filter((d) => previous.has(d.caseId))
+  if (common.length === 0) return { today: null, previous: null, common: 0 }
+  const avg = (xs: number[]) => Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10_000) / 100
+  return {
+    today: avg(common.map((d) => d.scores[variant])),
+    previous: avg(common.map((d) => previous.get(d.caseId) as number)),
+    common: common.length,
+  }
 }

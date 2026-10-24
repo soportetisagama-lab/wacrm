@@ -8,10 +8,11 @@ import { runSelfReview } from './self-review'
 import { EVAL_MIN_CASES, EVAL_TARGET_CASES, growEvalSet, loadEvalCases } from './eval-set'
 import { countMemoryUpdates, trimSummary, writeDailyReport, type DailyReportSummary } from './report'
 import { limaDateKey, limaHour } from './time'
-import { examBaseModel, previousFinalScore, runExam, saveExamRun, type ExamVariant } from './exam'
+import { compareCommonCases, examBaseModel, previousFinalRun, runExam, saveExamRun, type ExamVariant } from './exam'
+import { LEARNED_RULES_MAX } from '../defaults'
 import { loadLearnedRules } from './rules'
 import { collectAdvisorProposals, collectRuleProposals } from './proposals'
-import { applyProposal, enforceCap, rollbackLearnedSince, type Proposal } from './apply'
+import { applyProposal, enforceCap, isApplicable, rollbackLearnedRun, type Proposal } from './apply'
 import { jaccard } from './similarity'
 
 // ============================================================
@@ -190,13 +191,23 @@ export interface NightDecision {
 export function decideNight(args: {
   base: number | null
   candidate: number | null
-  previous: number | null
   reliable: boolean
   ready: number
+  /** Tonight vs the previous night on their common cases (see
+   *  compareCommonCases), or null on the first night. */
+  regression: { today: number | null; previous: number | null; common: number } | null
 }): NightDecision {
-  const { base, candidate, previous, reliable, ready } = args
-  if (base !== null && previous !== null && base < previous - ROLLBACK_TOLERANCE) {
-    return { rollback: true, apply: false, note: 'La nota bajó frente a la noche anterior: se retrocedió lo aprendido en las últimas 24 h' }
+  const { base, candidate, reliable, ready, regression } = args
+  // Rollback only on a trustworthy exam, comparing the same cases.
+  if (
+    reliable &&
+    regression &&
+    regression.common >= EVAL_MIN_CASES &&
+    regression.today !== null &&
+    regression.previous !== null &&
+    regression.today < regression.previous - ROLLBACK_TOLERANCE
+  ) {
+    return { rollback: true, apply: false, note: 'La nota bajó frente a la noche anterior: se retrocedió lo aprendido en esa corrida' }
   }
   if (ready === 0) return { rollback: false, apply: false }
   if (!reliable) {
@@ -205,6 +216,16 @@ export function decideNight(args: {
   if (base === null || candidate === null) return { rollback: false, apply: false, note: 'No se pudo tomar el examen' }
   if (candidate < base) return { rollback: false, apply: false, note: 'Lo aprendido bajaba la nota del examen: se descartó' }
   return { rollback: false, apply: true }
+}
+
+/**
+ * Pure: the rules the bot will have if tonight's rules are applied —
+ * newest first, as loadLearnedRules returns them, and cut at the cap
+ * exactly like enforceCap (oldest active rules drop out). The exam
+ * tests this list, so what is examined is what gets applied.
+ */
+export function projectRules(activeNewestFirst: string[], newInApplyOrder: string[], max: number = LEARNED_RULES_MAX): string[] {
+  return [...[...newInApplyOrder].reverse(), ...activeNewestFirst].slice(0, max)
 }
 
 /** Pure: top-2 candidate examples per exam case, by word overlap. */
@@ -243,12 +264,14 @@ async function stepLearnAndExam(ctx: NightContext, runId: string): Promise<numbe
   ctx.summary.discarded = [...(ctx.summary.discarded ?? []), ...examples.stats.discarded, ...rules.stats.discarded]
   let discarded = examples.stats.rejected + rules.stats.rejected
 
+  // Only what passes the final guard is examined, so the exam tests
+  // exactly what can be applied.
   const readyExamples = examples.proposals
-    .filter((p) => p.ready)
+    .filter((p) => p.ready && isApplicable(p))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_APPLY_EXAMPLES)
   const readyRules = rules.proposals
-    .filter((p) => p.ready)
+    .filter((p) => p.ready && isApplicable(p))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_APPLY_RULES)
   const ready = [...readyExamples, ...readyRules]
@@ -267,26 +290,30 @@ async function stepLearnAndExam(ctx: NightContext, runId: string): Promise<numbe
     variants.push({
       label: 'candidato',
       model,
-      rules: [...activeRules, ...readyRules.map((r) => r.content)],
+      rules: projectRules(activeRules, readyRules.map((r) => r.content)),
       extraKnowledge: (c) => matchExamples(c.question, readyExamples),
     })
   }
   const exam = await runExam(deps, cases, variants)
   const baseScore = exam.total > 0 ? exam.scores[0] : null
   const candScore = variants.length > 1 && exam.total > 0 ? exam.scores[1] : null
-  const previous = await previousFinalScore(db, accountId, ctx.now)
-  const decision = decideNight({ base: baseScore, candidate: candScore, previous, reliable: exam.reliable, ready: ready.length })
+  const previousRun = await previousFinalRun(db, accountId, ctx.now)
+  const regression = previousRun ? compareCommonCases(exam.details, 0, previousRun.cases) : null
+  const decision = decideNight({ base: baseScore, candidate: candScore, reliable: exam.reliable, ready: ready.length, regression })
 
   let after = baseScore
   let afterRun: { result: typeof exam; variant: number } = { result: exam, variant: 0 }
   const learned: string[] = []
   if (decision.rollback) {
-    const n = await rollbackLearnedSince(db, accountId, ctx.since)
+    // What the previous run applied, plus hand approvals made after it.
+    const n = previousRun
+      ? await rollbackLearnedRun(db, accountId, previousRun.jobRunId ?? '', new Date(previousRun.createdAt))
+      : 0
     // Fresh score of the rolled-back bot, so tomorrow compares to it.
     const again = n > 0 ? await runExam(deps, cases, [{ ...base, rules: await loadLearnedRules(db, accountId, { fresh: true }) }]) : null
     after = again && again.total > 0 ? again.scores[0] : baseScore
     if (again && again.total > 0) afterRun = { result: again, variant: 0 }
-    ctx.summary.rollback = { done: n > 0, items: n, previous, current: baseScore }
+    ctx.summary.rollback = { done: n > 0, items: n, previous: regression?.previous ?? null, current: regression?.today ?? null }
   } else if (decision.apply) {
     for (const p of ready) {
       const docId = await applyProposal(db, accountId, config, p, runId)
