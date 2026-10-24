@@ -45,6 +45,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('parseGeneration', () => {
+  it('strips transcript annotations the model copied into its reply', () => {
+    expect(parseGeneration('[Asesor] Claro, te ayudo.').text).toBe('Claro, te ayudo.')
+    expect(parseGeneration('[vie 23/10 15:30] Hola').text).toBe('Hola')
+  })
+
   it('returns text with no handoff', () => {
     expect(parseGeneration('Hello there')).toEqual({
       text: 'Hello there',

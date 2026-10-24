@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { latestUserMessage } from './query'
+import { latestUserMessage, recentUserMessages } from './query'
 
 describe('latestUserMessage', () => {
   it('returns the most recent user turn', () => {
@@ -42,5 +42,26 @@ describe('latestUserMessage', () => {
         { role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', base64: 'ZmFrZQ==' }] },
       ]),
     ).toBe('')
+  })
+})
+
+describe('recentUserMessages', () => {
+  it('joins the last customer turns oldest-first, without transcript annotations', () => {
+    expect(
+      recentUserMessages(
+        [
+          { role: 'user', content: 'uno' },
+          { role: 'user', content: '[lun 02/01 10:00] dos' },
+          { role: 'assistant', content: 'ok' },
+          { role: 'user', content: 'tres' },
+          { role: 'user', content: 'cuatro' },
+        ],
+        3,
+      ),
+    ).toBe('dos\ntres\ncuatro')
+  })
+
+  it('falls back to the last message when the customer has not written', () => {
+    expect(recentUserMessages([{ role: 'assistant', content: 'hola' }])).toBe('hola')
   })
 })

@@ -2541,7 +2541,7 @@ describe("handleCollectAiNonTextReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2605,7 +2605,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2623,7 +2623,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2640,7 +2640,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockTranscribe).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2687,7 +2687,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(outcome).toEqual({ outcome: "advanced" });
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2704,7 +2704,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2741,7 +2741,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?",
+        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -3875,5 +3875,99 @@ describe("collect_ai anti-repeat and handoff reason helpers", () => {
     expect(collectAiHandoffReasonText("repeated_question", fields, {})).toBe(
       "El cliente no respondió lo que el bot le preguntaba (tipo de espacio, medidas).",
     );
+  });
+});
+
+describe("photos on a menu and debounced collect_ai", () => {
+  function menuNode(): FlowNodeRow {
+    return makeNode({
+      node_key: "topics",
+      node_type: "send_list",
+      config: {
+        text: "¿En qué te ayudamos?",
+        button_label: "Ver opciones",
+        sections: [
+          {
+            title: "Menú",
+            rows: [{ reply_id: "precios", title: "Precios", next_node_key: "precios_node" }],
+          },
+        ],
+      },
+    });
+  }
+
+  function withRpc(db: unknown, claim: { is_owner: boolean; wait_until: string }) {
+    const base = db as { from: unknown };
+    return {
+      from: base.from,
+      rpc: () => Promise.resolve({ data: [claim], error: null }),
+    } as never;
+  }
+
+  it("a photo while a menu waits goes to the assistant (vision on) and leaves the run active", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: true }));
+    const { db, updates } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "", meta_message_id: "wamid.photo", isImageMessage: true },
+      new Map([["topics", menuNode()]]),
+    );
+
+    expect(result).toEqual({ consumed: false, flow_run_id: run.id, outcome: "released_to_assistant" });
+    expect(updates.some((u) => u.table === "flow_runs" && u.payload.status)).toBe(false);
+    expect(mockSendText).not.toHaveBeenCalled();
+  });
+
+  it("with vision off, a photo on a menu keeps today's fallback (not released)", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig({ visionEnabled: false }));
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics" });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "", meta_message_id: "wamid.photo2", isImageMessage: true },
+      new Map([["topics", menuNode()]]),
+    );
+
+    expect(result.outcome).not.toBe("released_to_assistant");
+  });
+
+  it("a collect_ai message that another delivery already owns is consumed without its own extraction", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "collect" });
+    const node = makeNode({ node_key: "collect", node_type: "collect_ai", config: collectAiConfig() });
+
+    const result = await handleReplyForActiveRun(
+      withRpc(db, { is_owner: false, wait_until: new Date(Date.now() + 6000).toISOString() }),
+      run,
+      { kind: "text", text: "y también en acero", meta_message_id: "wamid.burst-2" },
+      new Map([["collect", node]]),
+    );
+
+    expect(result).toEqual({ consumed: true, flow_run_id: run.id, outcome: "debounced" });
+    expect(mockExtract).not.toHaveBeenCalled();
+  });
+
+  it("the owner of a collect_ai burst runs a single extraction", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Para qué medida?" }));
+    const { db } = makeFakeDb();
+    const run = makeRun({ current_node_key: "collect" });
+    const node = makeNode({ node_key: "collect", node_type: "collect_ai", config: collectAiConfig() });
+
+    const result = await handleReplyForActiveRun(
+      withRpc(db, { is_owner: true, wait_until: new Date(Date.now() - 1000).toISOString() }),
+      run,
+      { kind: "text", text: "quiero una mesa", meta_message_id: "wamid.burst-1" },
+      new Map([["collect", node]]),
+    );
+
+    expect(result.consumed).toBe(true);
+    expect(mockExtract).toHaveBeenCalledTimes(1);
   });
 });

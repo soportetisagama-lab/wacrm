@@ -709,6 +709,8 @@ export interface DispatchInboundResult {
     | "handed_off"
     | "fallback_fired"
     | "duplicate_inbound_ignored"
+    /** Part of a burst another delivery is already answering. */
+    | "debounced"
     | "released_to_assistant"
     | "already_selected_notice"
     | "stale_interactive_notice"

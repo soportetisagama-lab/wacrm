@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { noteAiKeyFailure, resetAiAvailability } from './availability'
+import { __resetRateLimitForTests } from '@/lib/rate-limit'
 import { AiError, type AiConfig } from './types'
 
 // Shared, hoisted mock state so the module mocks can close over it.
@@ -34,6 +35,12 @@ const h = vi.hoisted(() => ({
     // reads back as "no active window" (settles immediately).
     debounceRecheckQueue: [] as (string | null)[],
     debounceUpdates: [] as Record<string, unknown>[],
+    // Customer rows newest-first, read by summarizePendingBurst; null
+    // makes that read fail (callers then fall back to their own message).
+    burstRows: null as Record<string, unknown>[] | null,
+    // The latest business message, read by lastBusinessMessageIs.
+    lastBusinessRows: [] as Record<string, unknown>[],
+    contactName: null as string | null,
   },
 }))
 
@@ -85,15 +92,50 @@ vi.mock('./admin-client', () => ({
         }
         return chain
       }
+      if (table === 'contacts') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () =>
+            Promise.resolve({ data: { name: h.state.contactName }, error: null }),
+        }
+        return chain
+      }
       if (table === 'messages') {
         // .update({ transcript }).eq('id', ...) — writes the transcript
-        // back onto the inbound audio row.
-        return {
+        // back onto the inbound audio row. select() chains serve the
+        // burst summary and the "last business message" check.
+        let businessOnly = false
+        let humanReplyLookup = false
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          neq: () => {
+            businessOnly = true
+            return chain
+          },
+          // hasRecentHumanReply — no human replies in these tests.
+          gte: () => {
+            humanReplyLookup = true
+            return chain
+          },
+          order: () => chain,
+          limit: () =>
+            Promise.resolve(
+              humanReplyLookup
+                ? { data: [], error: null }
+                : businessOnly
+                ? { data: h.state.lastBusinessRows, error: null }
+                : h.state.burstRows
+                  ? { data: h.state.burstRows, error: null }
+                  : { data: null, error: { message: 'no rows' } },
+            ),
           update: (payload: Record<string, unknown>) => {
             h.state.transcriptUpdate = payload
             return { eq: () => Promise.resolve({ error: null }) }
           },
         }
+        return chain
       }
       // conversations
       return {
@@ -121,7 +163,8 @@ vi.mock('./admin-client', () => ({
           } else {
             h.state.updatePayload = payload
           }
-          return { eq: () => Promise.resolve({ error: null }) }
+          const done = Promise.resolve({ error: null })
+          return { eq: () => Object.assign(done, { lte: () => done }) }
         },
       }
     },
@@ -194,6 +237,12 @@ beforeEach(() => {
   h.state.debounceClaimError = null
   h.state.debounceRecheckQueue = []
   h.state.debounceUpdates = []
+  h.state.burstRows = null
+  h.state.lastBusinessRows = []
+  h.state.contactName = null
+  // Every test answers from the same account — keep the per-account
+  // throttle from tripping as the suite grows.
+  __resetRateLimitForTests()
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
@@ -257,7 +306,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('ya le paso tu caso a un asesor'),
+        text: expect.stringMatching(/asesor del equipo/),
       }),
     )
     expect(h.engineSendText).not.toHaveBeenCalledWith(
@@ -343,7 +392,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('ya le paso tu caso a un asesor'),
+        text: expect.stringMatching(/asesor del equipo/),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -405,12 +454,13 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.generateReply).not.toHaveBeenCalled()
-    expect(h.state.rpcCalls).toHaveLength(0) // never calls claim_ai_reply_slot
+    // never calls claim_ai_reply_slot (only the debounce claim)
+    expect(h.state.rpcCalls.map((c) => c.name)).toEqual(['claim_ai_debounce_window'])
     expect(h.engineSendText).toHaveBeenCalledTimes(1)
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -434,7 +484,7 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
     }
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
@@ -456,7 +506,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: expect.stringContaining('ya le paso tu caso a un asesor'),
+        text: expect.stringMatching(/asesor del equipo/),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -474,7 +524,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('ya le paso tu caso a un asesor'),
+        text: expect.stringMatching(/asesor del equipo/),
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -485,7 +535,7 @@ describe('dispatchInboundToAiReply — handoff', () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
     expect(h.state.updatePayload).toMatchObject({
       ai_autoreply_disabled: true,
@@ -511,7 +561,7 @@ describe('dispatchInboundToAiReply — AI unavailable (no credit / rejected key 
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalledTimes(1)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
     expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
     expect(h.state.updatePayload?.ai_handoff_summary).toBe('🤖 El asistente derivó la conversación a un asesor.')
@@ -543,7 +593,7 @@ describe('dispatchInboundToAiReply — AI unavailable (no credit / rejected key 
     expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
@@ -553,7 +603,7 @@ describe('dispatchInboundToAiReply — AI unavailable (no credit / rejected key 
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 })
@@ -573,7 +623,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -586,7 +636,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -599,7 +649,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -639,7 +689,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -653,7 +703,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -669,7 +719,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -685,7 +735,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.state.transcriptUpdate).toBeNull()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -701,7 +751,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -718,7 +768,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     await dispatchInboundToAiReply(AUDIO_ARGS)
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 })
@@ -743,7 +793,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -769,7 +819,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -780,7 +830,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     await dispatchInboundToAiReply(IMAGE_ARGS)
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 })
@@ -851,7 +901,7 @@ describe('dispatchInboundToAiReply — document send (Opción B)', () => {
       expect.objectContaining({ kind: 'document', link: 'https://storage.example/catalogo.pdf' }),
     )
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 
@@ -920,10 +970,57 @@ describe('dispatchInboundToAiReply — debounce', () => {
     expect(h.state.debounceUpdates.at(-1)).toEqual({ ai_debounce_until: null })
   })
 
-  it('a non-text inbound never claims a debounce window', async () => {
+  it('a non-text inbound joins the burst too — a follower photo sends nothing itself', async () => {
+    h.state.debounceClaim = { is_owner: false, wait_until: new Date(Date.now() + 6000).toISOString() }
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false, isImageMessage: true })
+    expect(h.state.rpcCalls.map((c) => c.name)).toEqual(['claim_ai_debounce_window'])
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('a media owner whose burst also carries text answers it as text, not with the file notice', async () => {
+    const now = new Date().toISOString()
+    h.state.burstRows = [
+      { sender_type: 'customer', content_type: 'text', content_text: '¿cuánto cuesta esto?', created_at: now },
+      { sender_type: 'customer', content_type: 'document', content_text: null, created_at: now },
+      { sender_type: 'bot', content_type: 'text', content_text: 'Hola', created_at: now },
+    ]
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
-    expect(h.state.rpcCalls.some((c) => c.name === 'claim_ai_debounce_window')).toBe(false)
-    expect(h.state.debounceUpdates).toHaveLength(0)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('sends the file notice once per batch — not again when it was the last thing sent', async () => {
+    h.state.lastBusinessRows = [
+      {
+        content_text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        created_at: new Date().toISOString(),
+      },
+    ]
+    await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('answers again when a message arrived while the reply was being written, instead of dropping it', async () => {
+    // Recheck after the first answer: the window grew past the processing
+    // lock (a follower landed meanwhile); after the second answer it's clear.
+    h.state.debounceRecheckQueue = []
+    let reads = 0
+    h.generateReply.mockImplementation(async () => {
+      reads += 1
+      if (reads === 1) {
+        h.state.debounceRecheckQueue.push(new Date(Date.now() + 60_000).toISOString(), null)
+      }
+      return { text: 'Hello!', handoff: false }
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const p = dispatchInboundToAiReply(ARGS)
+      await vi.advanceTimersByTimeAsync(20_000)
+      await p
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(h.generateReply).toHaveBeenCalledTimes(2)
   })
 
   it('respects the hard wait cap instead of waiting forever on repeated extensions', async () => {
@@ -1009,7 +1106,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await runAutoReplyNow(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 
@@ -1018,7 +1115,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     await runAutoReplyNow({ ...ARGS, isTextMessage: false })
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?',
+        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
       }),
     )
   })
@@ -1033,7 +1130,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     h.state.claim = false
     await runAutoReplyNow(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('ya le paso tu caso a un asesor') }),
+      expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
   })
 })
@@ -1054,5 +1151,76 @@ describe('handoffClosingText', () => {
 
   it('on Saturday afternoon points to Monday', () => {
     expect(handoffClosingText(new Date('2024-01-06T20:00:00Z'))).toMatch(/el lunes a las 8:00 am\.$/)
+  })
+})
+
+describe('handoffClosingText — variants and complaints', () => {
+  it('every variant still names the advisor; the complaint wording apologizes without an emoji', () => {
+    const at = new Date('2024-01-02T15:00:00Z')
+    for (let v = 0; v < 6; v++) {
+      expect(handoffClosingText(at, { variant: v })).toMatch(/asesor del equipo/)
+      const complaint = handoffClosingText(at, { complaint: true, variant: v })
+      expect(complaint).toMatch(/Lamento|lo siento/)
+      expect(complaint).not.toMatch(/\p{Extended_Pictographic}/u)
+    }
+  })
+})
+
+describe('runAutoReplyNow — handoff closing once, complaints, documents, prompt facts', () => {
+  it('a thread already handed off (bot re-opened, nobody claimed it) is not told again that an advisor is coming', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: true, ai_reply_count: 1 }
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  it('a complaint gets the apologetic closing line, without an emoji', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Pésimo servicio, el pedido llegó roto' },
+    ])
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    const sent = h.engineSendText.mock.calls[0][0].text as string
+    expect(sent).toMatch(/Lamento|lo siento/)
+    expect(sent).not.toMatch(/\p{Extended_Pictographic}/u)
+  })
+
+  it('a turn that only sends a document is not a handoff', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({
+        documents: [
+          {
+            key: 'catalogo',
+            label: 'Catálogo',
+            media_type: 'document',
+            media_url: 'https://storage.example/catalogo.pdf',
+          },
+        ],
+      }),
+    )
+    h.generateReply.mockResolvedValue({ text: '', handoff: false, sendDocument: 'catalogo' })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendMedia).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toBeNull()
+  })
+
+  it('passes the contact name and the current Peru date/time to the prompt', async () => {
+    h.state.contactName = 'María Pérez'
+    await runAutoReplyNow(ARGS)
+    const systemPrompt = h.generateReply.mock.calls[0][0].systemPrompt as string
+    expect(systemPrompt).toContain('María Pérez')
+    expect(systemPrompt).toContain('Current date and time in Peru:')
+  })
+
+  it('queries the knowledge base with the last customer messages, not only the last one', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Necesito una mesa de trabajo' },
+      { role: 'assistant', content: '¿De qué medida?' },
+      { role: 'user', content: '¿y en acero?' },
+    ])
+    await runAutoReplyNow(ARGS)
+    expect(h.retrieveKnowledge.mock.calls[0][3]).toBe('Necesito una mesa de trabajo\n¿y en acero?')
   })
 })
