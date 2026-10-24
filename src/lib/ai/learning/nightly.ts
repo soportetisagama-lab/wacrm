@@ -307,7 +307,7 @@ async function stepLearnAndExam(ctx: NightContext, runId: string): Promise<numbe
   if (decision.rollback) {
     // What the previous run applied, plus hand approvals made after it.
     const n = previousRun
-      ? await rollbackLearnedRun(db, accountId, previousRun.jobRunId ?? '', new Date(previousRun.createdAt))
+      ? await rollbackLearnedRun(db, accountId, previousRun.jobRunId ?? null, new Date(previousRun.createdAt))
       : 0
     // Fresh score of the rolled-back bot, so tomorrow compares to it.
     const again = n > 0 ? await runExam(deps, cases, [{ ...base, rules: await loadLearnedRules(db, accountId, { fresh: true }) }]) : null
