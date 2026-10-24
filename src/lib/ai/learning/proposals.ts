@@ -177,11 +177,60 @@ export async function collectAdvisorProposals(
   }
   if (clean.length === 0) return { proposals: [], stats }
 
-  const texts = clean.map((p) => redactSensitive(p.customerText))
+  // Questions the bot already learned (active advisor examples): a group
+  // that matches one is a duplicate and never reaches the judge again.
+  const learnedQuestions = await activeExampleQuestions(db, accountId)
+  const texts = [...clean.map((p) => redactSensitive(p.customerText)), ...learnedQuestions]
   const { sim, semantic } = await similarityFor(ctx.config, texts)
-  const groups = greedyGroups(clean.length, sim, groupThreshold(semantic))
-    .map((idx) => idx.map((i) => clean[i]))
-    .map((members) => ({ members, support: new Set(members.map((m) => m.replierId ?? m.messageId)).size }))
+  const threshold = groupThreshold(semantic)
+  const allGroups = groupAgainstLearned(clean.length, learnedQuestions.length, sim, threshold).map((g) => ({
+    ...g,
+    members: g.members.map((i) => clean[i]),
+  }))
+
+  const now = new Date().toISOString()
+  const markDuplicates = async (members: ReplyPair[], reason: string): Promise<void> => {
+    for (const m of members) {
+      const prevRow = existing.get(m.messageId)
+      const dup = {
+        verdict: 'rejected',
+        rejected_by: 'duplicate',
+        reason,
+        decided_at: now,
+      }
+      if (prevRow) {
+        await db.from('ai_learning_candidates').update(dup).eq('id', prevRow.id)
+      } else {
+        await db.from('ai_learning_candidates').insert({
+          account_id: accountId,
+          job_run_id: ctx.runId,
+          conversation_id: m.conversationId,
+          message_id: m.messageId,
+          source: 'advisor',
+          customer_text: redactSensitive(m.customerText),
+          reply_text: redactSensitive(m.replyText),
+          ...dup,
+        })
+      }
+    }
+  }
+
+  const alreadyLearned = allGroups.filter((g) => g.learned)
+  for (const g of alreadyLearned) await markDuplicates(g.members, 'Ya aprendido')
+  if (alreadyLearned.length > 0) {
+    stats.discarded.push({ text: `${alreadyLearned.length} pregunta(s) ya aprendida(s)`, reason: 'Duplicado' })
+  }
+
+  const groups = allGroups
+    .filter((g) => !g.learned)
+    .map(({ members }) => {
+      const rep = members.find((m) => existing.get(m.messageId)?.verdict === 'pending') ?? members[0]
+      const computed = new Set(members.map((m) => m.replierId ?? m.messageId)).size
+      // Members are recorded as duplicates, so they don't come back next
+      // night: keep the support already earned by the representative.
+      const support = Math.max(computed, supportOf(existing.get(rep.messageId)?.reason))
+      return { members, rep, support }
+    })
     .sort((a, b) => b.support - a.support || b.members.length - a.members.length)
     .slice(0, MAX_GROUPS_JUDGED)
   stats.groups = groups.length
@@ -227,7 +276,7 @@ export async function collectAdvisorProposals(
       const answer = (v.answer ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)
       const reason = (v.reason ?? '').slice(0, 200)
       // Representative: the member that already has a pending row, else the first.
-      const rep = group.members.find((m) => existing.get(m.messageId)?.verdict === 'pending') ?? group.members[0]
+      const rep = group.rep
       const prev = existing.get(rep.messageId)
       const safe = question.length >= 5 && answer.length >= 10 && isStorable(question) && isStorable(answer)
       const passJudge = v.generalizable === true && score >= JUDGE_PASS
@@ -252,6 +301,12 @@ export async function collectAdvisorProposals(
         ? await db.from('ai_learning_candidates').update(row).eq('id', prev.id).select('id').maybeSingle()
         : await db.from('ai_learning_candidates').insert(row).select('id').maybeSingle()
       if (error || !saved) continue
+      // Every other member of the group is the same question: recorded as
+      // a duplicate so it is never judged (or counted) again.
+      await markDuplicates(
+        group.members.filter((m) => m !== rep),
+        'Igual a otra propuesta',
+      )
       if (verdict === 'rejected') {
         stats.rejected += 1
         stats.discarded.push({
@@ -274,6 +329,47 @@ export async function collectAdvisorProposals(
     }
   }
   return { proposals, stats }
+}
+
+/**
+ * Pure: group the first `n` texts; a group whose members are similar to
+ * any of the `learned` texts that follow them (indices n..n+learned-1)
+ * is flagged `learned` (already an active example).
+ */
+export function groupAgainstLearned(
+  n: number,
+  learned: number,
+  sim: (i: number, j: number) => number,
+  threshold: number,
+): { members: number[]; learned: boolean }[] {
+  return greedyGroups(n, sim, threshold).map((members) => ({
+    members,
+    learned: members.some((i) => Array.from({ length: learned }, (_, k) => n + k).some((j) => sim(i, j) >= threshold)),
+  }))
+}
+
+/** Generalized questions of the active advisor examples. */
+async function activeExampleQuestions(db: SupabaseClient, accountId: string): Promise<string[]> {
+  const { data: docs } = await db
+    .from('ai_knowledge_documents')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('source', 'advisor_learning')
+    .eq('status', 'active')
+    .limit(400)
+  const ids = (docs ?? []).map((d) => d.id as string)
+  if (ids.length === 0) return []
+  const out: string[] = []
+  for (let k = 0; k < ids.length; k += 150) {
+    const { data } = await db
+      .from('ai_learning_candidates')
+      .select('customer_text')
+      .eq('account_id', accountId)
+      .eq('verdict', 'accepted')
+      .in('knowledge_document_id', ids.slice(k, k + 150))
+    for (const r of data ?? []) if (typeof r.customer_text === 'string' && r.customer_text) out.push(r.customer_text)
+  }
+  return out
 }
 
 // --- Rules from self-review --------------------------------------

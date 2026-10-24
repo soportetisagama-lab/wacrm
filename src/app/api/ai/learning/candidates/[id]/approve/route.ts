@@ -3,7 +3,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { loadAiConfig } from '@/lib/ai/config'
-import { applyProposal, enforceCap, exampleContent, type Proposal } from '@/lib/ai/learning/apply'
+import { applyProposal, enforceCap, exampleContent, isApplicable, type Proposal } from '@/lib/ai/learning/apply'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -12,6 +12,7 @@ type Params = { params: Promise<{ id: string }> }
  * "Aprobar ya": activates a pending proposal now instead of waiting for
  * the night. The guards still run (applyProposal re-checks prices and
  * personal data), and the next night's exam can still roll it back.
+ * Idempotent: a double click never creates two documents.
  */
 export async function POST(_request: Request, { params }: Params) {
   try {
@@ -35,7 +36,19 @@ export async function POST(_request: Request, { params }: Params) {
       console.error('[ai/learning/approve] error:', error.message)
       return NextResponse.json({ error: 'Failed to load proposal' }, { status: 500 })
     }
-    if (!c?.improved_text) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!c?.improved_text) {
+      // Idempotent: a second click after it was applied is a success.
+      const { data: done } = await db
+        .from('ai_learning_candidates')
+        .select('id')
+        .eq('id', id)
+        .eq('account_id', accountId)
+        .eq('verdict', 'accepted')
+        .maybeSingle()
+      return done
+        ? NextResponse.json({ ok: true, already: true })
+        : NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
 
     const isRule = c.source === 'self_review'
     const text = String(c.improved_text)
@@ -50,10 +63,23 @@ export async function POST(_request: Request, { params }: Params) {
       support: 0,
       ready: true,
     }
+    if (!isApplicable(proposal)) {
+      return NextResponse.json({ error: 'Blocked by the price / personal data filter' }, { status: 422 })
+    }
     const config = await loadAiConfig(db, accountId, { requireActive: false }).catch(() => null)
     const docId = await applyProposal(db, accountId, { embeddingsApiKey: config?.embeddingsApiKey ?? null }, proposal, null)
+    // applyProposal claims the candidate atomically (pending → accepted):
+    // when a parallel click won the claim, this one creates nothing.
     if (!docId) {
-      return NextResponse.json({ error: 'Blocked by the price / personal data filter' }, { status: 422 })
+      const { data: now } = await db
+        .from('ai_learning_candidates')
+        .select('verdict')
+        .eq('id', id)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      return now?.verdict === 'accepted'
+        ? NextResponse.json({ ok: true, already: true })
+        : NextResponse.json({ error: 'Failed to apply' }, { status: 500 })
     }
     await enforceCap(db, accountId, isRule ? 'self_review' : 'advisor_learning')
     return NextResponse.json({ ok: true, id: docId })
