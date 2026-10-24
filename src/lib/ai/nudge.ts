@@ -19,7 +19,7 @@ const MAX_NUDGE_CHARS = 160
 
 /** Commercial promises the bot must never make on its own. */
 const FORBIDDEN_NUDGE_RE =
-  /descuento|dscto|oferta|promo|rebaja|liquidaci[oó]n|gratis|regal|cup[oó]n|precio|s\/\s*\d|\d+\s*%|s[oó]lo por hoy|[uú]ltim[oa]s? (?:unidades|d[ií]as|horas)|quedan pocos|stock limitado|sigues ah[ií]/i
+  /descuento|dscto|oferta|promo|rebaja|liquidaci[oó]n|gratis|regal|cup[oó]n|precio|s\/\s*\d|\d+\s*%|s[oó]lo por hoy|[uú]ltim[oa]s? (?:unidades|d[ií]as|horas)|quedan pocos|stock limitado|sigues ah[ií]|ya te (?:compart|envi|mand|pas)|como te (?:coment|dije|mencion)/i
 
 export function isSafeNudge(text: string): boolean {
   const t = text.trim()
@@ -35,6 +35,7 @@ export function buildNudgePrompt(businessContext: string | null): string {
       'Never mention a product this business does not sell (see the business reference below), and never one the customer did not mention. Vary the wording; do not copy the patterns literally.',
     'Strictly forbidden: prices, discounts, offers, promotions, free items, gifts, coupons, deadlines, "only today", "last units", stock scarcity or any other commercial promise; and the phrases "¿Sigues ahí?" or "Quedé esperando tu respuesta". ' +
       'At most one emoji. No greeting, no signature. Output only the message text.',
+    'Never claim that you (or the business) already sent, shared, attached or explained any information ("ya te compartí", "ya te envié", "como te comenté"): you only know what is in the conversation, and the customer may never have received it.',
     NEUTRAL_SPANISH_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
   ]

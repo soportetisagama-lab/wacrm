@@ -158,6 +158,8 @@ export function buildExtractionPrompt(args: {
   parts.push(
     'In `extracted`, return ONLY new or updated values you are confident about from the latest customer message and the conversation so far — leave a field null if the customer has not actually provided it; never guess. ' +
       '`reply_text` is the next message to send, verbatim, to the customer — never put your reasoning, analysis or notes in it: reply in the same language the customer is writing in, keep it concise and friendly (suitable for WhatsApp), and ask only about the still-missing required fields — one field per message (two only if they naturally go together, like name and company), never the whole list at once — and do not repeat what you already have. ' +
+      'If the customer answers something other than what you asked (e.g. you asked what kind of space and they replied "160 metros"), store what they DID give in the field it belongs to (here, the size/measurements field) and, in `reply_text`, briefly acknowledge it and ask again for what is still missing with DIFFERENT words plus two or three concrete examples (e.g. "¿Es para un restaurante, una cafetería, una tienda u otro tipo de negocio?"). ' +
+      'Never repeat your previous question verbatim — check your last message in the conversation and always rephrase. ' +
       'Set `done: true` only once every required field has a real value; in that case `reply_text` should be a short closing confirmation, not another question. ' +
       "Set `handoff: true` if the customer explicitly asks for a human, seems upset, or the conversation has gone somewhere you cannot resolve by collecting these fields — prefer handing off over guessing or over-probing.",
   )

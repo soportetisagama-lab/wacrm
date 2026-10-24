@@ -49,6 +49,9 @@ import {
   shouldSendInactivityNudge,
   resolveTemplateButtonAction,
   findEntryFlow,
+  findEntryFlowWithContext,
+  normalizeQuestionText,
+  collectAiHandoffReasonText,
   dispatchInboundToFlows,
   startFlowRunAtNode,
 } from "./engine";
@@ -686,22 +689,32 @@ describe("findEntryFlow — first-inbound context classification", () => {
     expect(flow?.id).toBe("flow-keyword");
   });
 
-  it("skips first_inbound_message entirely (no other flow to fall back to) when the classifier finds context", async () => {
+  it("still returns the welcome flow (welcome first, then the assistant answers) when the classifier finds context and no keyword flow matches", async () => {
     vi.mocked(classifyFirstInboundContext).mockResolvedValue({
       hasContext: true,
       reason: "mentions a specific product",
     });
     const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
-    const flow = await findEntryFlow(
+    const result = await findEntryFlowWithContext(
       db,
       "acct-1",
       "conv-1",
       textMessage("Necesito cotizar una cocina industrial"),
       true,
     );
-    // No flow matches — dispatchInboundToFlows reports no_match and the
-    // webhook falls through to the general assistant.
-    expect(flow).toBeNull();
+    expect(result.flow?.id).toBe("flow-faq");
+    expect(result.answerWithAi).toBe(true);
+  });
+
+  it("returns the welcome flow without an assistant answer for a plain greeting", async () => {
+    vi.mocked(classifyFirstInboundContext).mockResolvedValue({
+      hasContext: false,
+      reason: "generic greeting",
+    });
+    const db = makeFlowsFakeDb([FAQ_BOT_FLOW]);
+    const result = await findEntryFlowWithContext(db, "acct-1", "conv-1", textMessage("Hola, buenas"), true);
+    expect(result.flow?.id).toBe("flow-faq");
+    expect(result.answerWithAi).toBe(false);
   });
 
   it("matches first_inbound_message normally when the classifier finds no context", async () => {
@@ -1906,7 +1919,12 @@ describe("handleCollectAiReply", () => {
 
     await handleCollectAiReply(db, run, node, new Map());
 
-    expect(run.vars).toEqual({ ciudad: "Trujillo", equipos: "2 cocinas" });
+    expect(run.vars).toEqual({
+      ciudad: "Trujillo",
+      equipos: "2 cocinas",
+      // last question sent, for the anti-repeat guard
+      __collect_ai_ultima_pregunta: expect.objectContaining({ node: "collect" }),
+    });
     // The prompt must have been told ciudad is already known so it
     // doesn't ask about it again.
     expect(mockExtract.mock.calls[0][0]).toMatchObject({ knownValues: { ciudad: "Trujillo" } });
@@ -1959,7 +1977,14 @@ describe("handleCollectAiReply", () => {
 
     expect(outcome).toEqual({ outcome: "handed_off" });
     expect(run.ai_turn_count).toBe(6);
-    expect(run.vars).toEqual({ equipos: "2 cocinas" }); // partial vars preserved
+    expect(run.vars).toEqual({
+      equipos: "2 cocinas", // partial vars preserved
+      // the real reason, for the handoff node's advisor note
+      __collect_ai_motivo_derivacion: {
+        target: "human",
+        text: "El bot no pudo completar los datos (ciudad).",
+      },
+    });
     expect(
       inserts.some(
         (i) => i.table === "flow_run_events" && i.payload.event_type === "handoff",
@@ -3825,6 +3850,30 @@ describe("startFlowRunAtNode — welcome restarted once a BSUID contact's phone 
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
       expect.objectContaining({ bodyText: "Sigue explorando nuestro menú interactivo 👇" }),
+    );
+  });
+});
+
+describe("collect_ai anti-repeat and handoff reason helpers", () => {
+  it("normalizeQuestionText ignores case, accents, punctuation and emoji", () => {
+    expect(normalizeQuestionText("¿Qué tipo de espacio vas a equipar? 🙂")).toBe(
+      normalizeQuestionText("que tipo de espacio vas a equipar"),
+    );
+    expect(normalizeQuestionText("¿Qué medidas tiene?")).not.toBe(
+      normalizeQuestionText("¿Qué tipo de espacio vas a equipar?"),
+    );
+  });
+
+  it("collectAiHandoffReasonText names the missing fields in neutral Spanish", () => {
+    const fields = [
+      { key: "espacio", label: "Tipo de espacio", required: true },
+      { key: "medidas", label: "Medidas", required: true },
+    ];
+    expect(collectAiHandoffReasonText("max_turns_exhausted", fields, { medidas: "160 m2" })).toBe(
+      "El bot no pudo completar los datos (tipo de espacio).",
+    );
+    expect(collectAiHandoffReasonText("repeated_question", fields, {})).toBe(
+      "El cliente no respondió lo que el bot le preguntaba (tipo de espacio, medidas).",
     );
   });
 });

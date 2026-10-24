@@ -147,7 +147,7 @@ export function buildSystemPrompt(args: {
         `You can send these documents to the customer on request:\n${documents
           .map((d) => `- ${d.key}: ${d.label}`)
           .join('\n')}\n` +
-          'When the customer explicitly asks for one of these, include the exact marker [[SEND_DOCUMENT:<key>]] anywhere in your reply (e.g. "¡Acá tienes! [[SEND_DOCUMENT:catalogo]]") — it will be stripped and the file sent automatically; never paste a link, mention a URL, or say you are attaching something yourself.',
+          'When the customer explicitly asks for one of these, include the exact marker [[SEND_DOCUMENT:<key>]] anywhere in your reply (e.g. "¡Aquí tienes! [[SEND_DOCUMENT:catalogo]]") — it will be stripped and the file sent automatically; never paste a link, mention a URL, or say you are attaching something yourself.',
       )
     }
   }
