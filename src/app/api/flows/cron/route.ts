@@ -20,6 +20,7 @@ import { remindPendingReplies } from '@/lib/notifications/pending-replies'
 import { internalCronState, isAuthorizedCronSecret } from '@/lib/cron/internal'
 import { runXlr8SyncIfDue } from '@/lib/xlr8/sync'
 import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/memory'
+import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
 const XLR8_SYNC_EVERY_MS = 5 * 60_000
@@ -116,6 +117,10 @@ async function runFlowsCron(): Promise<Response> {
   // Per-customer AI memory (lib/ai/learning/memory.ts): every 10 min,
   // fire-and-forget like the xlr8 sync. Never throws.
   void runMemorySweepIfDue(admin, MEMORY_SWEEP_EVERY_MS)
+
+  // Nightly learning (self-review, exam, learning from advisors, daily
+  // report) at 03:00 Lima, once per day; cheap no-op otherwise.
+  void runNightlyLearningIfDue(admin, now)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
