@@ -13,7 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ChannelIcon } from '@/components/channels/channel-badge';
-import type { SocialChannel } from '@/lib/channels/types';
+import { CHANNEL_LABEL, type SocialChannel } from '@/lib/channels/types';
 import { SettingsPanelHead } from './settings-panel-head';
 
 interface ChannelView {
@@ -190,7 +190,7 @@ export function SocialConfig() {
                   <ChannelIcon channel={c.channel} size={28} />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
-                      {c.channel === 'instagram' ? 'Instagram' : 'Messenger'} ·{' '}
+                      {CHANNEL_LABEL[c.channel]} ·{' '}
                       {c.username ? `@${c.username}` : (c.display_name ?? c.external_id)}
                     </p>
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">

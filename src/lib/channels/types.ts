@@ -35,7 +35,7 @@ export function channelOf(row: { channel?: string | null } | null | undefined): 
 export const CHANNEL_LABEL: Record<Channel, string> = {
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
-  messenger: 'Messenger',
+  messenger: 'Facebook',
   tiktok: 'TikTok',
 }
 
