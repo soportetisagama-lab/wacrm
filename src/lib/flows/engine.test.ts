@@ -18,6 +18,13 @@ vi.mock("./meta-send", () => ({
   engineSendMedia: vi.fn(),
 }));
 
+// Only the hand-off of a pending burst to the general assistant is
+// replaced (asserted directly); handoffClosingText & co. stay real.
+vi.mock("@/lib/ai/auto-reply", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/auto-reply")>()),
+  runAutoReplyForPendingBurst: vi.fn(),
+}));
+
 // Only dispatchInboundToFlows (and startFlowRunAtNode, untested today)
 // call supabaseAdmin() internally rather than taking `db` as a
 // parameter — every other exported function under test gets its fake
@@ -27,6 +34,7 @@ vi.mock("./admin-client", () => ({
   supabaseAdmin: () => adminDbHolder.current,
 }));
 
+import { runAutoReplyForPendingBurst } from "@/lib/ai/auto-reply";
 import {
   matchReplyId,
   matchesKeywordTrigger,
@@ -2625,7 +2633,7 @@ describe("handleCollectAiNonTextReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2689,7 +2697,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2707,7 +2715,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2724,7 +2732,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockTranscribe).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2771,7 +2779,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(outcome).toEqual({ outcome: "advanced" });
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2788,7 +2796,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -2825,7 +2833,7 @@ describe("handleCollectAiBlankReply", () => {
     expect(mockExtract).not.toHaveBeenCalled();
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?",
+        text: "Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?",
         aiGenerated: false,
       }),
     );
@@ -4035,6 +4043,163 @@ describe("photos on a menu and debounced collect_ai", () => {
 
     expect(result).toEqual({ consumed: true, flow_run_id: run.id, outcome: "debounced" });
     expect(mockExtract).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Owner of a collect_ai burst whose first turn is answered while
+   * another message lands: the window outgrows the processing lock, so
+   * the owner reruns. By then its own reply is the newest message.
+   * `follower` is what the customer sent during the reply (null = none);
+   * `activeRun` is what the rerun finds (the run may have moved on).
+   */
+  async function collectAiBurstWithRerun(opts: {
+    follower: string | null;
+    activeRun: (run: FlowRunRow) => FlowRunRow | null;
+  }) {
+    const { db } = makeFakeDb();
+    const base = db as unknown as { from: (t: string) => unknown };
+    const run = makeRun({ current_node_key: "collect" });
+    const windowQueue: (string | null)[] = [null];
+    let rows: Record<string, unknown>[] = [
+      { sender_type: "customer", content_type: "text", content_text: "quiero una mesa", created_at: new Date(Date.now() - 4000).toISOString() },
+    ];
+    mockExtract.mockImplementation(async () => {
+      if (mockExtract.mock.calls.length === 1) {
+        const added: Record<string, unknown>[] = [
+          { sender_type: "bot", content_type: "text", content_text: "¿Para qué medida?", created_at: new Date(Date.now() + 1).toISOString() },
+        ];
+        if (opts.follower) {
+          added.push({ sender_type: "customer", content_type: "text", content_text: opts.follower, created_at: new Date().toISOString() });
+        }
+        rows = [...added, ...rows];
+        windowQueue.push(new Date(Date.now() + 60_000).toISOString(), null);
+      }
+      return extractResult({ replyText: mockExtract.mock.calls.length === 1 ? "¿Para qué medida?" : "Anotado, en acero." }) as never;
+    });
+    const fake = {
+      rpc: () =>
+        Promise.resolve({
+          data: [{ is_owner: true, wait_until: new Date(Date.now() - 1000).toISOString() }],
+          error: null,
+        }),
+      from: (table: string) => {
+        if (table === "conversations") {
+          return {
+            select: (cols?: string) => {
+              if (cols === "ai_debounce_until") {
+                return {
+                  eq: () => ({
+                    maybeSingle: () => {
+                      const next = windowQueue.shift() ?? null;
+                      return Promise.resolve({ data: next ? { ai_debounce_until: next } : null, error: null });
+                    },
+                  }),
+                };
+              }
+              return (base.from(table) as { select: (c?: string) => unknown }).select(cols);
+            },
+            update: (payload: Record<string, unknown>) => {
+              if ("ai_debounce_until" in payload) {
+                const done = Promise.resolve({ error: null });
+                return { eq: () => Object.assign(done, { lte: () => done }) };
+              }
+              return (base.from(table) as { update: (p: unknown) => unknown }).update(payload);
+            },
+          };
+        }
+        if (table === "messages") {
+          return {
+            select: (cols?: string) => {
+              const burstRead = Boolean(cols?.startsWith("sender_type, content_type"));
+              const chain = {
+                eq: () => chain,
+                neq: () => chain,
+                order: () => chain,
+                limit: () => Promise.resolve({ data: burstRead ? rows : [], error: null }),
+              };
+              return chain;
+            },
+          };
+        }
+        if (table === "flow_runs") {
+          const real = base.from(table) as Record<string, (...a: unknown[]) => unknown>;
+          return {
+            ...real,
+            select: (cols?: string) => {
+              if (cols !== "*") return real.select(cols);
+              const chain = {
+                eq: () => chain,
+                order: () => chain,
+                limit: () => {
+                  const r = opts.activeRun(run);
+                  return Promise.resolve({ data: r ? [r] : [], error: null });
+                },
+              };
+              return chain;
+            },
+          };
+        }
+        return base.from(table);
+      },
+    } as never;
+
+    const node = makeNode({ node_key: "collect", node_type: "collect_ai", config: collectAiConfig() });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const p = handleReplyForActiveRun(
+        fake,
+        run,
+        { kind: "text", text: "quiero una mesa", meta_message_id: "wamid.burst-1" },
+        new Map([["collect", node]]),
+      );
+      await vi.advanceTimersByTimeAsync(20_000);
+      return { result: await p, run };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  const sentTexts = () => mockSendText.mock.calls.map((c) => (c[0] as { text: string }).text);
+
+  it("a text that lands while collect_ai answers gets its own extraction on the rerun — never the file notice", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    const { result } = await collectAiBurstWithRerun({
+      follower: "y también en acero",
+      activeRun: (run) => run, // still waiting on the same collect_ai node
+    });
+
+    expect(result.consumed).toBe(true);
+    expect(mockExtract).toHaveBeenCalledTimes(2);
+    expect(sentTexts()).toEqual(["¿Para qué medida?", "Anotado, en acero."]);
+    expect(runAutoReplyForPendingBurst).not.toHaveBeenCalled();
+  });
+
+  it("a rerun with nothing new since the previous turn does nothing (no double reply, no notice)", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    await collectAiBurstWithRerun({ follower: null, activeRun: (run) => run });
+
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(sentTexts()).toEqual(["¿Para qué medida?"]);
+  });
+
+  it("when the run left collect_ai during the burst, the pending message goes to the general assistant", async () => {
+    mockLoadAiConfig.mockResolvedValue(aiConfig());
+    const before = Date.now();
+    await collectAiBurstWithRerun({
+      follower: "y también en acero",
+      activeRun: () => null, // the run completed / handed off meanwhile
+    });
+
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(runAutoReplyForPendingBurst).toHaveBeenCalledTimes(1);
+    const [args, since] = vi.mocked(runAutoReplyForPendingBurst).mock.calls[0];
+    expect(args).toEqual({
+      accountId: "acct-1",
+      conversationId: "conv-1",
+      contactId: "contact-1",
+      configOwnerUserId: "user-1",
+    });
+    expect(since).toBeGreaterThanOrEqual(before);
   });
 
   it("the owner of a collect_ai burst runs a single extraction", async () => {

@@ -114,6 +114,19 @@ async function setProcessingLock(db: SupabaseClient, conversationId: string): Pr
   return lockUntil
 }
 
+/** What `runDebounced` tells `process` about the turn it is running. */
+export interface DebounceTurn {
+  /**
+   * null on the first turn of the burst. On a rerun (a message arrived
+   * while the previous turn was answering), the epoch ms at which that
+   * previous turn started: only customer messages created from then on
+   * are still unanswered. The previous turn's own reply is usually the
+   * newest message by now, so "since the business last wrote" would
+   * find nothing — pass this to `summarizePendingBurst` instead.
+   */
+  rerunSince: number | null
+}
+
 /**
  * Run `process` once per burst. Returns 'follower' when another
  * delivery owns the burst (the caller must not answer), 'done' after
@@ -122,13 +135,13 @@ async function setProcessingLock(db: SupabaseClient, conversationId: string): Pr
 export async function runDebounced(
   db: SupabaseClient,
   conversationId: string,
-  process: () => Promise<void>,
+  process: (turn: DebounceTurn) => Promise<void>,
 ): Promise<'follower' | 'done'> {
   const claim = await claimDebounceWindow(db, conversationId)
   if (claim.role === 'follower') return 'follower'
   if (claim.role === 'unavailable') {
     try {
-      await process()
+      await process({ rerunSince: null })
     } catch (err) {
       console.error('[ai debounce] process failed:', err)
     }
@@ -138,9 +151,11 @@ export async function runDebounced(
   let lockUntil: string | null = null
   try {
     await waitForDebounceWindowToSettle(db, conversationId, claim.waitUntil)
+    let rerunSince: number | null = null
     for (let round = 0; ; round++) {
+      const turnStartedAt = Date.now()
       lockUntil = await setProcessingLock(db, conversationId)
-      await process()
+      await process({ rerunSince })
       // A message that arrived while we were answering extended the lock
       // (claim_ai_debounce_window adds its window on top of it): answer
       // it too instead of clearing the window and dropping it.
@@ -150,6 +165,7 @@ export async function runDebounced(
         lockUntil = null // leave it set — the cron sweep recovers it
         break
       }
+      rerunSince = turnStartedAt
       await waitForDebounceWindowToSettle(db, conversationId, new Date(current).toISOString())
     }
   } catch (err) {
@@ -175,23 +191,52 @@ export async function runDebounced(
 }
 
 export interface PendingBurst {
+  /** How many customer messages (of any kind) are still unanswered.
+   *  0 means there is nothing to answer — the caller must do nothing. */
+  count: number
   /** Typed text, a menu tap, a shared location or a transcribed voice note. */
   hasText: boolean
   /** A real photo (not a sticker). */
   hasImage: boolean
 }
 
+/**
+ * Which customer messages make up the burst:
+ * - default: those since the business last wrote (the first turn).
+ * - `since`: those created at/after this epoch ms, skipping business
+ *   messages in between — a rerun (see `DebounceTurn.rerunSince`).
+ * - `orphaned`: the cron sweep, which doesn't know when the last turn
+ *   started. Those since the business last wrote; if the business wrote
+ *   last (an owner answered, then gave up on a later message), those
+ *   that arrived during that reply — up to PROCESSING_LOCK_SECONDS
+ *   before it.
+ */
+export interface BurstScope {
+  since?: number
+  orphaned?: boolean
+}
+
 /** Only messages this recent count as part of the burst being answered. */
 const BURST_MAX_AGE_MS = 10 * 60_000
 
+interface BurstRow {
+  sender_type: string
+  content_type: string
+  content_text: string | null
+  transcript: string | null
+  is_sticker: boolean | null
+  created_at: string
+}
+
 /**
- * What the customer sent since the business last wrote — the burst the
- * owner is about to answer. Returns null on any read failure (callers
- * then fall back to what they know about their own message).
+ * What the customer sent that is still unanswered — the burst the owner
+ * is about to answer (see BurstScope). Returns null on any read failure
+ * (callers then fall back to what they know about their own message).
  */
 export async function summarizePendingBurst(
   db: SupabaseClient,
   conversationId: string,
+  scope: BurstScope = {},
 ): Promise<PendingBurst | null> {
   try {
     const { data, error } = await db
@@ -201,18 +246,25 @@ export async function summarizePendingBurst(
       .order('created_at', { ascending: false })
       .limit(15)
     if (error || !data) return null
-    const since = Date.now() - BURST_MAX_AGE_MS
-    const burst: PendingBurst = { hasText: false, hasImage: false }
-    for (const m of data as {
-      sender_type: string
-      content_type: string
-      content_text: string | null
-      transcript: string | null
-      is_sticker: boolean | null
-      created_at: string
-    }[]) {
-      if (m.sender_type !== 'customer') break
+    const rows = data as BurstRow[]
+    let since = Date.now() - BURST_MAX_AGE_MS
+    let acrossBusiness = false
+    if (scope.since !== undefined) {
+      since = Math.max(since, scope.since)
+      acrossBusiness = true
+    } else if (scope.orphaned && rows[0] && rows[0].sender_type !== 'customer') {
+      const lastReply = new Date(rows[0].created_at).getTime()
+      since = Math.max(since, lastReply - PROCESSING_LOCK_SECONDS * 1000)
+      acrossBusiness = true
+    }
+    const burst: PendingBurst = { count: 0, hasText: false, hasImage: false }
+    for (const m of rows) {
       if (new Date(m.created_at).getTime() < since) break
+      if (m.sender_type !== 'customer') {
+        if (acrossBusiness) continue
+        break
+      }
+      burst.count += 1
       if (
         (m.content_type === 'text' || m.content_type === 'interactive' || m.content_type === 'location') &&
         m.content_text?.trim()

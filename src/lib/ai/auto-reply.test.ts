@@ -181,7 +181,13 @@ vi.mock('./admin-client', () => ({
   }),
 }))
 
-import { dispatchInboundToAiReply, handoffClosingText, runAutoReplyNow } from './auto-reply'
+import {
+  dispatchInboundToAiReply,
+  handoffClosingText,
+  runAutoReplyForOrphanedWindow,
+  runAutoReplyForPendingBurst,
+  runAutoReplyNow,
+} from './auto-reply'
 
 const ARGS = {
   accountId: 'acct-1',
@@ -460,7 +466,7 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -623,7 +629,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -636,7 +642,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -649,7 +655,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -689,7 +695,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -703,7 +709,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -719,7 +725,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -735,7 +741,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.state.transcriptUpdate).toBeNull()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -751,7 +757,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -793,7 +799,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -819,7 +825,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
@@ -992,7 +998,7 @@ describe('dispatchInboundToAiReply — debounce', () => {
   it('sends the file notice once per batch — not again when it was the last thing sent', async () => {
     h.state.lastBusinessRows = [
       {
-        content_text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        content_text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
         created_at: new Date().toISOString(),
       },
     ]
@@ -1023,6 +1029,51 @@ describe('dispatchInboundToAiReply — debounce', () => {
     expect(h.generateReply).toHaveBeenCalledTimes(2)
   })
 
+  // The previous turn's own reply is the newest message by the time the
+  // rerun reads the burst: the text that arrived during it must still
+  // be answered as text — never with the file notice — and only once.
+  async function runWithFollowerDuringReply(followerText: string | null) {
+    h.state.debounceRecheckQueue = []
+    h.state.burstRows = [
+      { sender_type: 'customer', content_type: 'text', content_text: 'quiero una mesa', created_at: new Date(Date.now() - 4000).toISOString() },
+    ]
+    let calls = 0
+    h.generateReply.mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) {
+        const rows: Record<string, unknown>[] = []
+        if (followerText) {
+          rows.push({ sender_type: 'customer', content_type: 'text', content_text: followerText, created_at: new Date(Date.now()).toISOString() })
+        }
+        rows.unshift({ sender_type: 'bot', content_type: 'text', content_text: 'Hello!', created_at: new Date(Date.now() + 1).toISOString() })
+        h.state.burstRows = [...rows, ...(h.state.burstRows ?? [])]
+        h.state.debounceRecheckQueue.push(new Date(Date.now() + 60_000).toISOString(), null)
+      }
+      return { text: calls === 1 ? 'Hello!' : 'Sí, también en acero.', handoff: false }
+    })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const p = dispatchInboundToAiReply(ARGS)
+      await vi.advanceTimersByTimeAsync(20_000)
+      await p
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('a text that arrived during the reply is answered on the rerun as text, not with the file notice', async () => {
+    await runWithFollowerDuringReply('y también en acero')
+    expect(h.generateReply).toHaveBeenCalledTimes(2)
+    const sent = h.engineSendText.mock.calls.map((c) => (c[0] as { text: string }).text)
+    expect(sent).toEqual(['Hello!', 'Sí, también en acero.'])
+  })
+
+  it('a rerun with nothing new since the previous turn started answers nothing (no double reply)', async () => {
+    await runWithFollowerDuringReply(null)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+  })
+
   it('respects the hard wait cap instead of waiting forever on repeated extensions', async () => {
     vi.useFakeTimers()
     try {
@@ -1042,6 +1093,51 @@ describe('dispatchInboundToAiReply — debounce', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('runAutoReplyForPendingBurst / runAutoReplyForOrphanedWindow', () => {
+  const BASE = { accountId: 'acct-1', conversationId: 'conv-1', contactId: 'contact-1', configOwnerUserId: 'user-1' }
+
+  it('pending burst: answers what arrived since the given moment, as text', async () => {
+    const since = Date.now() - 3000
+    h.state.burstRows = [
+      { sender_type: 'bot', content_type: 'text', content_text: 'Listo, un asesor te contactará.', created_at: new Date().toISOString() },
+      { sender_type: 'customer', content_type: 'text', content_text: 'y en acero', created_at: new Date(Date.now() - 1000).toISOString() },
+    ]
+    await runAutoReplyForPendingBurst(BASE, since)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('pending burst: nothing since that moment → sends nothing', async () => {
+    h.state.burstRows = [
+      { sender_type: 'bot', content_type: 'text', content_text: 'Hola', created_at: new Date().toISOString() },
+      { sender_type: 'customer', content_type: 'text', content_text: 'hola', created_at: new Date(Date.now() - 9000).toISOString() },
+    ]
+    await runAutoReplyForPendingBurst(BASE, Date.now() - 3000)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('cron sweep: the bot replied last but a text arrived during that reply → answered as text, not the file notice', async () => {
+    h.state.burstRows = [
+      { sender_type: 'bot', content_type: 'text', content_text: 'Hola', created_at: new Date().toISOString() },
+      { sender_type: 'customer', content_type: 'text', content_text: 'y en acero', created_at: new Date(Date.now() - 2000).toISOString() },
+    ]
+    await runAutoReplyForOrphanedWindow(BASE)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('cron sweep: nothing pending → sends nothing', async () => {
+    h.state.burstRows = [
+      { sender_type: 'bot', content_type: 'text', content_text: 'Hola', created_at: new Date().toISOString() },
+      { sender_type: 'customer', content_type: 'text', content_text: 'hola', created_at: new Date(Date.now() - 120_000).toISOString() },
+    ]
+    await runAutoReplyForOrphanedWindow(BASE)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
   })
 })
 
@@ -1115,7 +1211,7 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     await runAutoReplyNow({ ...ARGS, isTextMessage: false })
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: 'Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?',
+        text: 'Recibí tu archivo. ¿Me cuentas en un mensaje qué necesitas?',
       }),
     )
   })
