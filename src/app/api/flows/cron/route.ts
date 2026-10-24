@@ -397,6 +397,7 @@ async function maybeSendInactivityNudge(
   }
 
   const defaultText = node.node_type === 'collect_ai' ? DEFAULT_NUDGE_TEXT : DEFAULT_MENU_NUDGE_TEXT
+  const fixedText = cfg.nudge_text?.trim() || defaultText
 
   try {
     await engineSendText({
@@ -404,12 +405,17 @@ async function maybeSendInactivityNudge(
       userId: run.user_id,
       conversationId: run.conversation_id,
       contactId: run.contact_id,
+      // Menus (send_buttons/send_list) always get the fixed text: a
+      // model-written line there once claimed it had "already shared"
+      // info the bot never sent. The AI nudge is for collect_ai only.
       text: withMenuHint(
-        await composeNudgeText(admin, {
-          accountId: run.account_id,
-          conversationId: run.conversation_id,
-          fallback: cfg.nudge_text?.trim() || defaultText,
-        }),
+        node.node_type === 'collect_ai'
+          ? await composeNudgeText(admin, {
+              accountId: run.account_id,
+              conversationId: run.conversation_id,
+              fallback: fixedText,
+            })
+          : fixedText,
         node.node_type,
       ),
     })

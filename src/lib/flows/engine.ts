@@ -415,7 +415,10 @@ export type CollectAiHandoffReason =
   | "provider_error"
   | "model_handoff"
   | "max_turns_exhausted"
-  | "empty_reply";
+  | "empty_reply"
+  /** The model kept asking the very same question (see
+   *  COLLECT_AI_LAST_QUESTION_VAR) — the customer isn't answering it. */
+  | "repeated_question";
 
 export type CollectAiOutcome =
   | { kind: "handoff"; reason: CollectAiHandoffReason; message?: string }
@@ -824,9 +827,28 @@ export async function findEntryFlow(
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
+  return (
+    await findEntryFlowWithContext(db, accountId, conversationId, message, isFirstInbound)
+  ).flow;
+}
+
+/** `findEntryFlow` plus whether the welcome flow it picked should be
+ *  followed by a general-assistant answer: the customer's opening
+ *  message already carried a concrete question (product, quote,
+ *  location, hours, shipping, payment), so the bot sends the configured
+ *  welcome (its menu stays active) and THEN answers that question —
+ *  see dispatchInboundToFlows / the webhook's `answer_with_ai`. */
+export async function findEntryFlowWithContext(
+  db: AdminClient,
+  accountId: string,
+  conversationId: string,
+  message: ParsedInbound,
+  isFirstInbound: boolean,
+): Promise<{ flow: FlowRow | null; answerWithAi: boolean }> {
+  const none = { flow: null, answerWithAi: false };
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
-  if (message.kind !== "text") return null;
+  if (message.kind !== "text") return none;
 
   // Checked first, before the normal per-trigger_type matching below —
   // see findReentryFlow's own doc comment. Only reached when there's no
@@ -835,7 +857,7 @@ export async function findEntryFlow(
   // mid collect_ai) is deliberately left alone; see the design note
   // this implements (Opción A).
   const reentryFlow = await findReentryFlow(db, accountId, message);
-  if (reentryFlow) return reentryFlow;
+  if (reentryFlow) return { flow: reentryFlow, answerWithAi: false };
 
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
@@ -846,7 +868,7 @@ export async function findEntryFlow(
     .eq("account_id", accountId)
     .eq("status", "active")
     .order("created_at", { ascending: true });
-  if (error || !flows) return null;
+  if (error || !flows) return none;
 
   const typed = flows as FlowRow[];
 
@@ -856,6 +878,10 @@ export async function findEntryFlow(
   let firstInboundContext: Awaited<
     ReturnType<typeof classifyFirstInboundContext>
   > | null = null;
+  // A first_inbound_message welcome whose message carried a question:
+  // kept aside (not returned yet) so a `keyword`-trigger flow later in
+  // this same loop still wins when it matches independently.
+  let welcomeWithQuestion: FlowRow | null = null;
 
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
@@ -863,16 +889,18 @@ export async function findEntryFlow(
         message.text,
         flow.trigger_config as KeywordTriggerConfig,
       )) {
-        return flow;
+        return { flow, answerWithAi: false };
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
-      // Menú condicional según contexto: a first-ever message that
-      // already states a real request ("Necesito cotizar una cocina
-      // para mi restaurante en Trujillo") should reach the general
-      // assistant directly instead of being swallowed by the welcome
-      // menu. classifyFirstInboundContext NEVER throws and fails open
-      // to `hasContext: false` (today's behavior — show the menu) on
-      // any error, timeout, or missing AI config.
+      if (welcomeWithQuestion) continue;
+      // Bienvenida primero, luego la respuesta: a first-ever message
+      // that already states a real request ("¿Dónde están ubicados?",
+      // "Necesito cotizar una cocina") still gets the configured
+      // welcome menu, and then the general assistant answers it.
+      // classifyFirstInboundContext NEVER throws and fails open to
+      // `hasContext: false` (welcome only) on any error, timeout, or
+      // missing AI config — its regex backstop still catches
+      // location/hours questions without the model.
       if (!firstInboundContext) {
         firstInboundContext = await classifyFirstInboundContext(
           db,
@@ -882,21 +910,17 @@ export async function findEntryFlow(
         );
       }
       if (firstInboundContext.hasContext) {
-        // Skip this flow — do NOT return it — so a `keyword`-trigger
-        // flow later in this same loop can still match independently.
-        // The customer's first message reaches dispatchInboundToAiReply
-        // via the "no_match" path back in dispatchInboundToFlows; its
-        // deterministic footer (auto-reply.ts) still offers "menú" as
-        // an escape hatch, which reentry_keywords (above) picks back up
-        // on any later message.
+        welcomeWithQuestion = flow;
         continue;
       }
-      return flow;
+      return { flow, answerWithAi: false };
     } else if (flow.trigger_type === "returning_message") {
+      if (welcomeWithQuestion) continue;
       // Superset of first_inbound_message: matches on ANY text
       // message, not just the contact's first ever. Lets a flow
       // restart (e.g. re-show its menu) after a prior run for this
-      // contact reached a terminal status.
+      // contact reached a terminal status. Same "welcome, then answer
+      // the question" rule as first_inbound_message above.
       //
       // EXCEPT a closing/farewell remark (RETURNING_MESSAGE_SKIP_KEYWORDS)
       // — without this, a customer whose prior run already ended
@@ -905,11 +929,9 @@ export async function findEntryFlow(
       // this branch used to return the flow unconditionally on ANY
       // text. Skipping lets it fall through to dispatchInboundToAiReply
       // instead, which replies briefly instead of re-showing a whole
-      // menu to someone who just said they're done. Keyword-only (not
-      // an AI classification call like classifyFirstInboundContext
-      // above) — deliberately cheap and synchronous; a returning
-      // message is common enough that a per-message model call here
-      // would add real latency/cost for a narrow case.
+      // menu to someone who just said they're done. Keyword-only and
+      // checked BEFORE classifyFirstInboundContext so a farewell never
+      // costs a model call.
       if (
         matchesKeywordTrigger(message.text, {
           keywords: RETURNING_MESSAGE_SKIP_KEYWORDS,
@@ -918,11 +940,20 @@ export async function findEntryFlow(
       ) {
         continue;
       }
-      return flow;
+      if (!firstInboundContext) {
+        firstInboundContext = await classifyFirstInboundContext(
+          db,
+          accountId,
+          conversationId,
+          message.text,
+        );
+      }
+      return { flow, answerWithAi: firstInboundContext.hasContext };
     }
     // 'manual' triggers do not auto-start from inbound messages.
   }
-  return null;
+  if (welcomeWithQuestion) return { flow: welcomeWithQuestion, answerWithAi: true };
+  return none;
 }
 
 // ============================================================
@@ -1505,6 +1536,12 @@ async function handOffFromCollectAi(
   });
 
   if (cfg.handoff_node_key) {
+    // Lets the handoff node's note say WHY (executeHandoff) instead of
+    // only its generic author-written text.
+    await setRunVar(db, run, COLLECT_AI_HANDOFF_REASON_VAR, {
+      target: cfg.handoff_node_key,
+      text: collectAiHandoffReasonText(reason, cfg.fields, run.vars),
+    });
     return advanceFromNodeKey(db, run, cfg.handoff_node_key, nodes, {
       suppressHandoffCustomerMessage: sentOutgoingMessage,
     });
@@ -1522,7 +1559,7 @@ async function handOffFromCollectAi(
       // admins only (notifyAdminsAiUnavailable), not the agent's note.
       reason === "provider_error"
         ? "🤖 El asistente derivó la conversación a un asesor."
-        : `🤖 El asistente derivó la conversación a un asesor (collect_ai: ${reason}).`,
+        : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`,
     );
   }
   await endRun(
@@ -1692,6 +1729,112 @@ export function noAiQuestion(field: ExtractionField): string {
   }
 }
 
+/** Last question a collect_ai node sent (normalized) and how many times
+ *  the model tried to send it again verbatim — run.vars only, no
+ *  migration. See guardRepeatedCollectAiQuestion. */
+export const COLLECT_AI_LAST_QUESTION_VAR = "__collect_ai_ultima_pregunta";
+/** The real reason a collect_ai exit was routed to its handoff node —
+ *  read by executeHandoff for the advisor's note. */
+export const COLLECT_AI_HANDOFF_REASON_VAR = "__collect_ai_motivo_derivacion";
+/** Verbatim repeats tolerated (each answered with a reworded question)
+ *  before handing off with `repeated_question`. */
+const MAX_REPEATED_QUESTIONS = 2;
+
+/** Lowercase, accent/punctuation/emoji-free, single-spaced — so "¿Qué
+ *  tipo de espacio vas a equipar? 🙂" equals "que tipo de espacio vas a
+ *  equipar". */
+export function normalizeQuestionText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9ñ\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function missingCollectAiFields(
+  fields: ExtractionField[],
+  vars: Record<string, unknown>,
+): ExtractionField[] {
+  const isMissing = (f: ExtractionField) =>
+    !(typeof vars[f.key] === "string" && (vars[f.key] as string).trim());
+  const required = fields.filter((f) => f.required && isMissing(f));
+  return required.length > 0 ? required : fields.filter(isMissing);
+}
+
+/** Advisor-facing, neutral-Spanish reason for a collect_ai handoff. */
+export function collectAiHandoffReasonText(
+  reason: CollectAiHandoffReason,
+  fields: ExtractionField[],
+  vars: Record<string, unknown>,
+): string {
+  const labels = missingCollectAiFields(fields, vars)
+    .map((f) => f.label.trim().toLowerCase())
+    .filter(Boolean)
+    .join(", ");
+  const which = labels ? ` (${labels})` : "";
+  switch (reason) {
+    case "max_turns_exhausted":
+      return `El bot no pudo completar los datos${which}.`;
+    case "repeated_question":
+      return `El cliente no respondió lo que el bot le preguntaba${which}.`;
+    case "model_handoff":
+      return "El asistente decidió derivar: el cliente pidió un asesor o la consulta salió de lo previsto.";
+    case "empty_reply":
+      return `El asistente no generó una respuesta${which}.`;
+    case "provider_error":
+      return "El asistente IA no estuvo disponible.";
+  }
+}
+
+/** A different wording for the field the model keeps asking about —
+ *  sent instead of repeating its question verbatim. */
+function rewordedCollectAiQuestion(field: ExtractionField | undefined): string {
+  if (!field) return "Disculpa, quizá no me expliqué bien. ¿Me cuentas un poco más con tus palabras?";
+  const label = field.label.trim().toLowerCase();
+  const examples = (field.description ?? "").match(/\(([^)]+)\)/)?.[1]?.trim();
+  return examples
+    ? `Disculpa, quizá no me expliqué bien 🙂 Me ayudaría saber ${label}, por ejemplo: ${examples}.`
+    : `Disculpa, quizá no me expliqué bien 🙂 Me ayudaría saber ${label}. Puedes responderme en pocas palabras.`;
+}
+
+/**
+ * Engine-side backstop for the prompt's "never repeat the previous
+ * question" rule. Returns what to do with the model's `continue` text:
+ * send it as is (new question), send a reworded one instead (the model
+ * repeated itself), or hand off (it repeated itself MAX_REPEATED_QUESTIONS
+ * times on the same question).
+ */
+async function guardRepeatedCollectAiQuestion(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  message: string,
+): Promise<{ kind: "send"; text: string; aiGenerated: boolean } | { kind: "handoff" }> {
+  const normalized = normalizeQuestionText(message);
+  const prev = run.vars[COLLECT_AI_LAST_QUESTION_VAR] as
+    | { node?: string; text?: string; repeats?: number }
+    | undefined;
+  if (!normalized || prev?.node !== node.node_key || prev.text !== normalized) {
+    await setRunVar(db, run, COLLECT_AI_LAST_QUESTION_VAR, {
+      node: node.node_key,
+      text: normalized,
+      repeats: 0,
+    });
+    return { kind: "send", text: message, aiGenerated: true };
+  }
+  const repeats = (prev.repeats ?? 0) + 1;
+  if (repeats >= MAX_REPEATED_QUESTIONS) return { kind: "handoff" };
+  await setRunVar(db, run, COLLECT_AI_LAST_QUESTION_VAR, { ...prev, repeats });
+  return {
+    kind: "send",
+    text: rewordedCollectAiQuestion(missingCollectAiFields(cfg.fields, run.vars)[0]),
+    aiGenerated: false,
+  };
+}
+
 async function setRunVar(
   db: AdminClient,
   run: FlowRunRow,
@@ -1830,8 +1973,13 @@ async function handleCollectAiOutcome(
   }
 
   // decision.kind === "continue" — decision.message is always
-  // result.replyText (decideCollectAiOutcome), model-drafted.
-  return sendCollectAiTextAndSuspend(db, run, node, decision.message, true);
+  // result.replyText (decideCollectAiOutcome), model-drafted. Never
+  // sent verbatim twice in a row — see guardRepeatedCollectAiQuestion.
+  const guarded = await guardRepeatedCollectAiQuestion(db, run, node, cfg, decision.message);
+  if (guarded.kind === "handoff") {
+    return handOffFromCollectAi(db, run, node, cfg, nodes, "repeated_question");
+  }
+  return sendCollectAiTextAndSuspend(db, run, node, guarded.text, guarded.aiGenerated);
 }
 
 /**
@@ -1853,6 +2001,9 @@ export async function enterCollectAiNode(
   await resetAiTurnCount(db, run);
   // A fresh visit — a no-AI question from an earlier visit doesn't count.
   if (run.vars[NO_AI_FORM_VAR] !== undefined) await setRunVar(db, run, NO_AI_FORM_VAR, null);
+  if (run.vars[COLLECT_AI_LAST_QUESTION_VAR] !== undefined) {
+    await setRunVar(db, run, COLLECT_AI_LAST_QUESTION_VAR, null);
+  }
 
   // AI known to be down: skip the intro (it opens a conversation only
   // the model can carry on) and go straight to the no-AI question.
@@ -2106,7 +2257,17 @@ async function executeHandoff(
     // customer's answers in the agent-facing summary, instead of the
     // literal template — the only place besides customer-facing prompts
     // this file uses interpolateVars.
-    const note = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
+    const authorNote = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
+    // Arrived here from a collect_ai that couldn't finish: lead with the
+    // real reason, not just this node's generic note.
+    const collectAiReason = run.vars[COLLECT_AI_HANDOFF_REASON_VAR] as
+      | { target?: string; text?: string }
+      | undefined;
+    const reasonText =
+      collectAiReason?.target === node.node_key && collectAiReason.text
+        ? `Motivo: ${collectAiReason.text}`
+        : null;
+    const note = [reasonText, authorNote].filter(Boolean).join(" ") || null;
     await markConversationPendingHandoff(
       db,
       run.conversation_id,
@@ -2797,7 +2958,7 @@ export async function dispatchInboundToFlows(
 
     // No active run, conversation not human-owned → look for a flow
     // whose entry trigger matches.
-    const flow = await findEntryFlow(
+    const { flow, answerWithAi } = await findEntryFlowWithContext(
       db,
       input.accountId,
       input.conversationId,
@@ -2808,7 +2969,14 @@ export async function dispatchInboundToFlows(
       return { consumed: false, outcome: "no_match" };
     }
     const nodes = await loadAllNodes(db, flow.id);
-    return startNewRun(db, flow, input, nodes);
+    const started = await startNewRun(db, flow, input, nodes);
+    if (answerWithAi && (await isSuspendedOnMenu(db, started, nodes))) {
+      // The welcome menu is out and its run stays active (the customer
+      // can still tap an option); the webhook now lets the general
+      // assistant answer the question the customer opened with.
+      return { ...started, answer_with_ai: true };
+    }
+    return started;
   } catch (err) {
     console.error(
       "[flows] dispatchInboundToFlows threw:",
@@ -2816,6 +2984,27 @@ export async function dispatchInboundToFlows(
     );
     return { consumed: false, outcome: "no_match" };
   }
+}
+
+/** True when a just-started run is waiting on a send_buttons/send_list
+ *  node — the only state where an extra assistant answer after the
+ *  welcome is safe (a collect_ai/collect_input step would be talked
+ *  over; a run that already ended has nothing left to show). */
+async function isSuspendedOnMenu(
+  db: AdminClient,
+  result: DispatchInboundResult,
+  nodes: Map<string, FlowNodeRow>,
+): Promise<boolean> {
+  if (!result.consumed || result.outcome !== "started" || !result.flow_run_id) return false;
+  const { data } = await db
+    .from("flow_runs")
+    .select("status, current_node_key")
+    .eq("id", result.flow_run_id)
+    .maybeSingle();
+  const row = data as { status: string; current_node_key: string | null } | null;
+  if (!row || row.status !== "active" || !row.current_node_key) return false;
+  const type = nodes.get(row.current_node_key)?.node_type;
+  return type === "send_buttons" || type === "send_list";
 }
 
 // Exported alongside enterCollectAiNode/handleCollectAiReply as its own
