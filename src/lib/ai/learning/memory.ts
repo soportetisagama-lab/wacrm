@@ -1,8 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { loadAiConfig } from '../config'
 import { logAiUsage } from '../usage'
-import { checkLearnable, redactSensitive } from './guards'
-import { callOpenAiJson, resolveLearningOpenAi, type LearningOpenAi } from './openai-judge'
+import { checkLearnable, hasBareFigure, redactSensitive } from './guards'
+import {
+  callOpenAiJson,
+  isLearningStopError,
+  resolveLearningOpenAi,
+  type LearningOpenAi,
+} from './openai-judge'
 
 // ============================================================
 // Per-customer memory (learning phase 1).
@@ -49,6 +54,11 @@ export const CUSTOMER_MEMORY_MAX_CHARS = 700
 
 // --- Pure helpers -------------------------------------------
 
+/** Guard-clean and with no bare 3+ digit figure (only measurements). */
+function isStorable(text: string): boolean {
+  return checkLearnable(text).ok && !hasBareFigure(text)
+}
+
 /** Keep only known, non-empty, guard-clean fields (trimmed and capped).
  *  A field that is empty or fails the guards keeps its `previous`
  *  value (re-checked) or is dropped. */
@@ -58,12 +68,12 @@ export function sanitizeMemory(raw: unknown, previous: CustomerMemory = {}): Cus
   for (const key of MEMORY_FIELDS) {
     const v = src[key]
     const text = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, MAX_FIELD_CHARS) : ''
-    if (text && checkLearnable(text).ok) {
+    if (text && isStorable(text)) {
       out[key] = text
       continue
     }
     const prev = previous[key]
-    if (prev && checkLearnable(prev).ok) out[key] = prev
+    if (prev && isStorable(prev)) out[key] = prev
   }
   return out
 }
@@ -307,19 +317,37 @@ export async function sweepCustomerMemory(admin: SupabaseClient, now: Date): Pro
       summary.skipped += list.length
       continue
     }
-    const accountStats = { updated: 0, failed: 0 }
+    const accountStats = { updated: 0, failed: 0, gaveUp: 0 }
+    let stopReason: string | null = null
     for (const conv of list) {
+      const existing = memByContact.get(conv.contact_id) ?? null
       try {
-        await refreshConversationMemory(admin, openai, conv, memByContact.get(conv.contact_id) ?? null)
+        await refreshConversationMemory(admin, openai, conv, existing)
         accountStats.updated += 1
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        // Key/quota/model problem: skip the rest of this sweep and log
+        // it — retried on a later sweep, never by pausing the bot's key.
+        if (isLearningStopError(err)) {
+          stopReason = message
+          console.warn('[ai-memory] sweep skipped for this account:', message)
+          break
+        }
         accountStats.failed += 1
-        console.error('[ai-memory] conversation failed:', err instanceof Error ? err.message : err)
+        console.error('[ai-memory] conversation failed:', message)
+        if (await noteConversationFailure(admin, conv, existing)) accountStats.gaveUp += 1
       }
     }
     summary.updated += accountStats.updated
     summary.failed += accountStats.failed
-    await finishJobRun(admin, runId, accountStats.failed && !accountStats.updated ? 'failed' : 'done', accountStats)
+    summary.skipped += stopReason ? list.length - accountStats.updated - accountStats.failed : 0
+    await finishJobRun(
+      admin,
+      runId,
+      stopReason ? 'skipped' : accountStats.failed && !accountStats.updated ? 'failed' : 'done',
+      accountStats,
+      stopReason ?? undefined,
+    )
   }
   return summary
 }
@@ -363,6 +391,52 @@ export async function finishJobRun(
     .eq('id', runId)
 }
 
+/** After this many failed attempts on the same messages, the sweep
+ *  gives up on that conversation until new messages arrive. */
+export const MAX_MEMORY_FAILURES = 3
+const FAILURE_KEY = '_fallos'
+
+/** Pure: failure count stored in the memory JSON for this version of
+ *  the conversation (a newer last message resets it). */
+export function failureCount(memory: unknown, lastMessageAt: string | null): number {
+  const f = (memory as Record<string, unknown> | null)?.[FAILURE_KEY] as { n?: unknown; at?: unknown } | undefined
+  if (!f || f.at !== lastMessageAt || typeof f.n !== 'number') return 0
+  return f.n
+}
+
+/**
+ * Count one failure for this conversation. On the MAX_MEMORY_FAILURES-th
+ * it is marked as seen (skipped) so it can't hog later sweeps. The
+ * counter lives in a hidden key of the memory JSON (sanitizeMemory
+ * drops it, so neither the bot nor the admin view shows it). Returns
+ * true when it gave up. Never throws.
+ */
+async function noteConversationFailure(
+  admin: SupabaseClient,
+  conv: ConvRow,
+  existing: MemoryRow | null,
+): Promise<boolean> {
+  try {
+    const n = failureCount(existing?.memory, conv.last_message_at) + 1
+    const giveUp = n >= MAX_MEMORY_FAILURES
+    const clean = sanitizeMemory(existing?.memory ?? {})
+    const memory = giveUp ? clean : { ...clean, [FAILURE_KEY]: { n, at: conv.last_message_at } }
+    await admin.from('contact_ai_memory').upsert(
+      {
+        account_id: conv.account_id,
+        contact_id: conv.contact_id,
+        memory,
+        ...(giveUp ? { last_message_at_seen: conv.last_message_at } : {}),
+      },
+      { onConflict: 'account_id,contact_id' },
+    )
+    if (giveUp) console.warn(`[ai-memory] gave up on conversation ${conv.id} after ${n} failures.`)
+    return giveUp
+  } catch {
+    return false
+  }
+}
+
 async function refreshConversationMemory(
   admin: SupabaseClient,
   openai: LearningOpenAi,
@@ -394,17 +468,20 @@ async function refreshConversationMemory(
       schemaName: 'customer_memory',
       schema: MEMORY_SCHEMA,
       maxTokens: 800,
-    })
-    void logAiUsage(admin, {
-      accountId: conv.account_id,
-      conversationId: conv.id,
-      mode: 'memory',
-      provider: 'openai',
-      model: openai.model,
-      usage: result.usage,
+      // Logged as soon as OpenAI reports usage — also when the answer is
+      // then rejected (refusal / bad JSON), so failed calls are counted.
+      onUsage: (usage, usedModel) =>
+        void logAiUsage(admin, {
+          accountId: conv.account_id,
+          conversationId: conv.id,
+          mode: 'memory',
+          provider: 'openai',
+          model: usedModel,
+          usage,
+        }),
     })
     memory = sanitizeMemory(result.data, previous)
-    model = openai.model
+    model = result.model
   }
 
   const { error: upErr } = await admin.from('contact_ai_memory').upsert(
