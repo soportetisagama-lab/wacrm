@@ -1903,6 +1903,11 @@ async function processMessage(
         isFirstInboundMessage,
       })
   const flowConsumed = flowResult.consumed
+  // Welcome menu sent for an opening message that already asked
+  // something concrete: the assistant still answers it, right after
+  // the welcome (the menu's run stays active). See findEntryFlowWithContext.
+  const answerAfterWelcome =
+    'answer_with_ai' in flowResult && flowResult.answer_with_ai === true
 
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
@@ -1987,7 +1992,7 @@ async function processMessage(
   // rows so the model actually sees what was tapped, not just older
   // text around it.
   const isNonTextMedia = NON_TEXT_AUTO_REPLY_MEDIA_TYPES.has(message.type)
-  if (!flowConsumed && (isNonTextMedia || inboundText.trim())) {
+  if ((!flowConsumed || answerAfterWelcome) && (isNonTextMedia || inboundText.trim())) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
