@@ -115,6 +115,11 @@ export function buildSystemPrompt(args: {
   if (mode === 'auto_reply') {
     parts.push(
       `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
+      // The reply cap (auto_reply_max_per_conversation) bounds how many
+      // turns the assistant gets before a sales advisor takes over —
+      // one question per turn keeps those turns from turning into an
+      // interrogation.
+      'Ask at most ONE question per message, only the most useful one to qualify the request (e.g. type of project, quantity, city). Never stack several questions in the same message.',
     )
 
     if (documents && documents.length > 0) {

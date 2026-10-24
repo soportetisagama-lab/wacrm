@@ -876,10 +876,24 @@ function isNotTheFirstShow(run: FlowRunRow): boolean {
   return run.vars.is_reentry === true || run.reprompt_count > 0;
 }
 
+/** True when the advance loop is about to land back on the very menu
+ *  the customer just answered in this same run — e.g. menu → "Showroom"
+ *  (send_message) → back to the menu. The earlier menu message is still
+ *  on screen and still tappable (the run stays suspended on the same
+ *  node), so resending it ("Sigue explorando…") is pure noise — and it
+ *  collides with the general assistant answering the customer's next
+ *  free-text message. A brand-new run (last_prompt_message_id still
+ *  null) and a reprompt (which calls the send helpers directly, not
+ *  through the advance loop) are unaffected. */
+function isLoopBackToSameMenu(run: FlowRunRow, node: FlowNodeRow): boolean {
+  return run.current_node_key === node.node_key && Boolean(run.last_prompt_message_id);
+}
+
 async function sendButtonsAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
+  opts: { silent?: boolean } = {},
 ): Promise<{ outcome: "advanced" | "redirect"; node_key: string }> {
   const cfg = node.config as unknown as SendButtonsNodeConfig;
   const bodyText =
@@ -898,6 +912,13 @@ async function sendButtonsAndSuspend(
       return { outcome: "redirect", node_key: cfg.all_selected_node_key };
     }
     visibleButtons.push(...cfg.buttons);
+  }
+  if (opts.silent) {
+    await logEvent(db, run.id, "node_entered", node.node_key, {
+      node_type: "send_buttons",
+      menu_resend_skipped: true,
+    });
+    return { outcome: "advanced", node_key: node.node_key };
   }
 
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
@@ -934,6 +955,7 @@ async function sendListAndSuspend(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
+  opts: { silent?: boolean } = {},
 ): Promise<{ outcome: "advanced" | "redirect"; node_key: string }> {
   const cfg = node.config as unknown as SendListNodeConfig;
   const bodyText =
@@ -953,6 +975,13 @@ async function sendListAndSuspend(
       return { outcome: "redirect", node_key: cfg.all_selected_node_key };
     }
     visibleSections = cfg.sections;
+  }
+  if (opts.silent) {
+    await logEvent(db, run.id, "node_entered", node.node_key, {
+      node_type: "send_list",
+      menu_resend_skipped: true,
+    });
+    return { outcome: "advanced", node_key: node.node_key };
   }
 
   const { whatsapp_message_id } = await engineSendInteractiveList({
@@ -2120,7 +2149,9 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "send_buttons") {
-      const result = await sendButtonsAndSuspend(db, run, node);
+      const result = await sendButtonsAndSuspend(db, run, node, {
+        silent: isLoopBackToSameMenu(run, node),
+      });
       if (result.outcome === "redirect") {
         // Every button here has already been picked by this contact —
         // nothing was sent. Continue the SAME advance loop from the
@@ -2143,7 +2174,9 @@ async function advanceFromNodeKey(
       return { outcome: "advanced" };
     }
     if (node.node_type === "send_list") {
-      const result = await sendListAndSuspend(db, run, node);
+      const result = await sendListAndSuspend(db, run, node, {
+        silent: isLoopBackToSameMenu(run, node),
+      });
       if (result.outcome === "redirect") {
         currentKey = result.node_key;
         continue;

@@ -11,6 +11,7 @@ import { latestUserMessage } from './query'
 import { transcribeInboundAudio, type InboundAudioRef } from './inbound-audio'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { isWithinBusinessHours } from '@/lib/flows/business-hours'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -60,6 +61,25 @@ interface DispatchArgs {
  *  the customer's side, the underlying situation is identical ("a
  *  human takes it from here"). */
 const AUTO_REPLY_HANDOFF_CLOSING_TEXT = 'Un asesor va a continuar contigo en breve.'
+/** After-hours variant of AUTO_REPLY_HANDOFF_CLOSING_TEXT — picked by
+ *  `isWithinBusinessHours` (code-level clock), never by the model. */
+const AUTO_REPLY_HANDOFF_CLOSING_TEXT_AFTER_HOURS =
+  'En este momento estamos fuera de nuestro horario de atención. Un asesor va a continuar contigo apenas retomemos la atención.'
+
+/** Sent instead of the generic handoff line when the reply cap is
+ *  reached — by then the assistant has already asked its questions, so
+ *  the customer is told their data is in, rather than just left on
+ *  "visto". Same in-hours/after-hours split as the generic line. */
+const AUTO_REPLY_CAP_CLOSING_TEXT =
+  '¡Gracias! Ya tenemos tus datos 🙌 Un asesor comercial se pondrá en contacto contigo en breve.'
+const AUTO_REPLY_CAP_CLOSING_TEXT_AFTER_HOURS =
+  '¡Gracias! Ya tenemos tus datos 🙌 En este momento estamos fuera de nuestro horario de atención; un asesor comercial se pondrá en contacto contigo apenas retomemos la atención.'
+
+/** How recently a bot-sent interactive menu (send_list/send_buttons)
+ *  must have landed for FIRST_REPLY_MENU_HINT to be skipped — the
+ *  customer is already looking at the menu, so "escribe menú" would
+ *  just be the same menu offered twice. */
+const RECENT_MENU_WINDOW_MINUTES = 15
 
 /**
  * Appended, deterministically (never model-generated), to the assistant's
@@ -152,6 +172,29 @@ async function waitForDebounceWindowToSettle(
 }
 
 /**
+ * True when a bot-sent interactive message (a flow's send_list /
+ * send_buttons menu) landed in this conversation within the last
+ * RECENT_MENU_WINDOW_MINUTES. Fails toward `false` on a read error —
+ * the worst case is the old behavior (the hint gets appended).
+ */
+async function menuSentRecently(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+): Promise<boolean> {
+  const since = new Date(Date.now() - RECENT_MENU_WINDOW_MINUTES * 60 * 1000).toISOString()
+  const { data, error } = await db
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('sender_type', 'bot')
+    .eq('content_type', 'interactive')
+    .gte('created_at', since)
+    .limit(1)
+  if (error) return false
+  return (data?.length ?? 0) > 0
+}
+
+/**
  * Send the fixed "text only" nudge for a media inbound (image/video/
  * audio/sticker/document) — never calls the provider, never claims a
  * reply slot, so it costs nothing and doesn't count toward
@@ -189,14 +232,26 @@ async function sendHandoffClosingMessage(args: {
   conversationId: string
   contactId: string
   configOwnerUserId: string
+  /** 'cap' = the reply cap was reached (data already collected);
+   *  'handoff' (default) = any other hand-off to a human. */
+  reason?: 'cap' | 'handoff'
 }): Promise<void> {
+  const inHours = isWithinBusinessHours()
+  const text =
+    args.reason === 'cap'
+      ? inHours
+        ? AUTO_REPLY_CAP_CLOSING_TEXT
+        : AUTO_REPLY_CAP_CLOSING_TEXT_AFTER_HOURS
+      : inHours
+        ? AUTO_REPLY_HANDOFF_CLOSING_TEXT
+        : AUTO_REPLY_HANDOFF_CLOSING_TEXT_AFTER_HOURS
   try {
     await engineSendText({
       accountId: args.accountId,
       userId: args.configOwnerUserId,
       conversationId: args.conversationId,
       contactId: args.contactId,
-      text: AUTO_REPLY_HANDOFF_CLOSING_TEXT,
+      text,
     })
   } catch (err) {
     console.error('[ai auto-reply] handoff closing message send failed:', err)
@@ -259,7 +314,7 @@ async function handleAutoReplyCapReached(
     assignedAgentId: string | null
   },
 ): Promise<void> {
-  await sendHandoffClosingMessage(args)
+  await sendHandoffClosingMessage({ ...args, reason: 'cap' })
   await markNeedsHuman(db, {
     conversationId: args.conversationId,
     config: args.config,
@@ -578,9 +633,13 @@ export async function runAutoReplyNow(
     // e.g. the account's business-context system prompt already taught
     // it to say "escribe *menú* para ver las opciones otra vez" — so
     // the customer never sees the hint said twice in one message.
+    // Also skipped when a flow just showed the interactive menu — the
+    // customer is already looking at it (see RECENT_MENU_WINDOW_MINUTES).
     const mentionsMenuAlready = /men[uú]/i.test(text)
     const outgoingText =
-      conv.ai_reply_count === 0 && !mentionsMenuAlready
+      conv.ai_reply_count === 0 &&
+      !mentionsMenuAlready &&
+      !(await menuSentRecently(db, conversationId))
         ? `${text}${FIRST_REPLY_MENU_HINT}`
         : text
 

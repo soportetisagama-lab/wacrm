@@ -21,6 +21,11 @@ const h = vi.hoisted(() => ({
     rpcCalls: [] as { name: string; args: unknown }[],
     waConfig: null as Record<string, unknown> | null,
     transcriptUpdate: null as Record<string, unknown> | null,
+    // isWithinBusinessHours() — pinned so closing-text assertions don't
+    // depend on the wall clock the suite happens to run at.
+    inHours: true as boolean,
+    // Rows returned by menuSentRecently's bot-interactive lookup.
+    recentMenu: [] as { id: string }[],
     // Debounce (claim_ai_debounce_window + ai_debounce_until bookkeeping) —
     // kept separate from `updatePayload`/`claim` above so every existing
     // assertion on those two keeps meaning exactly what it meant before
@@ -49,6 +54,9 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   downloadMedia: h.downloadMedia,
 }))
 vi.mock('@/lib/whatsapp/encryption', () => ({ decrypt: h.decrypt }))
+vi.mock('@/lib/flows/business-hours', () => ({
+  isWithinBusinessHours: () => h.state.inHours,
+}))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
@@ -78,8 +86,15 @@ vi.mock('./admin-client', () => ({
       }
       if (table === 'messages') {
         // .update({ transcript }).eq('id', ...) — writes the transcript
-        // back onto the inbound audio row.
+        // back onto the inbound audio row. Also .select().eq()…gte().limit()
+        // — menuSentRecently's recent bot-menu lookup.
+        const chain = {
+          eq: () => chain,
+          gte: () => chain,
+          limit: () => Promise.resolve({ data: h.state.recentMenu, error: null }),
+        }
         return {
+          select: () => chain,
           update: (payload: Record<string, unknown>) => {
             h.state.transcriptUpdate = payload
             return { eq: () => Promise.resolve({ error: null }) }
@@ -131,6 +146,9 @@ vi.mock('./admin-client', () => ({
 
 import { dispatchInboundToAiReply, runAutoReplyNow } from './auto-reply'
 
+const CAP_CLOSING =
+  '¡Gracias! Ya tenemos tus datos 🙌 Un asesor comercial se pondrá en contacto contigo en breve.'
+
 const ARGS = {
   accountId: 'acct-1',
   conversationId: 'conv-1',
@@ -174,6 +192,8 @@ beforeEach(() => {
   h.state.rpcCalls = []
   h.state.waConfig = { access_token: 'enc-token' }
   h.state.transcriptUpdate = null
+  h.state.inHours = true
+  h.state.recentMenu = []
   // Default: this message is the only one — already-past wait_until so
   // the debounce wrapper settles immediately and every existing
   // assertion below keeps testing the same "single message" behavior it
@@ -248,7 +268,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: 'Un asesor va a continuar contigo en breve.',
+        text: CAP_CLOSING,
       }),
     )
     expect(h.engineSendText).not.toHaveBeenCalledWith(
@@ -334,7 +354,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
-        text: 'Un asesor va a continuar contigo en breve.',
+        text: CAP_CLOSING,
       }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
@@ -425,7 +445,7 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
     }
     await dispatchInboundToAiReply({ ...ARGS, isTextMessage: false })
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+      expect.objectContaining({ text: CAP_CLOSING }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
@@ -639,7 +659,7 @@ describe('dispatchInboundToAiReply — audio transcription', () => {
     await dispatchInboundToAiReply(AUDIO_ARGS)
     expect(h.transcribeAudio).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+      expect.objectContaining({ text: CAP_CLOSING }),
     )
   })
 })
@@ -701,7 +721,7 @@ describe('dispatchInboundToAiReply — vision fallthrough', () => {
     await dispatchInboundToAiReply(IMAGE_ARGS)
     expect(h.buildConversationContext).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+      expect.objectContaining({ text: CAP_CLOSING }),
     )
   })
 })
@@ -954,7 +974,40 @@ describe('runAutoReplyNow — first-reply menu footer', () => {
     h.state.claim = false
     await runAutoReplyNow(ARGS)
     expect(h.engineSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Un asesor va a continuar contigo en breve.' }),
+      expect.objectContaining({ text: CAP_CLOSING }),
+    )
+  })
+
+  it('is NOT appended when a flow just sent the interactive menu — the customer is already looking at it', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 0 }
+    h.state.recentMenu = [{ id: 'msg-menu' }]
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+})
+
+describe('runAutoReplyNow — closing text by business hours', () => {
+  it('reply cap reached outside business hours → "ya tenemos tus datos" after-hours wording', async () => {
+    h.state.inHours = false
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 3 }
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '¡Gracias! Ya tenemos tus datos 🙌 En este momento estamos fuera de nuestro horario de atención; un asesor comercial se pondrá en contacto contigo apenas retomemos la atención.',
+      }),
+    )
+  })
+
+  it('model handoff outside business hours → after-hours wording', async () => {
+    h.state.inHours = false
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'En este momento estamos fuera de nuestro horario de atención. Un asesor va a continuar contigo apenas retomemos la atención.',
+      }),
     )
   })
 })

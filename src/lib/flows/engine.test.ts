@@ -3216,3 +3216,91 @@ describe("handleReplyForActiveRun — text_routes", () => {
   });
 });
 
+
+describe("advance loop — menu loop-back is not resent (no \"Sigue explorando…\" after an info option)", () => {
+  const MENU_NODE = makeNode({
+    node_key: "topics",
+    node_type: "send_list",
+    config: {
+      text: "¡Bienvenido!",
+      reentry_text: "Sigue explorando nuestro menú interactivo 👇",
+      button_label: "Ver opciones",
+      sections: [
+        {
+          rows: [
+            { reply_id: "showroom", title: "Showroom", next_node_key: "answer_showroom" },
+            { reply_id: "catalog", title: "Catálogo", next_node_key: "answer_catalog" },
+          ],
+        },
+      ],
+    },
+  });
+  const SHOWROOM_NODE = makeNode({
+    node_key: "answer_showroom",
+    node_type: "send_message",
+    config: { text: "Visítanos en nuestro showroom", next_node_key: "topics" },
+  });
+  const NODES = new Map([
+    ["topics", MENU_NODE],
+    ["answer_showroom", SHOWROOM_NODE],
+  ]);
+
+  beforeEach(() => {
+    vi.mocked(engineSendInteractiveList).mockResolvedValue({
+      whatsapp_message_id: "wamid.list",
+    } as never);
+  });
+
+  it("tapping an info option on the menu sends the answer, then stays on the menu silently", async () => {
+    const { db, inserts } = makeFakeDb();
+    const run = makeRun({ current_node_key: "topics", last_prompt_message_id: "msg-menu" });
+
+    const result = await handleReplyForActiveRun(
+      db,
+      run,
+      {
+        kind: "interactive_reply",
+        reply_id: "showroom",
+        reply_title: "Showroom",
+        meta_message_id: "wamid.tap",
+      },
+      NODES,
+    );
+
+    expect(result.outcome).toBe("advanced");
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Visítanos en nuestro showroom" }),
+    );
+    expect(engineSendInteractiveList).not.toHaveBeenCalled();
+    expect(
+      inserts.some(
+        (i) =>
+          i.table === "flow_run_events" &&
+          (i.payload as { payload?: { menu_resend_skipped?: boolean } }).payload
+            ?.menu_resend_skipped === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("still sends the menu when arriving from a DIFFERENT node (not a loop-back)", async () => {
+    const { db } = makeFakeDb();
+    const otherMenu = makeNode({
+      node_key: "submenu",
+      node_type: "send_buttons",
+      config: {
+        text: "¿Algo más?",
+        buttons: [{ reply_id: "back", title: "Volver", next_node_key: "topics" }],
+      },
+    });
+    const run = makeRun({ current_node_key: "submenu", last_prompt_message_id: "msg-sub" });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "interactive_reply", reply_id: "back", reply_title: "Volver", meta_message_id: "wamid.back" },
+      new Map([...NODES, ["submenu", otherMenu]]),
+    );
+
+    expect(engineSendInteractiveList).toHaveBeenCalledTimes(1);
+  });
+});
