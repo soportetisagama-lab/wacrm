@@ -53,6 +53,7 @@ import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
 import { handoffClosingText } from "@/lib/ai/auto-reply";
+import { lastBusinessMessageIs, runDebounced, summarizePendingBurst } from "@/lib/ai/debounce";
 import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
@@ -878,6 +879,13 @@ export async function findEntryFlowWithContext(
   let firstInboundContext: Awaited<
     ReturnType<typeof classifyFirstInboundContext>
   > | null = null;
+  // A photo opening the chat (vision on) always carries something to
+  // answer — the welcome still goes out, then the assistant looks at it.
+  // Without this, an uncaptioned photo classified as a bare greeting and
+  // only the welcome was sent: the image was never looked at.
+  if (await isVisionPhoto(db, accountId, message)) {
+    firstInboundContext = { hasContext: true, reason: "photo with vision on" };
+  }
   // A first_inbound_message welcome whose message carried a question:
   // kept aside (not returned yet) so a `keyword`-trigger flow later in
   // this same loop still wins when it matches independently.
@@ -954,6 +962,21 @@ export async function findEntryFlowWithContext(
   }
   if (welcomeWithQuestion) return { flow: welcomeWithQuestion, answerWithAi: true };
   return none;
+}
+
+/** True when `message` is a real photo and the account has vision on,
+ *  i.e. the general assistant can actually look at it. Never throws. */
+async function isVisionPhoto(
+  db: AdminClient,
+  accountId: string,
+  message: ParsedInbound,
+): Promise<boolean> {
+  if (message.kind !== "text" || !message.isImageMessage) return false;
+  try {
+    return Boolean((await loadAiConfig(db, accountId))?.visionEnabled);
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================
@@ -1102,7 +1125,7 @@ async function sendListAndSuspend(
 /** Default for CollectAiNodeConfig.non_text_reply_text when a node
  *  doesn't configure one. */
 const DEFAULT_NON_TEXT_REPLY_TEXT =
-  "Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes, por favor?";
+  "Recibí tu archivo, un asesor lo revisa. Mientras, ¿me cuentas qué necesitas?";
 
 /** Default for CollectAiNodeConfig.nudge_text / UnmatchedTextHandling.nudge_text
  *  when a node is nudge-eligible but doesn't configure its own wording.
@@ -2111,16 +2134,8 @@ export async function handleCollectAiBlankReply(
   isImageMessage?: boolean,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
   if (audio) {
-    const config = await loadAiConfig(db, run.account_id);
-    if (config?.transcribeAudioEnabled && config.embeddingsApiKey) {
-      const transcript = await transcribeInboundAudio(db, {
-        accountId: run.account_id,
-        audio,
-        embeddingsApiKey: config.embeddingsApiKey,
-      });
-      if (transcript) {
-        return handleCollectAiReply(db, run, node, nodes);
-      }
+    if (await transcribeCollectAiAudio(db, run, audio)) {
+      return handleCollectAiReply(db, run, node, nodes);
     }
   } else if (isImageMessage) {
     const config = await loadAiConfig(db, run.account_id);
@@ -2129,6 +2144,148 @@ export async function handleCollectAiBlankReply(
     }
   }
   return handleCollectAiNonTextReply(db, run, node);
+}
+
+/** Transcribe a voice note received on a collect_ai node — same gate as
+ *  handleCollectAiBlankReply. True when a usable transcript was saved. */
+async function transcribeCollectAiAudio(
+  db: AdminClient,
+  run: FlowRunRow,
+  audio: InboundAudioRef,
+): Promise<boolean> {
+  try {
+    const config = await loadAiConfig(db, run.account_id);
+    if (!config?.transcribeAudioEnabled || !config.embeddingsApiKey) return false;
+    const transcript = await transcribeInboundAudio(db, {
+      accountId: run.account_id,
+      audio,
+      embeddingsApiKey: config.embeddingsApiKey,
+    });
+    return Boolean(transcript);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One collect_ai turn for everything the customer sent since the bot
+ * last wrote (the burst): one extraction + one reply when any of it is
+ * usable (text, a transcribed voice note, a photo with vision on);
+ * otherwise the fixed non-text reply — once per batch of files, not
+ * once per file. `own` is the inbound that triggered this turn (absent
+ * on a rerun / cron recovery, where only the burst is read).
+ */
+async function collectAiTurnForBurst(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  nodes: Map<string, FlowNodeRow>,
+  own: { text: string; hasUsableContent: boolean; isImageMessage: boolean } | null,
+): Promise<"advanced" | "handed_off" | "completed"> {
+  let usable = Boolean(own?.hasUsableContent);
+  if (!usable) {
+    const burst = run.conversation_id
+      ? await summarizePendingBurst(db, run.conversation_id)
+      : null;
+    usable = Boolean(burst?.hasText);
+    if (!usable && (burst?.hasImage || own?.isImageMessage)) {
+      try {
+        usable = Boolean((await loadAiConfig(db, run.account_id))?.visionEnabled);
+      } catch {
+        usable = false;
+      }
+    }
+  }
+  if (usable) {
+    return (await handleCollectAiReply(db, run, node, nodes, own?.text || undefined)).outcome;
+  }
+  const cfg = node.config as unknown as CollectAiNodeConfig;
+  const noticeText = cfg.non_text_reply_text?.trim() || DEFAULT_NON_TEXT_REPLY_TEXT;
+  if (run.conversation_id && (await lastBusinessMessageIs(db, run.conversation_id, noticeText))) {
+    return "advanced"; // already told — still waiting on this node
+  }
+  return (await handleCollectAiNonTextReply(db, run, node)).outcome;
+}
+
+/**
+ * collect_ai entry from handleReplyForActiveRun, debounced with the same
+ * per-conversation window as the general auto-reply (lib/ai/debounce.ts):
+ * several quick messages in a row get ONE extraction and ONE reply
+ * instead of one per message. A follower returns `debounced` (consumed —
+ * the owner answers for it). If messages keep arriving while the owner
+ * is answering, it runs once more for them, as long as the run is still
+ * waiting on this same node.
+ */
+async function handleCollectAiInboundDebounced(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  nodes: Map<string, FlowNodeRow>,
+  message: Extract<ParsedInbound, { kind: "text" }>,
+): Promise<DispatchInboundResult> {
+  // A voice note is transcribed by its own delivery before joining the
+  // burst, so the owner already finds the transcript in the context.
+  const transcribed =
+    !message.text.trim() && message.audio
+      ? await transcribeCollectAiAudio(db, run, message.audio)
+      : false;
+  const own = {
+    text: message.text,
+    hasUsableContent: Boolean(message.text.trim()) || transcribed,
+    isImageMessage: Boolean(message.isImageMessage),
+  };
+
+  if (!run.conversation_id) {
+    const outcome = await collectAiTurnForBurst(db, run, node, nodes, own);
+    return { consumed: true, flow_run_id: run.id, outcome };
+  }
+
+  let outcome: "advanced" | "handed_off" | "completed" = "advanced";
+  let current: FlowRunRow | null = run;
+  let first = true;
+  const role = await runDebounced(db, run.conversation_id, async () => {
+    if (!first) {
+      // Rerun for messages that arrived meanwhile — only if the run is
+      // still waiting on this node (it may have advanced or ended).
+      current = await loadActiveRunForContact(db, run.account_id, run.contact_id ?? "");
+      if (!current || current.id !== run.id || current.current_node_key !== node.node_key) return;
+    }
+    outcome = await collectAiTurnForBurst(db, current!, node, nodes, first ? own : null);
+    first = false;
+  });
+  if (role === "follower") {
+    return { consumed: true, flow_run_id: run.id, outcome: "debounced" };
+  }
+  return { consumed: true, flow_run_id: run.id, outcome };
+}
+
+/**
+ * Cron-sweep entry (/api/flows/cron): when an orphaned debounce window
+ * belongs to a contact whose active run is waiting on a collect_ai node,
+ * answer it through that node — not through the general assistant.
+ * Returns false when there's no such run (the caller then uses the
+ * general auto-reply). Never throws.
+ */
+export async function recoverCollectAiDebounce(
+  accountId: string,
+  contactId: string,
+): Promise<boolean> {
+  const db = supabaseAdmin();
+  try {
+    const run = await loadActiveRunForContact(db, accountId, contactId);
+    if (!run?.current_node_key) return false;
+    const nodes = await loadAllNodes(db, run.flow_id);
+    const node = nodes.get(run.current_node_key);
+    if (!node || node.node_type !== "collect_ai") return false;
+    await collectAiTurnForBurst(db, run, node, nodes, null);
+    return true;
+  } catch (err) {
+    console.error(
+      "[flows] collect_ai debounce recovery failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return true; // it was a collect_ai run — don't let the general bot answer over it
+  }
 }
 
 /**
@@ -3077,19 +3234,7 @@ export async function handleReplyForActiveRun(
   // is set and the account opted into vision — both of which
   // handleCollectAiBlankReply tries first before falling back.
   if (message.kind === "text" && currentNode.node_type === "collect_ai") {
-    if (!message.text.trim()) {
-      const outcome = await handleCollectAiBlankReply(
-        db,
-        run,
-        currentNode,
-        nodes,
-        message.audio,
-        message.isImageMessage,
-      );
-      return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
-    }
-    const outcome = await handleCollectAiReply(db, run, currentNode, nodes, message.text);
-    return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+    return handleCollectAiInboundDebounced(db, run, currentNode, nodes, message);
   }
 
   // Three ways a reply can advance:
@@ -3213,6 +3358,15 @@ export async function handleReplyForActiveRun(
           textRoute.also_marks_selected,
         );
       }
+    } else if (await isVisionPhoto(db, run.account_id, message)) {
+      // A photo (vision on) while the menu waits: the reprompt / fixed
+      // text would ignore it. Let the general assistant look at it; the
+      // run stays active so the customer can still tap an option.
+      return {
+        consumed: false,
+        flow_run_id: run.id,
+        outcome: "released_to_assistant",
+      };
     } else if (cfg.release_unmatched_text_to_assistant) {
       // Free text that isn't a button tap and isn't an escalation
       // keyword (checked above — always wins first) — end the run and

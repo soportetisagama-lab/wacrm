@@ -5,12 +5,13 @@ import {
   DEFAULT_MENU_NUDGE_TEXT,
   DEFAULT_NUDGE_AFTER_MINUTES,
   DEFAULT_NUDGE_TEXT,
+  recoverCollectAiDebounce,
   shouldSendInactivityNudge,
 } from '@/lib/flows/engine'
 import { isWithinBusinessHours } from '@/lib/flows/business-hours'
 import { engineSendText } from '@/lib/flows/meta-send'
 import type { CollectAiNodeConfig, SendButtonsNodeConfig, SendListNodeConfig } from '@/lib/flows/types'
-import { runAutoReplyNow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
+import { runAutoReplyForOrphanedWindow, DEBOUNCE_SWEEP_GRACE_SECONDS } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { buildConversationContext } from '@/lib/ai/context'
 import { generateNudge } from '@/lib/ai/nudge'
@@ -240,12 +241,17 @@ async function sweepOrphanedDebounceWindows(
     console.warn(
       `[flows-cron] recovering orphaned AI-debounce window for conversation ${conv.id} — an owner instance likely died mid-wait.`,
     )
-    await runAutoReplyNow({
+    // A collect_ai node shares the same debounce window: answer through
+    // that node, never with the general assistant talking over the flow.
+    if (await recoverCollectAiDebounce(conv.account_id, conv.contact_id)) {
+      processed += 1
+      continue
+    }
+    await runAutoReplyForOrphanedWindow({
       accountId: conv.account_id,
       conversationId: conv.id,
       contactId: conv.contact_id,
       configOwnerUserId: wc.user_id as string,
-      isTextMessage: true,
     })
     processed += 1
   }
@@ -384,6 +390,14 @@ async function maybeSendInactivityNudge(
     optedOut,
   })
   if (!decision) return false
+
+  // An advisor owns the chat: the follow-up is theirs to send, not the bot's.
+  const { data: conv } = await admin
+    .from('conversations')
+    .select('assigned_agent_id')
+    .eq('id', run.conversation_id)
+    .maybeSingle()
+  if (conv?.assigned_agent_id) return false
 
   // Outside business hours a reminder reads odd (at night, on Sunday)
   // and by the next opening it's stale — mark this silence period as
