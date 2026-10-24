@@ -42,7 +42,7 @@ import {
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
 import { isRecentLineTransfer } from "@/lib/line-transfer-inbound";
-import { hasRecentHumanReply } from "@/lib/conversations/human-activity";
+import { hasRecentHumanReply, hasRecentOutgoingMessage } from "@/lib/conversations/human-activity";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -919,6 +919,12 @@ export async function findEntryFlowWithContext(
       // restart (e.g. re-show its menu) after a prior run for this
       // contact reached a terminal status. Same "welcome, then answer
       // the question" rule as first_inbound_message above.
+      // Mid-conversation (we wrote within the last few hours): no menu
+      // again — falls through to the AI assistant. An explicit "menú" is
+      // handled earlier by findReentryFlow.
+      if (await hasRecentOutgoingMessage(db, conversationId)) {
+        continue;
+      }
       if (!firstInboundContext) {
         firstInboundContext = await classifyFirstInboundContext(
           db,
