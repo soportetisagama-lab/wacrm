@@ -1045,7 +1045,7 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
     expect(result).toEqual({ consumed: true, outcome: "stale_interactive_notice" });
     expect(engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Ya tenemos tus datos"),
+        text: expect.stringContaining("Un asesor va a seguir la conversación"),
       }),
     );
     expect(
