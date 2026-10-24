@@ -85,6 +85,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
     this.filters.push((r) => String(r[c] ?? '') <= v)
     return this
   }
+  is(c: string, v: unknown) {
+    this.filters.push((r) => (r[c] ?? null) === v)
+    return this
+  }
   in(c: string, vs: unknown[]) {
     this.filters.push((r) => vs.includes(r[c]))
     return this
