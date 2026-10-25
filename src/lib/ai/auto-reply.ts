@@ -428,13 +428,24 @@ export async function runAutoReplyNow(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_handoff_summary')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
+    // Closed as spam earlier (see handleSpamLoop): stays quiet, no advisor.
+    if (conv.ai_autoreply_disabled && conv.ai_handoff_summary?.startsWith(SPAM_SUMMARY_PREFIX)) {
+      return
+    }
     // …or a human answered by hand in the last 24 h without claiming it.
     if (await hasRecentHumanReply(db, conversationId)) return
+    // The same canned reply already went out SPAM_LOOP_REPLIES times in a
+    // row (a child sending odd audios, gibberish): close politely, no advisor.
+    if (await spamLoopReached(db, conversationId)) {
+      await handleSpamLoop(db, { accountId, conversationId, contactId, configOwnerUserId })
+      return
+    }
+
     // `ai_autoreply_disabled` alone is no longer sticky forever once
     // nobody has actually claimed the thread (assigned_agent_id null,
     // checked above) — a model-decided handoff or a Flow handoff mid-
@@ -782,6 +793,73 @@ export async function runAutoReplyNow(
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
+}
+
+/** The same automatic reply this many times in a row means the customer
+ *  is not writing anything the assistant can act on. */
+const SPAM_LOOP_REPLIES = 3
+const SPAM_SUMMARY_PREFIX = '🚫 Posible spam'
+const SPAM_CLOSING_TEXT = 'Gracias por tu interés. Este canal es para clientes.'
+
+/** Pure: do the most recent business messages (newest first) end in a run
+ *  of `n` identical AI replies? */
+export function endsWithRepeatedAiReply(
+  recent: { sender_type: string; ai_generated: boolean | null; content_text: string | null }[],
+  n: number = SPAM_LOOP_REPLIES,
+): boolean {
+  const first = recent[0]
+  if (!first || first.sender_type === 'customer' || !first.ai_generated || !first.content_text) return false
+  let run = 0
+  for (const m of recent) {
+    if (m.sender_type === 'customer') continue
+    if (!m.ai_generated || m.content_text !== first.content_text) break
+    run += 1
+  }
+  return run >= n
+}
+
+async function spamLoopReached(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('messages')
+      .select('sender_type, ai_generated, content_text')
+      .eq('conversation_id', conversationId)
+      .neq('sender_type', 'customer')
+      .order('created_at', { ascending: false })
+      .limit(SPAM_LOOP_REPLIES + 1)
+    if (error || !data) return false
+    return endsWithRepeatedAiReply(data)
+  } catch {
+    return false
+  }
+}
+
+/** One polite closing line, then the assistant stays off — nobody is notified. */
+async function handleSpamLoop(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: { accountId: string; conversationId: string; contactId: string; configOwnerUserId: string },
+): Promise<void> {
+  try {
+    await engineSendText({
+      accountId: args.accountId,
+      userId: args.configOwnerUserId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text: SPAM_CLOSING_TEXT,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] spam closing send failed:', err)
+  }
+  await db
+    .from('conversations')
+    .update({
+      ai_autoreply_disabled: true,
+      ai_handoff_summary: `${SPAM_SUMMARY_PREFIX}: el cliente envió mensajes sin contenido y se cerró con un aviso.`,
+    })
+    .eq('id', args.conversationId)
 }
 
 /** Most questions the assistant asks a customer who did not come through the menu. */
