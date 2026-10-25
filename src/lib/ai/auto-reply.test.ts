@@ -183,6 +183,7 @@ vi.mock('./admin-client', () => ({
 
 import {
   dispatchInboundToAiReply,
+  endsWithRepeatedAiReply,
   handoffClosingText,
   runAutoReplyForOrphanedWindow,
   runAutoReplyForPendingBurst,
@@ -1318,5 +1319,24 @@ describe('runAutoReplyNow — handoff closing once, complaints, documents, promp
     ])
     await runAutoReplyNow(ARGS)
     expect(h.retrieveKnowledge.mock.calls[0][3]).toBe('Necesito una mesa de trabajo\n¿y en acero?')
+  })
+})
+
+describe('endsWithRepeatedAiReply', () => {
+  const ai = (t: string) => ({ sender_type: 'bot', ai_generated: true, content_text: t })
+  it('detects three identical AI replies in a row', () => {
+    expect(endsWithRepeatedAiReply([ai('x'), ai('x'), ai('x'), ai('y')])).toBe(true)
+  })
+  it('ignores customer messages in between', () => {
+    const c = { sender_type: 'customer', ai_generated: null, content_text: 'audio' }
+    expect(endsWithRepeatedAiReply([ai('x'), c, ai('x'), c, ai('x')])).toBe(true)
+  })
+  it('does not trigger below three or when a different reply breaks the run', () => {
+    expect(endsWithRepeatedAiReply([ai('x'), ai('x')])).toBe(false)
+    expect(endsWithRepeatedAiReply([ai('x'), ai('y'), ai('x')])).toBe(false)
+  })
+  it('does not trigger for human or flow messages', () => {
+    const h = { sender_type: 'agent', ai_generated: false, content_text: 'x' }
+    expect(endsWithRepeatedAiReply([h, h, h])).toBe(false)
   })
 })
