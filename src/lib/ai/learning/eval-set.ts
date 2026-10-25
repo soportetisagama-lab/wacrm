@@ -16,7 +16,7 @@ import type { ReplyPair } from './pairs'
 export const EVAL_TARGET_CASES = 30
 /** Below this many cases the exam is not trusted: nothing is approved. */
 export const EVAL_MIN_CASES = 20
-const NEW_CASES_PER_NIGHT = 12
+const NEW_CASES_PER_NIGHT = 20
 const BATCH = 6
 
 export interface EvalCase {
