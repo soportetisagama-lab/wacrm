@@ -73,6 +73,33 @@ export function isAcknowledgement(text: string, isSticker = false): boolean {
   return words.length <= 8 && words.every((w) => ACK_WORDS.has(w));
 }
 
+/**
+ * True when an acknowledgement-looking message ("si", "ok", "claro") is
+ * really the answer to a question we just asked: the last text we sent
+ * ends in a question. A "gracias" still counts as a goodbye.
+ */
+export async function answersPendingQuestion(
+  db: SupabaseClient,
+  conversationId: string,
+  text: string,
+): Promise<boolean> {
+  if (/gracia|thank/i.test(text)) return false;
+  try {
+    const { data } = await db
+      .from("messages")
+      .select("content_text")
+      .eq("conversation_id", conversationId)
+      .neq("sender_type", "customer")
+      .eq("content_type", "text")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const last = (data?.[0]?.content_text as string | undefined) ?? "";
+    return last.includes("?") && last !== TRANSFER_FAREWELL_TEXT;
+  } catch {
+    return false;
+  }
+}
+
 /** Timestamp of this chat's transfer notice if sent within the window, else null. */
 async function findRecentTransferNotice(
   db: SupabaseClient,
@@ -119,7 +146,12 @@ export async function routeInboundAfterOutboundTransfer(args: {
     const noticeAt = await findRecentTransferNotice(args.db, args.conversationId);
     if (!noticeAt) return null;
 
-    if (!isAcknowledgement(args.text, args.isSticker)) return "to_ai";
+    if (
+      !isAcknowledgement(args.text, args.isSticker) ||
+      (!args.isSticker && (await answersPendingQuestion(args.db, args.conversationId, args.text)))
+    ) {
+      return "to_ai";
+    }
 
     const { count } = await args.db
       .from("messages")
