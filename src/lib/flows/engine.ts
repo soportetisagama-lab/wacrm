@@ -40,7 +40,11 @@ import {
   engineSendText,
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
-import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
+import {
+  isWithinBusinessHours,
+  fillBusinessHoursPlaceholders,
+  nextOpeningPhrase,
+} from "./business-hours";
 import { isRecentLineTransfer } from "@/lib/line-transfer-inbound";
 import { hasRecentHumanReply, hasRecentOutgoingMessage } from "@/lib/conversations/human-activity";
 import { matchMenuTextChoice, withNumberedOptions } from "./menu-text";
@@ -1283,6 +1287,44 @@ const STALE_INTERACTIVE_TEXT_NO_PHONE =
  * human or a live flow), the text needs run variables, or anything
  * can't be read: the caller then falls back to the stale-tap notice.
  */
+/** Where a tapped option (by reply_id) leads, in the active flow that owns it. */
+async function findStaleOptionTarget(
+  db: AdminClient,
+  accountId: string,
+  replyId: string,
+): Promise<{ flowId: string; menuNodeKey: string; nextKey: string } | null> {
+  try {
+    const { data: flows } = await db
+      .from("flows")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("status", "active");
+    for (const flow of (flows ?? []) as { id: string }[]) {
+      const nodes = await loadAllNodes(db, flow.id);
+      for (const node of nodes.values()) {
+        const nextKey = matchReplyId(node, replyId);
+        if (nextKey && nodes.has(nextKey)) {
+          return { flowId: flow.id, menuNodeKey: node.node_key, nextKey };
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[flows] stale option lookup failed:", err);
+  }
+  return null;
+}
+
+/** Outside business hours, "en breve" would promise a reply nobody can
+ *  give: say when the advisor actually writes. */
+function withOpeningTime(text: string): string {
+  if (isWithinBusinessHours()) return text;
+  const when = nextOpeningPhrase();
+  return text
+    .replace(/ en un momento un asesor/i, ` un asesor`)
+    .replace(/ en breve/i, ` ${when}`)
+    .replace(/(se va a comunicar contigo)\./i, `$1 ${when}.`);
+}
+
 type InfoOnlyAnswer =
   | { kind: "text"; text: string }
   | { kind: "media"; media: SendMediaNodeConfig };
@@ -3192,6 +3234,27 @@ export async function dispatchInboundToFlows(
       // One SELECT for the whole flow's nodes — advance loop is now
       // in-memory. See loadAllNodes.
       const nodes = await loadAllNodes(db, activeRun.flow_id);
+      // "menú" typed while the menu is waiting for a tap: show it again
+      // (the reentry keywords) instead of treating it as an unmatched reply.
+      const waitingNode = activeRun.current_node_key
+        ? nodes.get(activeRun.current_node_key)
+        : undefined;
+      if (
+        input.message.kind === "text" &&
+        waitingNode &&
+        (waitingNode.node_type === "send_list" || waitingNode.node_type === "send_buttons")
+      ) {
+        const reentry = await findReentryFlow(db, input.accountId, input.message);
+        if (reentry && reentry.id === activeRun.flow_id) {
+          const again =
+            waitingNode.node_type === "send_list"
+              ? await sendListAndSuspend(db, activeRun, waitingNode)
+              : await sendButtonsAndSuspend(db, activeRun, waitingNode);
+          if (again.outcome === "advanced") {
+            return { consumed: true, flow_run_id: activeRun.id, outcome: "menu_resent" };
+          }
+        }
+      }
       return handleReplyForActiveRun(db, activeRun, input.message, nodes);
     }
 
@@ -3285,6 +3348,31 @@ export async function dispatchInboundToFlows(
       const alreadyHandled = Object.values(contactState.selected_options).some(
         (ids) => ids.includes(replyId),
       );
+      // An old menu's option that needs a live flow (project, quote…):
+      // run it now, as if tapped on the current menu, instead of a
+      // generic notice. A repeat of an already-resolved option keeps the
+      // notice below.
+      if (!alreadyHandled) {
+        const target = await findStaleOptionTarget(db, input.accountId, replyId);
+        if (target) {
+          await recordFlowOptionSelected(
+            db,
+            input.accountId,
+            input.contactId,
+            target.menuNodeKey,
+            replyId,
+          );
+          const replay = await startFlowRunAtNode({
+            accountId: input.accountId,
+            flowId: target.flowId,
+            nodeKey: target.nextKey,
+            contactId: input.contactId,
+            conversationId: input.conversationId,
+            startedVia: { reason: "stale_tap_replayed", reply_id: replyId },
+          });
+          if (replay.consumed) return { ...replay, outcome: "stale_tap_replayed" };
+        }
+      }
       // "Ya tenemos tus datos" is only true if we actually have a
       // phone number — a BSUID-only contact (see
       // sendBsuidContactInfoRequest in the webhook) has neither, so
@@ -3314,11 +3402,13 @@ export async function dispatchInboundToFlows(
           userId: input.userId,
           conversationId: input.conversationId,
           contactId: input.contactId,
-          text: alreadyHandled
-            ? ALREADY_HANDLED_OPTION_TEXT
-            : hasPhone
-              ? STALE_INTERACTIVE_TEXT
-              : STALE_INTERACTIVE_TEXT_NO_PHONE,
+          text: withOpeningTime(
+            alreadyHandled
+              ? ALREADY_HANDLED_OPTION_TEXT
+              : hasPhone
+                ? STALE_INTERACTIVE_TEXT
+                : STALE_INTERACTIVE_TEXT_NO_PHONE,
+          ),
           aiGenerated: false,
         });
       } catch (err) {
