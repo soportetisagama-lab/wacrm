@@ -763,9 +763,11 @@ export async function runAutoReplyNow(
     // e.g. the account's business-context system prompt already taught
     // it to say "escribe *menú* para ver las opciones otra vez" — so
     // the customer never sees the hint said twice in one message.
+    // Nor when the menu was already sent in this chat — the customer has
+    // seen it and answered in their own words.
     const mentionsMenuAlready = /men[uú]/i.test(text)
     const outgoingText =
-      conv.ai_reply_count === 0 && !mentionsMenuAlready
+      conv.ai_reply_count === 0 && !mentionsMenuAlready && !(await menuAlreadySent(db, conversationId))
         ? `${text}${FIRST_REPLY_MENU_HINT}`
         : text
 
@@ -827,6 +829,24 @@ async function forcedHandoffReason(
     return (count ?? 0) >= MAX_AI_QUESTIONS ? 'max_questions' : null
   } catch {
     return null
+  }
+}
+
+/** True when a menu (interactive bot message) was already sent in this chat. */
+async function menuAlreadySent(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const { count } = await db
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'bot')
+      .eq('content_type', 'interactive')
+    return (count ?? 0) > 0
+  } catch {
+    return false
   }
 }
 

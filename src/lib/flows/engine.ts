@@ -1269,11 +1269,15 @@ const STALE_INTERACTIVE_TEXT_NO_PHONE =
  * human or a live flow), the text needs run variables, or anything
  * can't be read: the caller then falls back to the stale-tap notice.
  */
-async function findInfoOnlyOptionText(
+type InfoOnlyAnswer =
+  | { kind: "text"; text: string }
+  | { kind: "media"; media: SendMediaNodeConfig };
+
+async function findInfoOnlyOptionAnswer(
   db: AdminClient,
   accountId: string,
   replyId: string,
-): Promise<string | null> {
+): Promise<InfoOnlyAnswer | null> {
   try {
     const { data: flows } = await db
       .from("flows")
@@ -1295,12 +1299,21 @@ async function findInfoOnlyOptionText(
         }
         if (!nextKey) continue;
         const target = nodes.get(nextKey);
+        // A catalog / brochure option: one file (send_media) and nothing after.
+        if (target?.node_type === "send_media") {
+          const media = target.config as unknown as SendMediaNodeConfig;
+          const tail = media.next_node_key ? nodes.get(media.next_node_key) : undefined;
+          if (!media.media_url || media.caption?.includes("{{") || (tail && tail.node_type !== "end")) {
+            return null;
+          }
+          return { kind: "media", media };
+        }
         if (target?.node_type !== "send_message") return null;
         const cfg = target.config as unknown as SendMessageNodeConfig;
         const after = cfg.next_node_key ? nodes.get(cfg.next_node_key) : undefined;
         const text = cfg.text?.trim();
         if (!text || text.includes("{{") || (after && after.node_type !== "end")) return null;
-        return text;
+        return { kind: "text", text };
       }
     }
   } catch (err) {
@@ -3158,17 +3171,30 @@ export async function dispatchInboundToFlows(
       const replyId = input.message.reply_id;
       // An info-only option (ubicación, horarios, catálogo) is simply
       // answered again — nothing to hand to a human.
-      const infoText = await findInfoOnlyOptionText(db, input.accountId, replyId);
-      if (infoText) {
+      const infoAnswer = await findInfoOnlyOptionAnswer(db, input.accountId, replyId);
+      if (infoAnswer) {
         try {
-          await engineSendText({
-            accountId: input.accountId,
-            userId: input.userId,
-            conversationId: input.conversationId,
-            contactId: input.contactId,
-            text: infoText,
-            aiGenerated: false,
-          });
+          if (infoAnswer.kind === "media") {
+            await engineSendMedia({
+              accountId: input.accountId,
+              userId: input.userId,
+              conversationId: input.conversationId,
+              contactId: input.contactId,
+              kind: infoAnswer.media.media_type,
+              link: infoAnswer.media.media_url,
+              caption: infoAnswer.media.caption || undefined,
+              filename: infoAnswer.media.filename,
+            });
+          } else {
+            await engineSendText({
+              accountId: input.accountId,
+              userId: input.userId,
+              conversationId: input.conversationId,
+              contactId: input.contactId,
+              text: infoAnswer.text,
+              aiGenerated: false,
+            });
+          }
           return { consumed: true, outcome: "stale_info_answered" };
         } catch (err) {
           console.error(
