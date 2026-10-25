@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/flows/meta-send'
-import { isAcknowledgement, TRANSFER_FAREWELL_TEXT } from '@/lib/line-transfer-outbound'
+import {
+  answersPendingQuestion,
+  isAcknowledgement,
+  TRANSFER_FAREWELL_TEXT,
+} from '@/lib/line-transfer-outbound'
 
 /**
  * Every chat, not just transferred ones (line-transfer-outbound.ts): a
@@ -27,6 +31,10 @@ export async function routeAcknowledgement(args: {
 }): Promise<'acknowledged' | null> {
   try {
     if (!isAcknowledgement(args.text, args.isSticker)) return null
+    // "si" / "ok" in answer to a question we just asked is an answer, not a goodbye.
+    if (!args.isSticker && (await answersPendingQuestion(args.db, args.conversationId, args.text))) {
+      return null
+    }
 
     const { data: conv } = await args.db
       .from('conversations')
