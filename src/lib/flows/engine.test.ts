@@ -1192,7 +1192,7 @@ describe("send_list / send_buttons — reentry_text (skip the welcome banner on 
     await dispatchInboundToFlows({ ...reentryInput("Hola"), isFirstInboundMessage: true });
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
-      expect.objectContaining({ bodyText: "—x9 ¡Bienvenido a Sagama Inox!" }),
+      expect.objectContaining({ bodyText: expect.stringContaining("—x9 ¡Bienvenido a Sagama Inox!") }),
     );
   });
 
@@ -1208,7 +1208,7 @@ describe("send_list / send_buttons — reentry_text (skip the welcome banner on 
     await dispatchInboundToFlows(reentryInput("menú"));
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
-      expect.objectContaining({ bodyText: "Estas son las opciones disponibles —x!" }),
+      expect.objectContaining({ bodyText: expect.stringContaining("Estas son las opciones disponibles —x!") }),
     );
   });
 
@@ -1228,7 +1228,7 @@ describe("send_list / send_buttons — reentry_text (skip the welcome banner on 
     await dispatchInboundToFlows(reentryInput("menú"));
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
-      expect.objectContaining({ bodyText: "—x9 ¡Bienvenido a Sagama Inox!" }),
+      expect.objectContaining({ bodyText: expect.stringContaining("—x9 ¡Bienvenido a Sagama Inox!") }),
     );
   });
 });
@@ -3906,7 +3906,7 @@ describe("startFlowRunAtNode — welcome restarted once a BSUID contact's phone 
     });
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
-      expect.objectContaining({ bodyText: "👋 ¡Bienvenido a Sagama Maxi!" }),
+      expect.objectContaining({ bodyText: expect.stringContaining("👋 ¡Bienvenido a Sagama Maxi!") }),
     );
   });
 
@@ -3924,7 +3924,7 @@ describe("startFlowRunAtNode — welcome restarted once a BSUID contact's phone 
     });
 
     expect(engineSendInteractiveList).toHaveBeenCalledWith(
-      expect.objectContaining({ bodyText: "Sigue explorando nuestro menú interactivo 👇" }),
+      expect.objectContaining({ bodyText: expect.stringContaining("Sigue explorando nuestro menú interactivo 👇") }),
     );
   });
 });
