@@ -65,8 +65,9 @@ export function isAcknowledgement(text: string, isSticker = false): boolean {
     .replace(/[^a-zñ\s]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
-  // Emoji / punctuation only ("👍", "🙏🏻", "!!").
-  if (words.length === 0) return true;
+  // Emoji only ("👍", "🙏🏻"). Bare punctuation ("?", ".", "!!") is the
+  // customer asking for a reply, not a goodbye.
+  if (words.length === 0) return /\p{Extended_Pictographic}/u.test(raw);
   // Only greetings ("Buen día", "buenas noches") — a hello, not a goodbye.
   if (words.every((w) => GREETING_WORDS.has(w))) return false;
   return words.length <= 8 && words.every((w) => ACK_WORDS.has(w));
