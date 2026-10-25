@@ -399,6 +399,7 @@ export async function runAutoReplyNow(
     isImageMessage,
   } = args
 
+  const turnStartedAt = Date.now()
   try {
     const db = supabaseAdmin()
 
@@ -602,6 +603,14 @@ export async function runAutoReplyNow(
     }
     const { text, handoff, sendDocument, usage } = generation
 
+    // The model took a few seconds: if the conversation moved on meanwhile
+    // (a menu tap, a flow message or handoff), this answer is stale and
+    // would land right before the newer one — drop it.
+    if (await conversationMovedOn(db, conversationId, turnStartedAt)) {
+      console.log('[ai auto-reply] stale reply dropped, conversation moved on')
+      return
+    }
+
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`
     // swallows its own errors, so the floating promise can't reject.
@@ -748,6 +757,35 @@ export async function runAutoReplyNow(
     })
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
+  }
+}
+
+/**
+ * True when something other than a customer's typed text reached this
+ * conversation since `sinceMs`: a bot/agent message (flow menu, closing,
+ * handoff) or a customer button/list tap. Typed follow-ups are not
+ * counted — the debounce reruns the turn for those. Fails open (false).
+ */
+async function conversationMovedOn(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+  sinceMs: number,
+): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('messages')
+      .select('sender_type, content_type')
+      .eq('conversation_id', conversationId)
+      .gte('created_at', new Date(sinceMs).toISOString())
+      .limit(20)
+    if (error || !data) return false
+    return data.some(
+      (m) =>
+        m.sender_type !== 'customer' ||
+        m.content_type === 'interactive',
+    )
+  } catch {
+    return false
   }
 }
 
