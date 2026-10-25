@@ -43,6 +43,7 @@ import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { isWithinBusinessHours, fillBusinessHoursPlaceholders } from "./business-hours";
 import { isRecentLineTransfer } from "@/lib/line-transfer-inbound";
 import { hasRecentHumanReply, hasRecentOutgoingMessage } from "@/lib/conversations/human-activity";
+import { matchMenuTextChoice, withNumberedOptions } from "./menu-text";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { loadAiConfig } from "@/lib/ai/config";
@@ -1111,7 +1112,10 @@ async function sendListAndSuspend(
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText,
+    bodyText: withNumberedOptions(
+      bodyText,
+      visibleSections.flatMap((sec) => sec.rows),
+    ),
     buttonLabel: cfg.button_label,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
@@ -3526,7 +3530,29 @@ export async function handleReplyForActiveRun(
       | SendButtonsNodeConfig
       | SendListNodeConfig;
     const textRoute = matchTextRoute(cfg.text_routes, message.text);
-    if (
+    // A typed option number or name ("2", "cotizar") on a list menu counts
+    // as a tap — see menu-text.ts.
+    let menuChoice: ReturnType<typeof matchMenuTextChoice> = null;
+    if (currentNode.node_type === "send_list" && run.contact_id) {
+      const picked = new Set(
+        (await loadFlowContactState(db, run.account_id, run.contact_id))
+          .selected_options[currentNode.node_key] ?? [],
+      );
+      const rows = (cfg as SendListNodeConfig).sections
+        .flatMap((sec) => sec.rows)
+        .filter((r) => !picked.has(r.reply_id));
+      menuChoice = matchMenuTextChoice(message.text, rows);
+    }
+    if (menuChoice) {
+      matched = menuChoice.next_node_key;
+      await recordFlowOptionSelected(
+        db,
+        run.account_id,
+        run.contact_id,
+        currentNode.node_key,
+        menuChoice.reply_id,
+      );
+    } else if (
       cfg.handoff_node_key &&
       cfg.unmatched_text_keywords &&
       cfg.unmatched_text_keywords.length > 0 &&
