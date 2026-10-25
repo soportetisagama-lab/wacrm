@@ -717,6 +717,8 @@ export interface DispatchInboundResult {
     /** A stale tap on an info-only option (ubicación, horarios,
      *  catálogo): answered with that option's own text. */
     | "stale_info_answered"
+    | "stale_tap_replayed"
+    | "menu_resent"
     | "no_match";
   /**
    * Set when a welcome flow just started (and is waiting on its menu)
