@@ -524,6 +524,32 @@ export async function runAutoReplyNow(
     })
     if (messages.length === 0) return
 
+    // Questions are capped (see forcedHandoffReason): hand off without
+    // calling the model.
+    const forced = await forcedHandoffReason(db, conversationId, messages)
+    if (forced) {
+      if (!conv.ai_autoreply_disabled) {
+        await sendHandoffClosingMessage({
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          complaint: forced === 'annoyed' || looksLikeComplaint(messages),
+        })
+      }
+      await markNeedsHuman(db, {
+        conversationId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+        }),
+      })
+      await writeHandoffBrief(db, { accountId, conversationId, config })
+      return
+    }
+
     // Account-wide throttle on the shared BYO key. The per-conversation
     // cap bounds one thread; this bounds a burst across many threads (a
     // marketing blast landing 200 replies at once) so we never run the
@@ -753,6 +779,54 @@ export async function runAutoReplyNow(
     })
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
+  }
+}
+
+/** Most questions the assistant asks a customer who did not come through the menu. */
+const MAX_AI_QUESTIONS = 3
+
+/** The customer is annoyed at being asked things — stop asking, pass to an advisor. */
+const ANNOYED_BY_QUESTIONS_RE =
+  /no te (?:interesa|importa)|eso no (?:te|le) (?:interesa|importa)|qu[eé] te importa|deja de preguntar|no (?:me )?preguntes|tantas preguntas|no es asunto tuyo|\by punto\b/i
+
+/**
+ * Why the assistant must hand off right now regardless of the model:
+ * the customer is annoyed by the questions, or it already asked
+ * MAX_AI_QUESTIONS in this exchange. Counted since the customer's last
+ * button/list tap — chats started from the menu keep their own flow
+ * questions. Fails open (null).
+ */
+async function forcedHandoffReason(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+  messages: ChatMessage[],
+): Promise<'annoyed' | 'max_questions' | null> {
+  const lastUser = messages.filter((m) => m.role === 'user').slice(-2)
+  if (lastUser.some((m) => ANNOYED_BY_QUESTIONS_RE.test(textOf(m.content)))) return 'annoyed'
+  try {
+    let since = Date.now() - 24 * 3600_000
+    const { data: tap } = await db
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'customer')
+      .eq('content_type', 'interactive')
+      .gte('created_at', new Date(since).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (tap?.created_at) since = new Date(tap.created_at as string).getTime()
+    const { count, error } = await db
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('conversation_id', conversationId)
+      .eq('ai_generated', true)
+      .like('content_text', '%?%')
+      .gte('created_at', new Date(since).toISOString())
+    if (error) return null
+    return (count ?? 0) >= MAX_AI_QUESTIONS ? 'max_questions' : null
+  } catch {
+    return null
   }
 }
 
