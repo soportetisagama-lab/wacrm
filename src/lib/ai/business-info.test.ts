@@ -145,7 +145,7 @@ describe('buildBusinessInfoBlock', () => {
   })
 
   it('respects the size cap and returns null when empty', () => {
-    const many = Array.from({ length: 50 }, (_, i) => ({ title: `Opción ${i}`, text: 'x'.repeat(200) + i }))
+    const many = Array.from({ length: 50 }, (_, i) => ({ title: `Opción ${String.fromCharCode(65 + i)}`, text: 'x'.repeat(200) + 'y'.repeat(i) }))
     const block = buildBusinessInfoBlock(many, 1000) ?? ''
     expect(block.length).toBeLessThanOrEqual(1000)
     expect(block.length).toBeGreaterThan(0)
