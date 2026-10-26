@@ -76,7 +76,27 @@ describe('menuTextHasPrice', () => {
       'Envío gratis desde 300',
       'Delivery 15',
       'Ollas 1200',
+      'Envío 15.90',
+      'Delivery desde 12.50',
+      'Delivery 10.00',
+      'calle desde 15',
+      'Av. Lima desde 20',
+      'Mz. A envío 15',
+      'Envío km 15',
     ]) {
+      expect(menuTextHasPrice(t), t).toBe(true)
+    }
+    for (const t of [
+      'Av. 28 de Julio 1450, tienda 105.',
+      'Calle 2 de Mayo 123, Stand 12, piso 2.',
+      'Atendemos de 9.00 a.m. a 6.30 p.m.',
+    ]) {
+      expect(menuTextHasPrice(t), t).toBe(false)
+    }
+  })
+
+  it('keeps the street-number allowance off money words', () => {
+    for (const t of ['Local 5 por 30']) {
       expect(menuTextHasPrice(t), t).toBe(true)
     }
   })
