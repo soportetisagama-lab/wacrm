@@ -114,6 +114,15 @@ describe('buildBusinessInfoBlock', () => {
     expect(buildBusinessInfoBlock([{ title: 'Cotizar', text: 'Cuéntanos qué necesitas.' }])).toBeNull()
   })
 
+  it('drops any answer about the catalog (Maxi: an advisor sends it)', () => {
+    expect(
+      buildBusinessInfoBlock([
+        { title: 'Catálogo', text: 'Aquí tienes nuestro catálogo: https://example.com/cat.pdf' },
+        { title: 'Novedades', text: 'Revisa el catalogo nuevo.' },
+      ]),
+    ).toBeNull()
+  })
+
   it('dedupes the same answer under several options, merging titles', () => {
     const block = buildBusinessInfoBlock([
       { title: 'Ubicación', text: 'Av. Ejemplo 1, Lima.' },

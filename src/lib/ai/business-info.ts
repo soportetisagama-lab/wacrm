@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasPrice } from './learning/guards'
+import { mentionsCatalog } from '@/lib/catalog-request'
 
 // ============================================================
 // Business info for the AI, taken from the account's own WhatsApp
@@ -143,6 +144,8 @@ export function buildBusinessInfoBlock(
   for (const a of answers) {
     if (!a.title || !a.text) continue
     if (menuTextHasPrice(a.title) || menuTextHasPrice(a.text)) continue
+    // Maxi: el catálogo lo envía un asesor; la IA nunca ve respuestas de menú sobre él.
+    if (mentionsCatalog(a.title) || mentionsCatalog(a.text)) continue
     const key = norm(a.text)
     if (!key) continue
     const prev = merged.get(key)
