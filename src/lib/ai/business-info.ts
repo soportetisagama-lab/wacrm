@@ -66,11 +66,34 @@ const TIME_RANGE_RE = new RegExp(
   'gi',
 )
 
-/** True when a menu text mentions money in any way. */
+/** Numbers that are clearly not money: a street number ("Av. Ejemplo
+ *  12345", "Mz. B Lt. 5"), a quantity with its unit ("2 cuadras",
+ *  "3 días"), a phone, "24/7" or a list marker ("1️⃣", "1. Ubicación"). */
+const ADDRESS_NUM_RE =
+  /\b(?:av|avenida|jr|jir[oó]n|calle|psje|pasaje|carretera|urb|mz|manzana|lt|lote|km|n[°º]|nro|int)\b\.?[^,;\n\d]{0,40}?\d+[a-z]?\b/gi
+const UNIT_NUM_RE =
+  /\b\d+(?:[.,]\d+)?\s*(?:horas?|hrs?|h|d[ií]as?|semanas?|mes(?:es)?|años?|minutos?|min|cuadras?|km|kil[oó]metros?|metros?|m2|m²|cm|mm|pulgadas?|piezas?|unidades?|personas?|niveles?)(?![a-záéíóúñ])/gi
+const PHONE_RE = /(?:\+?51[\s-]?)?\b9\d{2}[\s-]?\d{3}[\s-]?\d{3}\b|\(0?1\)\s?\d{3}[\s-]?\d{4}\b/g
+const MARKER_RE = /\d️?⃣|^\s*\d{1,2}[.)-]\s|\b24\s*\/\s*7\b/g
+
+/**
+ * True when a menu text mentions money in any way, or has any figure
+ * we can't explain as a time, address, phone or quantity. A bare
+ * "desde 1200", "pedido mínimo 500" or "Delivery 15" is a price without
+ * a currency, so any leftover digit counts as one (fails safe: the
+ * answer is left out, never a price passed on).
+ */
 export function menuTextHasPrice(text: string): boolean {
-  return hasPrice(
-    text.replace(CLOCK_TIME_RE, ' hora ').replace(TIME_RANGE_RE, (_m, lead?: string) => `${lead ?? ''} hora `),
-  )
+  const rest = text
+    .replace(CLOCK_TIME_RE, ' hora ')
+    .replace(TIME_RANGE_RE, (_m, lead?: string) => `${lead ?? ''} hora `)
+  if (hasPrice(rest)) return true
+  const leftover = rest
+    .replace(PHONE_RE, ' ')
+    .replace(ADDRESS_NUM_RE, ' ')
+    .replace(UNIT_NUM_RE, ' ')
+    .replace(MARKER_RE, ' ')
+  return /\d/.test(leftover)
 }
 
 function menuOptions(node: NodeLike): OptionLike[] {
