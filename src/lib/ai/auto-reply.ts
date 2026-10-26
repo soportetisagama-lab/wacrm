@@ -5,6 +5,7 @@ import { AiError, type AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
+import { loadBusinessInfo } from './business-info'
 import { loadLineTransferContext } from '@/lib/line-transfer-inbound'
 import { loadOutboundTransferContext } from '@/lib/line-transfer-outbound'
 import { isWithinBusinessHours, nextOpeningPhrase } from '@/lib/flows/business-hours'
@@ -602,6 +603,7 @@ export async function runAutoReplyNow(
       now: new Date(),
       customerMemory: await loadCustomerMemory(db, accountId, contactId),
       learnedRules: await loadLearnedRules(db, accountId),
+      businessInfo: await loadBusinessInfo(db, accountId),
     })
 
     // An empty completion (the model spent its whole budget without

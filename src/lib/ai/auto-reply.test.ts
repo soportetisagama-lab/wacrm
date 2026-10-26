@@ -47,6 +47,7 @@ const h = vi.hoisted(() => ({
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
+vi.mock('./business-info', () => ({ loadBusinessInfo: async () => null }))
 vi.mock('@/lib/line-transfer-inbound', () => ({ loadLineTransferContext: async () => null }))
 vi.mock('@/lib/line-transfer-outbound', () => ({ loadOutboundTransferContext: async () => null }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
