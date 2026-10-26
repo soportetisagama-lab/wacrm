@@ -58,6 +58,27 @@ describe('menuTextHasPrice', () => {
     expect(menuTextHasPrice('Lunes a sábado de 9 a 18 y domingos de 10 a 13.')).toBe(false)
     expect(menuTextHasPrice('Envíos a todo Lima en 24 a 48 horas.')).toBe(false)
     expect(menuTextHasPrice('Domingos de 10 a 15 soles')).toBe(true)
+    expect(
+      menuTextHasPrice(
+        '📍 Nos ubicamos en Av. Nicolás Ayllón 11654, Gloria Alta, Ate, Lima. Atendemos de lunes a viernes de 8:00 a.m. a 5:00 p.m. y sábados de 8:30 a.m. a 12:30 p.m. Hacemos envíos a todo el Perú con embalaje reforzado.',
+      ),
+    ).toBe(false)
+    expect(menuTextHasPrice('Mz. B Lt. 5, llámanos al 987 654 321. Atención 24/7.')).toBe(false)
+    expect(menuTextHasPrice('1️⃣ Ubicación')).toBe(false)
+  })
+
+  it('treats any unexplained figure as a price without currency', () => {
+    for (const t of [
+      'Ollas desde 1200',
+      'desde 1,200',
+      'a partir de 1200',
+      'pedido mínimo 500',
+      'Envío gratis desde 300',
+      'Delivery 15',
+      'Ollas 1200',
+    ]) {
+      expect(menuTextHasPrice(t), t).toBe(true)
+    }
   })
 
   it('catches currencies, amounts and price words', () => {
