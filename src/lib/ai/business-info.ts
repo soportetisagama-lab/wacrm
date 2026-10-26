@@ -51,10 +51,11 @@ function cleanText(text: string): string {
     .trim()
 }
 
-/** Clock times ("9:00", "18.30", "6:00 pm") read as figures to the price
+/** Clock times ("9:00", "18.30 h", "6:00 pm") read as figures to the price
  *  guard ("de 9:00 a 18:00" → "a 18" looks like an amount), so they're
- *  neutralized before checking. Currency, "soles", "precio"… still trip. */
-const CLOCK_TIME_RE = /\b\d{1,2}[:.]\d{2}\b/g
+ *  neutralized before checking. With a dot only when an a.m./p.m./h
+ *  follows: "15.90" alone is a price. Currency, "soles"… still trip. */
+const CLOCK_TIME_RE = /\b\d{1,2}:\d{2}\b|\b\d{1,2}\.\d{2}(?=\s*(?:a\.?\s?m|p\.?\s?m|hrs?|h)(?![a-záéíóúñ]))/gi
 /** Same for small ranges that are clearly time: "en 24 a 48 horas",
  *  "domingos de 10 a 13" (after a weekday). Never with a currency. */
 const NO_MONEY_AFTER = String.raw`(?!\s*(?:soles|sol|lucas|d[oó]lares|usd|pen|mil|%))`
@@ -69,8 +70,17 @@ const TIME_RANGE_RE = new RegExp(
 /** Numbers that are clearly not money: a street number ("Av. Ejemplo
  *  12345", "Mz. B Lt. 5"), a quantity with its unit ("2 cuadras",
  *  "3 días"), a phone, "24/7" or a list marker ("1️⃣", "1. Ubicación"). */
-const ADDRESS_NUM_RE =
-  /\b(?:av|avenida|jr|jir[oó]n|calle|psje|pasaje|carretera|urb|mz|manzana|lt|lote|km|n[°º]|nro|int)\b\.?[^,;\n\d]{0,40}?\d+[a-z]?\b/gi
+/** Gap between the street word and its number; never across a money word
+ *  ("Av. Lima desde 20" is a price, not a street number). */
+const ADDRESS_GAP = String.raw`(?:(?!\b(?:desde|env[ií]os?|delivery|por|m[ií]nimo|precios?|costos?|partir|gratis|solo|s[oó]lo)\b)[^,;\n\d]){0,40}?`
+const ADDRESS_NUM_RE = new RegExp(
+  String.raw`\b(?:av|avenida|jr|jir[oó]n|calle|psje|pasaje|carretera|urb|mz|manzana|lt|lote|n[°º]|nro|int|tienda|stand|local|of|oficina|piso|dpto|departamento)\b\.?` +
+    ADDRESS_GAP +
+    String.raw`\d+[a-z]?\b(?:` +
+    ADDRESS_GAP +
+    String.raw`\d+[a-z]?\b)?`,
+  'gi',
+)
 const UNIT_NUM_RE =
   /\b\d+(?:[.,]\d+)?\s*(?:horas?|hrs?|h|d[ií]as?|semanas?|mes(?:es)?|años?|minutos?|min|cuadras?|km|kil[oó]metros?|metros?|m2|m²|cm|mm|pulgadas?|piezas?|unidades?|personas?|niveles?)(?![a-záéíóúñ])/gi
 const PHONE_RE = /(?:\+?51[\s-]?)?\b9\d{2}[\s-]?\d{3}[\s-]?\d{3}\b|\(0?1\)\s?\d{3}[\s-]?\d{4}\b/g
