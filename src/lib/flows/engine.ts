@@ -2998,21 +2998,57 @@ function isCatalogRequest(message: ParsedInbound): boolean {
 
 /** Línea Maxi: el catálogo lo envía un asesor, nunca el bot. Responde
  *  que un asesor lo enviará, termina el run activo (si hay) y deja la
- *  conversación en cola con el motivo "El cliente pidió el catálogo". */
+ *  conversación en cola con el motivo "El cliente pidió el catálogo".
+ *  Si el contacto aún no tiene celular, primero se le pide el número
+ *  (holdFlowHandoffForPhone) sin prometer un asesor; la derivación y el
+ *  aviso del catálogo se completan cuando el cliente lo comparte. */
 async function handOffOnCatalogRequest(
   db: AdminClient,
   input: DispatchInboundInput,
   activeRun: FlowRunRow | null,
 ): Promise<DispatchInboundResult> {
+  const text =
+    input.message.kind === "text"
+      ? input.message.text.trim()
+      : input.message.kind === "interactive_reply"
+        ? input.message.reply_title.trim()
+        : "";
+  const handoffSummary = text
+    ? `📚 ${CATALOG_REQUEST_NOTE} ("${text.slice(0, 80)}").`
+    : `📚 ${CATALOG_REQUEST_NOTE}.`;
+  const hold = await holdFlowHandoffForPhone(db, {
+    accountId: input.accountId,
+    userId: input.userId,
+    conversationId: input.conversationId,
+    contactId: input.contactId,
+    summary: handoffSummary,
+    options: {
+      closing: CATALOG_REQUEST_REPLY,
+      closingAfterHours: CATALOG_REQUEST_REPLY_AFTER_HOURS,
+    },
+  });
+  if (hold === "held") {
+    if (activeRun) {
+      await logEvent(db, activeRun.id, "message_sent", activeRun.current_node_key, {
+        reason: "customer_requested_catalog_awaiting_phone",
+        note: CATALOG_REQUEST_NOTE,
+      });
+      await endRun(db, activeRun.id, "handed_off", "customer_requested_catalog_awaiting_phone");
+    }
+    return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
+  }
   try {
     await engineSendText({
       accountId: input.accountId,
       userId: input.userId,
       conversationId: input.conversationId,
       contactId: input.contactId,
-      text: isWithinBusinessHours()
-        ? CATALOG_REQUEST_REPLY
-        : fillBusinessHoursPlaceholders(CATALOG_REQUEST_REPLY_AFTER_HOURS),
+      text:
+        hold === "give_up"
+          ? await giveUpTextForContact(db, input.contactId)
+          : isWithinBusinessHours()
+            ? CATALOG_REQUEST_REPLY
+            : fillBusinessHoursPlaceholders(CATALOG_REQUEST_REPLY_AFTER_HOURS),
       aiGenerated: false,
     });
   } catch (err) {
@@ -3028,19 +3064,7 @@ async function handOffOnCatalogRequest(
     });
     await endRun(db, activeRun.id, "handed_off", "customer_requested_catalog");
   }
-  const text =
-    input.message.kind === "text"
-      ? input.message.text.trim()
-      : input.message.kind === "interactive_reply"
-        ? input.message.reply_title.trim()
-        : "";
-  await markConversationPendingHandoff(
-    db,
-    input.conversationId,
-    text
-      ? `📚 ${CATALOG_REQUEST_NOTE} ("${text.slice(0, 80)}").`
-      : `📚 ${CATALOG_REQUEST_NOTE}.`,
-  );
+  await markConversationPendingHandoff(db, input.conversationId, handoffSummary);
   return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
 }
 

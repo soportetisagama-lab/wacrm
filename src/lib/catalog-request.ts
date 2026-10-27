@@ -6,6 +6,8 @@
  * - Si el cliente pide el catálogo (texto o toque de una opción antigua),
  *   el flujo responde `CATALOG_REQUEST_REPLY` y deriva a un asesor con la
  *   nota `CATALOG_REQUEST_NOTE` (engine.ts, `handOffOnCatalogRequest`).
+ *   Si el contacto no tiene celular, primero se le pide el número y la
+ *   derivación queda en espera hasta que lo comparta.
  * - La IA (auto-reply y collect_ai) nunca recibe documentos de catálogo
  *   (`withoutCatalogDocuments`) y su prompt le prohíbe enviarlo
  *   (`CATALOG_PROMPT_RULE`).
@@ -36,7 +38,8 @@ export const CATALOG_REQUEST_NOTE = "El cliente pidió el catálogo";
 
 /** Regla que se agrega al prompt de la IA (auto-reply y collect_ai). */
 export const CATALOG_PROMPT_RULE =
-  "Never send the product catalog yourself: no document, no link, no URL, not even from the knowledge base. If the customer asks for the catalog, reply only that an advisor will send it shortly (e.g. \"¡Claro! En unos momentos un asesor te enviará el catálogo.\").";
+  "Never send the product catalog yourself: no document, no link, no URL, not even from the knowledge base. If the customer asks for the catalog and their mobile number is already known, reply only that an advisor will send it shortly (e.g. \"¡Claro! En unos momentos un asesor te enviará el catálogo.\"). " +
+  "If their mobile number is not known yet, or a rule here forbids promising an advisor, do not say an advisor will send it: ask for their number so the catalog can be sent, with exactly: \"Para ayudarte mejor, ¿nos compartes tu número de celular?\"";
 
 /** Quita los documentos de catálogo del set que la IA puede enviar. */
 export function withoutCatalogDocuments<
