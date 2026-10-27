@@ -642,6 +642,32 @@ function InboxPageInner() {
     router.replace("/inbox", { scroll: false });
   }, [router]);
 
+  // `?c=` changed from outside the list (a browser / "derivación"
+  // notification click, a link from another page): open that thread
+  // NOW. Before, the URL changed but the selection waited for the next
+  // list refetch — which comes on its own when the tab regains focus or
+  // realtime reconnects after a while — so the inbox later jumped to that
+  // conversation by itself, in the middle of another chat. A click in
+  // the list sets the ref first (handleSelectConversation), so it never
+  // lands here; a conversation not loaded yet is handled by
+  // handleConversationsLoaded when it arrives. Reacts to `?c=` only: the
+  // open thread is read from a ref, so the render between a click and
+  // its router.replace (old `?c=`, new thread) can't reopen the old one.
+  const activeConversationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversation?.id ?? null;
+  }, [activeConversation?.id]);
+  useEffect(() => {
+    if (!deepLinkConvId || autoSelectedForDeepLinkRef.current === deepLinkConvId) return;
+    const match = conversationsByIdRef.current.get(deepLinkConvId);
+    if (!match) return;
+    autoSelectedForDeepLinkRef.current = deepLinkConvId;
+    if (activeConversationIdRef.current === deepLinkConvId) return;
+    setActiveConversation(match);
+    setActiveContact(match.contact ?? null);
+    setMessages(messagesCacheRef.current.get(match.id) ?? []);
+  }, [deepLinkConvId]);
+
   // Mirrors handleCloseConversation's reset, but reacts to `?c=` being
   // dropped from OUTSIDE this component instead of the in-app back
   // button calling that handler directly — namely the Android wrapper's
