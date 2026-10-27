@@ -46,6 +46,9 @@ export interface HeldHandoffOptions {
   closingAfterHours?: string
   /** Advisor to assign (a handoff node's assign_to). */
   assignTo?: string
+  /** Every bot turn spent waiting (questions and attempts included) —
+   *  the hard cap of lib/ai/phone-ask.ts (MAX_HELD_TURNS). */
+  turns?: number
 }
 
 export interface HeldHandoff {
@@ -63,6 +66,7 @@ function cleanOptions(o: HeldHandoffOptions | undefined): HeldHandoffOptions {
   if (o?.closing?.trim()) out.closing = o.closing.trim()
   if (o?.closingAfterHours?.trim()) out.closingAfterHours = o.closingAfterHours.trim()
   if (o?.assignTo) out.assignTo = o.assignTo
+  if (typeof o?.turns === 'number' && Number.isFinite(o.turns) && o.turns > 0) out.turns = Math.floor(o.turns)
   return out
 }
 
@@ -244,6 +248,8 @@ export async function askPhoneBeforeHandoff(
     userId: string
     summary: string
     options?: HeldHandoffOptions
+    /** What to say instead of ASK_PHONE_TEXT (lib/ai/phone-ask.ts). */
+    text?: string
   },
 ): Promise<'asked' | 'give_up' | 'lost'> {
   const current = await loadHandoffSummary(db, args.conversationId)
@@ -267,6 +273,7 @@ export async function askPhoneBeforeHandoff(
       })
       .eq('id', args.conversationId)
   }
+  const text = args.text ?? ASK_PHONE_TEXT
   if (!(await lastBusinessMessageIs(db, args.conversationId, PHONE_REQUEST_LOG_TEXT))) {
     try {
       await engineSendText({
@@ -274,7 +281,7 @@ export async function askPhoneBeforeHandoff(
         userId: args.userId,
         conversationId: args.conversationId,
         contactId: args.contactId,
-        text: ASK_PHONE_TEXT,
+        text,
       })
     } catch (err) {
       console.error('[ai awaiting phone] ask send failed:', err)
