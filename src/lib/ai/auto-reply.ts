@@ -39,10 +39,12 @@ import {
   askPhoneBeforeHandoff,
   loadContactPhoneState,
   noPhoneGiveUpTextFor,
+  phoneStateOf,
   parseAwaitingPhone,
   socialClosingTextFor,
   socialPhoneNote,
   swapHeldMarker,
+  type ContactPhoneState,
   type HeldHandoffOptions,
 } from './awaiting-phone'
 
@@ -504,16 +506,23 @@ async function handOffWithoutAi(
 
 /** The contact's name when it looks like a real one (not empty, not
  *  just a phone number). Null on any failure — the prompt then omits it. */
-async function loadContactName(
+function realContactName(row: { name?: unknown } | null): string | null {
+  const name = typeof row?.name === 'string' ? row.name.trim() : ''
+  return name && /\p{L}/u.test(name) ? name : null
+}
+
+/** One contacts read per reply: the name for the prompt and the phone
+ *  state for the advisor-promise rule. Nulls on any failure. */
+async function loadContactForReply(
   db: ReturnType<typeof supabaseAdmin>,
   contactId: string,
-): Promise<string | null> {
+): Promise<{ name: string | null; phoneState: ContactPhoneState | null }> {
   try {
-    const { data } = await db.from('contacts').select('name').eq('id', contactId).maybeSingle()
-    const name = typeof data?.name === 'string' ? data.name.trim() : ''
-    return name && /\p{L}/u.test(name) ? name : null
+    const { data, error } = await db.from('contacts').select('*').eq('id', contactId).maybeSingle()
+    if (error || !data) return { name: null, phoneState: null }
+    return { name: realContactName(data), phoneState: phoneStateOf(data) }
   } catch {
-    return null
+    return { name: null, phoneState: null }
   }
 }
 
@@ -775,7 +784,7 @@ export async function runAutoReplyNow(
 
     // Instagram/Messenger, or WhatsApp without a number: the reply must
     // never promise an advisor (prompt guard + filter before sending).
-    const phoneState = await loadContactPhoneState(db, contactId)
+    const { name: contactName, phoneState } = await loadContactForReply(db, contactId)
     const noAdvisorPromise = Boolean(phoneState && (phoneState.social || phoneState.needsPhone))
     const systemPrompt = buildSystemPrompt({
       noAdvisorPromise,
@@ -785,7 +794,7 @@ export async function runAutoReplyNow(
       documents: config.documents,
       lineTransferContext: await loadLineTransferContext(db, conversationId, contactId),
       outboundTransferNote: await loadOutboundTransferContext(db, conversationId, contactId),
-      contactName: await loadContactName(db, contactId),
+      contactName,
       now: new Date(),
       customerMemory: await loadCustomerMemory(db, accountId, contactId),
       learnedRules: await loadLearnedRules(db, accountId),
