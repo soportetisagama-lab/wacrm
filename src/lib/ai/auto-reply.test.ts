@@ -243,6 +243,17 @@ import {
   SOCIAL_NO_PHONE_GIVE_UP_TEXT,
   awaitingPhoneSummary,
 } from './awaiting-phone'
+import {
+  MAX_HELD_TURNS,
+  PHONE_INCOMPLETE_TEXT,
+  PHONE_REFUSED_TEXT,
+  PHONE_SAME_NUMBER_TEXT,
+} from './phone-ask'
+
+/** A customer text row for h.state.burstRows (newest first). */
+function customerText(text: string, type = 'text') {
+  return { sender_type: 'customer', content_type: type, content_text: text, created_at: new Date().toISOString() }
+}
 
 const ARGS = {
   accountId: 'acct-1',
@@ -1462,13 +1473,13 @@ describe('handoff on hold until a phone-less WhatsApp contact shares the number'
       ai_reply_count: 1,
       ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
     }
-    h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'a este mismo número' }])
+    h.state.burstRows = [customerText('a este mismo número')]
     await runAutoReplyNow(ARGS)
     expect(h.generateReply).not.toHaveBeenCalled()
-    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(sentTexts()).toEqual([PHONE_SAME_NUMBER_TEXT])
     expect(h.state.updatePayload).toEqual({
       ai_autoreply_disabled: false,
-      ai_handoff_summary: awaitingPhoneSummary(2, 'Nota para el asesor'),
+      ai_handoff_summary: awaitingPhoneSummary(2, 'Nota para el asesor', { turns: 1 }),
     })
   })
 
@@ -1549,10 +1560,10 @@ describe('Instagram / Messenger: ask for the number before handing off', () => {
       ai_reply_count: 1,
       ai_handoff_summary: awaitingPhoneSummary(2, 'Nota'),
     }
-    h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'el mismo' }])
+    h.state.burstRows = [customerText('el mismo')]
     await runAutoReplyNow(ARGS)
-    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
-    expect(h.state.updatePayload?.ai_handoff_summary).toBe(awaitingPhoneSummary(3, 'Nota'))
+    expect(sentTexts()).toEqual([PHONE_SAME_NUMBER_TEXT])
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(awaitingPhoneSummary(3, 'Nota', { turns: 1 }))
 
     h.engineSendText.mockClear()
     h.state.conv = { ...h.state.conv, ai_handoff_summary: awaitingPhoneSummary(3, 'Nota') }
@@ -1718,5 +1729,81 @@ describe('advisor-promise filter on the AI reply', () => {
     await runAutoReplyNow(ARGS)
     expect(sentTexts()).toEqual(['Perfecto. Un asesor te escribe en breve.'])
     expect(systemPrompt()).not.toContain('never promise or imply that an advisor')
+  })
+})
+
+describe('held phone turn (./phone-ask), WhatsApp without a number and social alike', () => {
+  const sentTexts = () => h.engineSendText.mock.calls.map((c) => (c[0] as { text: string }).text)
+  const held = (asks = 1, turns?: number) =>
+    awaitingPhoneSummary(asks, 'Nota', turns ? { turns } : undefined)
+
+  beforeEach(() => {
+    h.state.contactPhone = null
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 1, ai_handoff_summary: held() }
+  })
+
+  it.each(['whatsapp', 'instagram'])('%s: an incomplete number gets the fix, without counting', async (channel) => {
+    h.state.contactChannel = channel
+    if (channel !== 'whatsapp') h.state.contactSocialPhone = null
+    h.state.burstRows = [customerText('92684312')]
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([PHONE_INCOMPLETE_TEXT])
+    expect(PHONE_INCOMPLETE_TEXT).not.toMatch(/bot[oó]n/)
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(held(1, 1))
+  })
+
+  it('a question is answered by the AI with the ask added in one line', async () => {
+    h.state.burstRows = [customerText('¿hacen envíos a Arequipa?')]
+    h.generateReply.mockResolvedValue({ text: 'Sí, enviamos a todo el Perú.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(sentTexts()).toEqual([`Sí, enviamos a todo el Perú.\n\n${ASK_PHONE_TEXT}`])
+    expect(h.state.swaps.at(-1)?.payload.ai_handoff_summary).toBe(held(1, 1))
+  })
+
+  it('a question that the AI answers with an advisor promise is filtered, and the ask is not doubled', async () => {
+    h.state.burstRows = [customerText('¿cuánto cuesta?')]
+    h.generateReply.mockResolvedValue({ text: 'Un asesor te enviará la cotización.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+  })
+
+  it('"ok" right after the ask: no new ask', async () => {
+    h.state.burstRows = [customerText('ok 👍'), { ...customerText(ASK_PHONE_TEXT), sender_type: 'bot' }]
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(held(1, 1))
+  })
+
+  it('a refusal hands off without the number and without promising an advisor', async () => {
+    h.state.burstRows = [customerText('no quiero dar mi número, prefiero por aquí')]
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([PHONE_REFUSED_TEXT])
+    expect(PHONE_REFUSED_TEXT).not.toMatch(/asesor|te contact|te escrib|te llam/)
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('prefirió no dar su número')
+  })
+
+  it('WhatsApp: a number that could not be linked (another contact has it) hands off with it in the note', async () => {
+    h.state.burstRows = [customerText('926843129')]
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([SOCIAL_HANDOFF_CLOSING_TEXT])
+    expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('+51926843129')
+  })
+
+  it('the hard cap hands off with the give-up line, whatever the customer writes', async () => {
+    h.state.conv = { ...h.state.conv, ai_handoff_summary: held(1, MAX_HELD_TURNS) }
+    h.state.burstRows = [customerText('¿y en acero?')]
+    await runAutoReplyNow(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(sentTexts()).toEqual([NO_PHONE_GIVE_UP_TEXT])
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending' })
+  })
+
+  it('an audio without transcript asks to write it, without counting', async () => {
+    h.state.burstRows = [customerText('', 'audio')]
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()[0]).toMatch(/audios/)
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(held(1, 1))
   })
 })

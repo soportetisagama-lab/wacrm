@@ -107,6 +107,8 @@ export type TypedPhoneResult =
   | { kind: 'phone'; phone: string }
   | { kind: 'incomplete' }
   | { kind: 'multiple' }
+  | { kind: 'landline' }
+  | { kind: 'foreign_no_plus' }
   | { kind: 'none' }
 
 /**
@@ -128,6 +130,12 @@ export type TypedPhoneResult =
  *                  attempt (starts with 9) but has the wrong digit
  *                  count — "974 710 55".
  *   - 'multiple'   two or more mobile-looking numbers.
+ *   - 'landline'   a Peruvian landline ("01 4567890", "(01) 456-7890",
+ *                  "+51 1 4567890") — we ask for a mobile instead.
+ *   - 'foreign_no_plus' 10–15 digits that aren't Peruvian and came
+ *                  without "+" ("5491112345678") — we ask for it with
+ *                  the country code and "+". Never a DNI/RUC or a
+ *                  number next to "pedido", "orden", "factura"….
  *   - 'none'       anything else (normal chat, a DNI/RUC, a long
  *                  message that merely contains digits).
  * The caller uses 'incomplete' / 'multiple' only to word the re-ask
@@ -180,8 +188,13 @@ function classifyTypedPhoneChunk(text: string): TypedPhoneResult {
 
   const candidate = candidates[0]
   const digits = normalizePhone(candidate)
+  const plus = candidate.trim().startsWith('+')
   if (/^9\d{8}$/.test(digits)) return { kind: 'phone', phone: `51${digits}` }
   if (/^519\d{8}$/.test(digits)) return { kind: 'phone', phone: digits }
+  const notAPhoneContext = NOT_A_PHONE_CONTEXT_RE.test(text)
+  if (!notAPhoneContext && (/^0[1-8]\d{7}$/.test(digits) || /^51[1-8]\d{7}$/.test(digits))) {
+    return { kind: 'landline' }
+  }
   if (candidate.trim().startsWith('+') && digits.length >= 8 && isValidE164(`+${digits}`)) {
     // An explicit +51 that isn't a valid mobile is a mistyped Peruvian
     // number, not a foreign one.
@@ -189,8 +202,22 @@ function classifyTypedPhoneChunk(text: string): TypedPhoneResult {
     return { kind: 'phone', phone: digits }
   }
   if (mobileLike.length === 1) return { kind: 'incomplete' }
+  if (
+    !plus &&
+    !notAPhoneContext &&
+    digits.length >= 10 &&
+    digits.length <= 15 &&
+    !/^(?:0|9|51)/.test(digits) &&
+    !/^(?:10|15|17|20)\d{9}$/.test(digits)
+  ) {
+    return { kind: 'foreign_no_plus' }
+  }
   return { kind: 'none' }
 }
+
+/** Digits next to these words are an order/ID number, not a phone. */
+const NOT_A_PHONE_CONTEXT_RE =
+  /(?<![\p{L}])(?:pedido|orden|dni|ruc|factura|boleta|c[oó]digo|ticket|gu[ií]a|serie|cuenta|operaci[oó]n|tracking)(?![\p{L}])/iu
 
 /** The phone from classifyTypedPhone, or null for every other outcome. */
 export function extractTypedPhone(text: string): string | null {
