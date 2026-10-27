@@ -1698,7 +1698,17 @@ async function handOffFromCollectAi(
     return { outcome: "handed_off" };
   }
   const noPhoneText = hold === "give_up" ? NO_PHONE_GIVE_UP_TEXT : undefined;
-  const finalText = noPhoneText ?? outgoingText;
+  // Advancing to a handoff node for a WhatsApp contact with no number:
+  // that node asks for it and holds the handoff (holdFlowHandoffForPhone),
+  // so collect_ai sends nothing here — its text usually promises an
+  // advisor — and logs no "handoff" event, which would make the node
+  // read as a duplicate (wasHandedOffRecently) and skip the ask.
+  const nodeWillAskPhone =
+    Boolean(cfg.handoff_node_key) &&
+    !isDuplicate &&
+    Boolean(run.contact_id) &&
+    (await contactNeedsPhone(db, run.contact_id!));
+  const finalText = nodeWillAskPhone ? undefined : (noPhoneText ?? outgoingText);
 
   // Tracked so the handoff node we're about to advance into (below)
   // knows a customer-facing message already went out for this exact
@@ -1727,7 +1737,7 @@ async function handOffFromCollectAi(
     }
   }
 
-  await logEvent(db, run.id, "handoff", node.node_key, {
+  await logEvent(db, run.id, nodeWillAskPhone ? "message_sent" : "handoff", node.node_key, {
     node_type: "collect_ai",
     reason,
     collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
