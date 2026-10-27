@@ -21,8 +21,11 @@ import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { hasPrice } from '@/lib/ai/learning/guards'
+import { awaitingPhoneSummary, loadContactPhoneState } from '@/lib/ai/awaiting-phone'
+import { CHANNEL_LABEL } from '@/lib/channels/types'
 import { GraphApiError, replyToComment, sendPrivateReply } from './graph'
 import { parseSocialComments, type SocialCommentEvent } from './parse'
+import { findOrCreateSocialContact, findOrCreateSocialConversation } from './thread'
 
 // The Community Manager serves these chats first: no text promises an
 // advisor. The private message asks for the number right away, the same
@@ -42,6 +45,7 @@ const PRIVATE_REPLY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface CommentReplyConfig {
   account_id: string
+  user_id: string
   channel: 'instagram' | 'messenger'
   page_id: string
   access_token: string
@@ -80,6 +84,71 @@ function errMessage(err: unknown): string {
     return `${err.message} (code=${err.code ?? '-'} subcode=${err.subcode ?? '-'})`
   }
   return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * The private reply goes into the commenter's conversation (found or
+ * created by the PSID / IGSID Meta returned), so the inbox shows it and
+ * their answer lands after it. Without their number, the conversation
+ * is left waiting for it (the same first-message hold as ./inbound's
+ * handOffIfUnanswered): the answer then goes through lib/ai/phone-ask —
+ * and a number they type restarts the welcome at its phone gate.
+ * Best-effort: the DM already went out.
+ */
+async function recordPrivateReply(
+  db: SupabaseClient,
+  config: CommentReplyConfig,
+  comment: SocialCommentEvent,
+  recipientId: string,
+  messageId: string,
+  text: string,
+  stamp: string,
+): Promise<void> {
+  try {
+    const contactOutcome = await findOrCreateSocialContact(db, config, comment.channel, recipientId)
+    if (!contactOutcome) return
+    const contactId = contactOutcome.contact.id as string
+    const convResult = await findOrCreateSocialConversation(db, config, contactId, comment.channel)
+    if (!convResult) return
+    const conversation = convResult.conversation as {
+      id: string
+      assigned_agent_id?: string | null
+      ai_handoff_summary?: string | null
+    }
+
+    const { error: msgErr } = await db.from('messages').insert({
+      conversation_id: conversation.id,
+      sender_type: 'bot',
+      content_type: 'text',
+      content_text: text,
+      message_id: messageId,
+      status: 'sent',
+      created_at: stamp,
+    })
+    if (msgErr) {
+      console.error('[social-webhook] private reply not stored in the conversation:', msgErr.message)
+      return
+    }
+
+    const update: Record<string, unknown> = {
+      last_message_text: text,
+      last_message_at: stamp,
+      updated_at: stamp,
+    }
+    const phoneState = await loadContactPhoneState(db, contactId)
+    if (phoneState?.needsPhone && !conversation.assigned_agent_id && !conversation.ai_handoff_summary) {
+      update.ai_autoreply_disabled = false
+      update.ai_handoff_summary = awaitingPhoneSummary(
+        1,
+        `Llegó por un comentario en ${CHANNEL_LABEL[comment.channel]}.`,
+        { welcome: true },
+      )
+    }
+    const { error: convErr } = await db.from('conversations').update(update).eq('id', conversation.id)
+    if (convErr) console.error('[social-webhook] private reply conversation update failed:', convErr.message)
+  } catch (err) {
+    console.error('[social-webhook] private reply not stored in the conversation:', err)
+  }
 }
 
 export async function processSocialCommentsBody(body: unknown): Promise<void> {
@@ -198,14 +267,16 @@ export async function processSocialComment(
     }
   }
 
+  let privateSent: { messageId: string; recipientId: string | null } | null = null
   if (wantPrivate) {
     try {
-      patch.private_message_id = await sendPrivateReply({
+      privateSent = await sendPrivateReply({
         pageId: config.page_id,
         commentId: comment.commentId,
         text: privateText,
         accessToken,
       })
+      patch.private_message_id = privateSent.messageId
       result.private = 'sent'
     } catch (err) {
       const msg = errMessage(err)
@@ -222,6 +293,10 @@ export async function processSocialComment(
     .eq('channel', comment.channel)
     .eq('comment_id', comment.commentId)
   if (saveError) console.error('[social-webhook] comment reply log failed:', saveError.message)
+
+  if (privateSent?.recipientId) {
+    await recordPrivateReply(db, config, comment, privateSent.recipientId, privateSent.messageId, privateText, stamp)
+  }
 
   console.log(
     `[social-webhook] ${comment.channel} comment ${comment.commentId}: public=${result.public} private=${result.private}`,

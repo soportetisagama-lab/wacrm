@@ -291,6 +291,12 @@ export async function sendSocialOutbound(
     return { messageId }
   } catch (err) {
     if (err instanceof SocialSendError) throw err
+    // The real Meta answer, for the service logs (the UI gets the message below).
+    const graph = err instanceof GraphApiError ? err : null
+    console.error(
+      `[social] ${channel} send to ${recipientId} failed code=${graph?.code ?? '-'} subcode=${graph?.subcode ?? '-'}:`,
+      err instanceof Error ? err.message : err,
+    )
     if (isOutsideWindowError(err)) {
       throw new SocialSendError(
         'window_closed',
@@ -305,7 +311,8 @@ export async function sendSocialOutbound(
         502,
       )
     }
-    const message = err instanceof GraphApiError || err instanceof Error ? err.message : String(err)
-    throw new SocialSendError('meta_error', `${label}: ${message}`, 502)
+    const message = err instanceof Error ? err.message : String(err)
+    const codes = graph?.code != null ? ` (código ${graph.code}${graph.subcode != null ? `/${graph.subcode}` : ''})` : ''
+    throw new SocialSendError('meta_error', `${label} rechazó el envío: ${message}${codes}`, 502)
   }
 }

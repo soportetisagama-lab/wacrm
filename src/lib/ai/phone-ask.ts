@@ -98,7 +98,7 @@ const SAME_NUMBER_RE = new RegExp(
 )
 
 const QUESTION_START_RE =
-  /^(?:¿|cu[aá]nto|cu[aá]nta|d[oó]nde|c[oó]mo|qu[eé]|cu[aá]l(?:es)?|cu[aá]ndo|hacen|tienen|tiene|venden|env[ií]an|hay|aceptan|atienden|trabajan|puedo|pueden|podr[ií]an|me\s+pueden|me\s+puede|quisiera\s+saber|quiero\s+saber|info(?:rmaci[oó]n)?\s+(?:de|sobre)|precio|costo)(?![\p{L}])/iu
+  /^(?:¿|cu[aá]nto|cu[aá]nta|d[oó]nde|c[oó]mo|qu[eé]|cu[aá]l(?:es)?|cu[aá]ndo|hacen|tienen|tiene|venden|env[ií]an|hay|aceptan|atienden|trabajan|puedo|pueden|podr[ií]an|me\s+pueden|me\s+puede|quisiera\s+saber|quiero\s+saber|info(?:rmaci[oó]n)?|precio|costo)(?![\p{L}])/iu
 
 const ACK_WORDS = new Set([
   'gracias', 'gracia', 'muchas', 'mil', 'ok', 'okey', 'okay', 'oki', 'okis', 'vale', 'listo', 'ya', 'bueno', 'buenos',

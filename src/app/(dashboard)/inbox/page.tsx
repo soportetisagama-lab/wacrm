@@ -653,6 +653,26 @@ function InboxPageInner() {
   // point the *previous* value was already null too, so the condition
   // below stays false until deepLinkConvId genuinely reflects the open
   // thread first.
+  // `?c=` changed from outside the list (a browser / "derivación"
+  // notification click, a link from another page): open that thread
+  // NOW. Before, the URL changed but the selection waited for the next
+  // list refetch — which comes on its own when the tab regains focus or
+  // realtime reconnects after a while — so the inbox later jumped to that
+  // conversation by itself, in the middle of another chat. A click in
+  // the list sets the ref first (handleSelectConversation), so it never
+  // lands here; a conversation not loaded yet is handled by
+  // handleConversationsLoaded when it arrives.
+  useEffect(() => {
+    if (!deepLinkConvId || autoSelectedForDeepLinkRef.current === deepLinkConvId) return;
+    const match = conversationsByIdRef.current.get(deepLinkConvId);
+    if (!match) return;
+    autoSelectedForDeepLinkRef.current = deepLinkConvId;
+    if (activeConversation?.id === deepLinkConvId) return;
+    setActiveConversation(match);
+    setActiveContact(match.contact ?? null);
+    setMessages(messagesCacheRef.current.get(match.id) ?? []);
+  }, [deepLinkConvId, activeConversation?.id]);
+
   const prevDeepLinkConvIdRef = useRef(deepLinkConvId);
   useEffect(() => {
     const prev = prevDeepLinkConvIdRef.current;

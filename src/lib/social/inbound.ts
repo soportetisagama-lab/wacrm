@@ -26,7 +26,6 @@ import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { supabaseAdmin } from '@/lib/flows/admin-client'
-import { decrypt } from '@/lib/whatsapp/encryption'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
@@ -49,7 +48,6 @@ import { sendPushToUser } from '@/lib/notifications/push-send'
 import { storeInboundMediaCopy } from '@/lib/whatsapp/inbound-media'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { CHANNEL_LABEL, canViewChannel, type SocialChannel } from '@/lib/channels/types'
-import { fetchSocialProfile } from './graph'
 import { matchNumberedReply } from './interactive'
 import {
   attachmentPreview,
@@ -61,6 +59,7 @@ import {
 import type { SocialConfigRow } from './send'
 import { noteInboundControl } from './thread-control'
 import { processSocialCommentsBody } from './comments'
+import { findOrCreateSocialContact, findOrCreateSocialConversation } from './thread'
 
 /** Sent when nothing answered a contact's first message and their number
  *  is already on file (see step 6). The Community Manager serves these
@@ -109,105 +108,6 @@ async function releaseInboundEvent(db: SupabaseClient, channel: SocialChannel, m
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any
-
-async function findOrCreateSocialContact(
-  db: SupabaseClient,
-  config: SocialConfigRow,
-  event: SocialInboundEvent,
-): Promise<{ contact: Row; wasCreated: boolean } | null> {
-  const lookup = () =>
-    db
-      .from('contacts')
-      .select('*')
-      .eq('account_id', config.account_id)
-      .eq('channel', event.channel)
-      .eq('channel_user_id', event.senderId)
-      .maybeSingle()
-
-  const { data: existing } = await lookup()
-  if (existing) return { contact: existing, wasCreated: false }
-
-  let profile = null
-  try {
-    profile = await fetchSocialProfile({
-      channel: event.channel,
-      userId: event.senderId,
-      accessToken: decrypt(config.access_token),
-    })
-  } catch {
-    profile = null
-  }
-  const label = CHANNEL_LABEL[event.channel]
-  const name =
-    profile?.name || (profile?.username ? `@${profile.username}` : null) || `Usuario de ${label}`
-
-  const { data: created, error } = await db
-    .from('contacts')
-    .insert({
-      account_id: config.account_id,
-      user_id: config.user_id,
-      phone: null,
-      channel: event.channel,
-      channel_user_id: event.senderId,
-      channel_username: profile?.username ?? null,
-      name,
-    })
-    .select()
-    .single()
-
-  if (error) {
-    if (isUniqueViolation(error)) {
-      const { data: raced } = await lookup()
-      if (raced) return { contact: raced, wasCreated: false }
-    }
-    console.error('[social webhook] contact create failed:', error)
-    return null
-  }
-  return { contact: created, wasCreated: true }
-}
-
-async function findOrCreateSocialConversation(
-  db: SupabaseClient,
-  config: SocialConfigRow,
-  contactId: string,
-  channel: SocialChannel,
-): Promise<{ conversation: Row; created: boolean } | null> {
-  const lookup = () =>
-    db
-      .from('conversations')
-      .select('*')
-      .eq('account_id', config.account_id)
-      .eq('contact_id', contactId)
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-  const { data: rows, error } = await lookup()
-  if (error) {
-    console.error('[social webhook] conversation lookup failed:', error)
-    return null
-  }
-  if (rows && rows.length > 0) return { conversation: rows[0], created: false }
-
-  const { data: created, error: createErr } = await db
-    .from('conversations')
-    .insert({
-      account_id: config.account_id,
-      user_id: config.user_id,
-      contact_id: contactId,
-      channel,
-    })
-    .select()
-    .single()
-  if (createErr) {
-    if (isUniqueViolation(createErr)) {
-      const { data: raced } = await lookup()
-      if (raced && raced.length > 0) return { conversation: raced[0], created: false }
-    }
-    console.error('[social webhook] conversation create failed:', createErr)
-    return null
-  }
-  return { conversation: created, created: true }
-}
 
 async function saveSocialReferral(
   db: SupabaseClient,
@@ -336,7 +236,7 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
     }
   }
 
-  const contactOutcome = await findOrCreateSocialContact(db, config, event)
+  const contactOutcome = await findOrCreateSocialContact(db, config, event.channel, event.senderId)
   if (!contactOutcome) {
     await releaseInboundEvent(db, event.channel, event.mid)
     return

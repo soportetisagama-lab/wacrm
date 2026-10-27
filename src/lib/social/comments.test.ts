@@ -17,6 +17,7 @@ vi.mock('./graph', () => {
     GraphApiError,
     replyToComment: (a: unknown) => replyToComment(a),
     sendPrivateReply: (a: unknown) => sendPrivateReply(a),
+    fetchSocialProfile: async () => ({ name: 'Ana Pérez', username: null, avatarUrl: null }),
   }
 })
 
@@ -65,7 +66,7 @@ function comment(overrides: Partial<SocialCommentEvent> = {}): SocialCommentEven
 
 beforeEach(() => {
   replyToComment.mockResolvedValue('reply-1')
-  sendPrivateReply.mockResolvedValue('mid-1')
+  sendPrivateReply.mockResolvedValue({ messageId: 'mid-1', recipientId: 'PSID-9' })
 })
 
 describe('processSocialComment', () => {
@@ -90,6 +91,60 @@ describe('processSocialComment', () => {
     expect(row.private_message_id).toBe('mid-1')
     expect(row.public_sent_at).toBeTruthy()
     expect(row.private_sent_at).toBeTruthy()
+  })
+
+  it('creates the commenter contact by the PSID Meta returned', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [cfg()] })
+    await processSocialComment(db, comment(), NOW)
+    expect(tables.contacts).toHaveLength(1)
+    expect(tables.contacts[0]).toMatchObject({ channel: 'messenger', channel_user_id: 'PSID-9', phone: null })
+    expect(tables.messages).toHaveLength(1)
+  })
+
+  it('stores the private reply in the commenter conversation and waits for the number', async () => {
+    const { db, tables } = fakeDb({
+      social_channel_configs: [cfg()],
+      contacts: [{ id: 'contact-1', account_id: 'acct-1', channel: 'messenger', channel_user_id: 'PSID-9', phone: null, contact_phone: null }],
+    })
+    await processSocialComment(db, comment(), NOW)
+    expect(tables.contacts).toHaveLength(1)
+    expect(tables.conversations).toHaveLength(1)
+    const conv = tables.conversations[0]
+    expect(conv.contact_id).toBe(tables.contacts[0].id)
+    expect(tables.messages).toEqual([
+      expect.objectContaining({
+        conversation_id: conv.id,
+        sender_type: 'bot',
+        content_text: DEFAULT_COMMENT_PRIVATE_REPLY,
+        message_id: 'mid-1',
+      }),
+    ])
+    expect(conv.last_message_text).toBe(DEFAULT_COMMENT_PRIVATE_REPLY)
+    expect(String(conv.ai_handoff_summary)).toMatch(/^📵 .*\(1\/3\)/)
+    expect(String(conv.ai_handoff_summary)).toContain('"welcome":true')
+  })
+
+  it('an existing thread is reused; an assigned or already held one keeps its state', async () => {
+    const { db, tables } = fakeDb({
+      social_channel_configs: [cfg()],
+      contacts: [{ id: 'contact-1', account_id: 'acct-1', channel: 'messenger', channel_user_id: 'PSID-9', phone: null, contact_phone: null }],
+      conversations: [{ id: 'conv-1', account_id: 'acct-1', contact_id: 'contact-1', assigned_agent_id: 'agent-1', ai_handoff_summary: null, created_at: '2026-10-01T00:00:00Z' }],
+    })
+    await processSocialComment(db, comment(), NOW)
+    expect(tables.contacts).toHaveLength(1)
+    expect(tables.conversations).toHaveLength(1)
+    expect(tables.messages).toHaveLength(1)
+    expect(tables.conversations[0].ai_handoff_summary).toBeNull()
+  })
+
+  it('a contact that already gave the number gets no hold', async () => {
+    const { db, tables } = fakeDb({
+      social_channel_configs: [cfg()],
+      contacts: [{ id: 'contact-1', account_id: 'acct-1', channel: 'messenger', channel_user_id: 'PSID-9', phone: null, contact_phone: '51974710551' }],
+    })
+    await processSocialComment(db, comment(), NOW)
+    expect(tables.messages).toHaveLength(1)
+    expect(tables.conversations[0].ai_handoff_summary ?? null).toBeNull()
   })
 
   it('does nothing while the switch is off (default)', async () => {

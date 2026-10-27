@@ -59,19 +59,32 @@ export function isThreadControlError(err: unknown): boolean {
   return /thread (control|owner)|handover|not (the )?(thread )?owner|does not (have|own) (the )?thread/i.test(err.message)
 }
 
+const GRAPH_TIMEOUT_MS = 20_000
+
 async function graphFetch<T>(
   path: string,
   init: { method?: 'GET' | 'POST' | 'DELETE'; accessToken: string; body?: unknown },
 ): Promise<T> {
   const url = `${GRAPH_BASE}/${path}`
-  const res = await fetch(url, {
-    method: init.method ?? 'GET',
-    headers: {
-      Authorization: `Bearer ${init.accessToken}`,
-      ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: init.method ?? 'GET',
+      headers: {
+        Authorization: `Bearer ${init.accessToken}`,
+        ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      // A hung call must not hang the send (the inbox request, the bot's
+      // reply): it fails with a clear error instead.
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+    })
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new GraphApiError(`Meta no respondió en ${GRAPH_TIMEOUT_MS / 1000} s`, null, null)
+    }
+    throw err
+  }
   let data: unknown = null
   try {
     data = await res.json()
@@ -312,7 +325,7 @@ export async function sendPrivateReply(args: {
   commentId: string
   text: string
   accessToken: string
-}): Promise<string> {
+}): Promise<{ messageId: string; recipientId: string | null }> {
   const data = await graphFetch<SendResponse>(`${encodeURIComponent(args.pageId)}/messages`, {
     method: 'POST',
     accessToken: args.accessToken,
@@ -322,5 +335,7 @@ export async function sendPrivateReply(args: {
     },
   })
   if (!data.message_id) throw new GraphApiError('Graph API did not return a message id', null, null)
-  return data.message_id
+  // recipient_id is the commenter's PSID / IGSID — the id their DMs come
+  // from (the comment's from.id is not), so the thread can be found.
+  return { messageId: data.message_id, recipientId: data.recipient_id ?? null }
 }
