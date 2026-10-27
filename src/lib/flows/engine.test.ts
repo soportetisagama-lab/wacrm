@@ -78,6 +78,7 @@ import {
 } from "./meta-send";
 import type { AiConfig } from "@/lib/ai/types";
 import { AiError } from "@/lib/ai/types";
+import { awaitingPhoneSummary, parseAwaitingPhone } from "@/lib/ai/awaiting-phone";
 import { noteAiKeyFailure, resetAiAvailability } from "@/lib/ai/availability";
 import type {
   CollectAiNodeConfig,
@@ -814,7 +815,7 @@ function reentryChain(terminal: () => Promise<{ data: unknown; error: unknown; c
 }
 
 function makeReentryOverrideFakeDb(opts: {
-  conversationGate: { assigned_agent_id: string | null } | null;
+  conversationGate: { assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null;
   flows: Partial<FlowRow>[];
   flowNodes: Partial<FlowNodeRow>[];
   priorRunCount?: number;
@@ -985,6 +986,25 @@ describe("dispatchInboundToFlows — pending-but-unclaimed no longer blocks entr
     adminDbHolder.current = db;
 
     const result = await dispatchInboundToFlows(reentryInput("Esta bien en a qué hora?"));
+
+    expect(result).toEqual({ consumed: false, outcome: "no_match" });
+    expect(flowRunInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(0);
+  });
+
+  it("a handoff on hold for the customer's number never restarts the welcome — the assistant asks again", async () => {
+    const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+      conversationGate: {
+        assigned_agent_id: null,
+        ai_handoff_summary: awaitingPhoneSummary(1, "Nota"),
+      },
+      flows: [FAQ_FLOW_ENDING_IMMEDIATELY],
+      flowNodes: [END_NODE],
+      priorRunCount: 1,
+    });
+    adminDbHolder.current = db;
+
+    const result = await dispatchInboundToFlows(reentryInput("menú"));
 
     expect(result).toEqual({ consumed: false, outcome: "no_match" });
     expect(flowRunInserts).toHaveLength(0);
@@ -3221,7 +3241,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
   });
 
   describe("handoff node when the contact has no phone yet", () => {
-    const NO_PHONE_TEXT = expect.stringContaining("necesitamos tu número de teléfono");
+    const ASK = "Para ayudarte mejor, ¿nos compartes tu número de celular?";
 
     async function runHandoff(
       contactPhone: string | null | undefined,
@@ -3229,7 +3249,7 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
     ) {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
-      const { db, updates } = makeFakeDb({ contactPhone });
+      const { db, updates, inserts } = makeFakeDb({ contactPhone });
       const run = makeRun({ current_node_key: "topics" });
       const node = topicsNode({ release_unmatched_text_to_assistant: true });
       const handoffNode = makeNode({ node_key: "human_handoff", node_type: "handoff", config });
@@ -3240,37 +3260,55 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
         new Map([["topics", node], ["human_handoff", handoffNode]]),
       );
       vi.useRealTimers();
-      return { updates };
+      return { updates, inserts };
     }
 
-    it("asks for the number instead of just promising an advisor, and still hands off", async () => {
+    it("asks for the number, holds the handoff (not pending) and never promises an advisor", async () => {
       vi.mocked(engineSendText).mockClear();
-      const { updates } = await runHandoff(null);
-      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: NO_PHONE_TEXT }));
-      expect(engineSendText).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: "Gracias, un asesor va a continuar tu consulta en breve.",
-        }),
-      );
+      const { updates, inserts } = await runHandoff(null);
+      expect(engineSendText).toHaveBeenCalledTimes(1);
+      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: ASK }));
       expect(
         updates.some((u) => u.table === "conversations" && u.payload.status === "pending"),
+      ).toBe(false);
+      const held = updates.find(
+        (u) => u.table === "conversations" && typeof u.payload.ai_handoff_summary === "string",
+      );
+      expect(held?.payload).toMatchObject({ ai_autoreply_disabled: false });
+      expect(held?.payload.ai_handoff_summary).toMatch(
+        /^📵 .*\(1\/3\)\n🤖 El bot derivó la conversación a un asesor: escalated$/,
+      );
+      // No "handoff" event: it would make a later real handoff look like a duplicate.
+      expect(
+        inserts.some((i) => i.table === "flow_run_events" && i.payload.event_type === "handoff"),
+      ).toBe(false);
+      expect(
+        updates.some((u) => u.table === "flow_runs" && u.payload.status === "handed_off"),
       ).toBe(true);
     });
 
     it("an empty phone counts as no phone", async () => {
       vi.mocked(engineSendText).mockClear();
       await runHandoff("  ");
-      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: NO_PHONE_TEXT }));
+      expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: ASK }));
     });
 
-    it("keeps a configured customer_message after the ask", async () => {
+    it("keeps the author's customer_message and assign_to for when the number arrives", async () => {
       vi.mocked(engineSendText).mockClear();
-      await runHandoff(null, { customer_message: "Ya te derivo, ¡gracias!" });
-      expect(engineSendText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: expect.stringMatching(/necesitamos tu número de teléfono[\s\S]*Ya te derivo, ¡gracias!/),
-        }),
+      const { updates } = await runHandoff(null, {
+        customer_message: "Ya te derivo, ¡gracias!",
+        assign_to: "agent-9",
+      });
+      expect(engineSendText).not.toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining("Ya te derivo") }),
       );
+      const held = updates.find(
+        (u) => u.table === "conversations" && typeof u.payload.ai_handoff_summary === "string",
+      );
+      expect(parseAwaitingPhone(held?.payload.ai_handoff_summary as string)?.options).toEqual({
+        closing: "Ya te derivo, ¡gracias!",
+        assignTo: "agent-9",
+      });
     });
 
     it("a contact that already has a phone gets the usual message", async () => {

@@ -65,6 +65,8 @@ import {
   askPhoneBeforeHandoff,
   contactNeedsPhone,
   NO_PHONE_GIVE_UP_TEXT,
+  parseAwaitingPhone,
+  type HeldHandoffOptions,
 } from "@/lib/ai/awaiting-phone";
 import {
   lastBusinessMessageIs,
@@ -699,17 +701,20 @@ async function claimReplyReceived(
 async function loadConversationGateInfo(
   db: AdminClient,
   conversationId: string,
-): Promise<{ assigned_agent_id: string | null } | null> {
+): Promise<{ assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null> {
   const { data, error } = await db
     .from("conversations")
-    .select("assigned_agent_id")
+    .select("assigned_agent_id, ai_handoff_summary")
     .eq("id", conversationId)
     .maybeSingle();
   if (error) {
     console.error("[flows] loadConversationGateInfo error:", error.message);
     return null;
   }
-  return (data as { assigned_agent_id: string | null } | null) ?? null;
+  return (
+    (data as { assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null) ??
+    null
+  );
 }
 
 /**
@@ -1635,37 +1640,33 @@ async function handOffFromCollectAi(
       : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`;
 
   // A WhatsApp contact with no number is never told an advisor writes
-  // back: the terminal handoff is put on hold and the customer is asked
-  // for the number (lib/ai/awaiting-phone.ts). The run ends here; the
-  // general assistant repeats the ask and the webhook completes the
-  // handoff once the number arrives. Past the ask limit: a line that
-  // promises no callback.
-  let noPhoneText: string | undefined;
-  if (
-    !cfg.handoff_node_key &&
-    !isDuplicate &&
-    run.conversation_id &&
-    run.contact_id &&
-    (await contactNeedsPhone(db, run.contact_id))
-  ) {
-    const held = await askPhoneBeforeHandoff(db, {
-      accountId: run.account_id,
-      conversationId: run.conversation_id,
-      contactId: run.contact_id,
-      userId: run.user_id,
-      summary: handoffSummary,
+  // back: the terminal handoff is put on hold (holdFlowHandoffForPhone).
+  // The run ends here; the general assistant repeats the ask and the
+  // webhook completes the handoff once the number arrives.
+  const hold =
+    cfg.handoff_node_key || isDuplicate
+      ? "proceed"
+      : await holdFlowHandoffForPhone(db, {
+          accountId: run.account_id,
+          userId: run.user_id,
+          conversationId: run.conversation_id,
+          contactId: run.contact_id,
+          summary: handoffSummary,
+          options: {
+            closing: cfg.handoff_fallback_text,
+            closingAfterHours: cfg.handoff_fallback_text_after_hours,
+          },
+        });
+  if (hold === "held") {
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      reason: "collect_ai_handoff_awaiting_phone",
+      handoff_reason: reason,
+      collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
     });
-    if (held === "asked") {
-      await logEvent(db, run.id, "message_sent", node.node_key, {
-        reason: "collect_ai_handoff_awaiting_phone",
-        handoff_reason: reason,
-        collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
-      });
-      await endRun(db, run.id, "handed_off", `collect_ai_${reason}_awaiting_phone`);
-      return { outcome: "handed_off" };
-    }
-    noPhoneText = NO_PHONE_GIVE_UP_TEXT;
+    await endRun(db, run.id, "handed_off", `collect_ai_${reason}_awaiting_phone`);
+    return { outcome: "handed_off" };
   }
+  const noPhoneText = hold === "give_up" ? NO_PHONE_GIVE_UP_TEXT : undefined;
   const finalText = noPhoneText ?? outgoingText;
 
   if (finalText && !isDuplicate) {
@@ -2518,6 +2519,49 @@ async function executeHandoff(
         cfg.customer_message_after_hours?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
       )
     : cfg.customer_message?.trim() || DEFAULT_HANDOFF_CUSTOMER_MESSAGE;
+  // Interpolated so a note like "Quiere agendar visita para
+  // {{vars.visita_dia}} a las {{vars.visita_hora}}" actually shows the
+  // customer's answers in the agent-facing summary, instead of the
+  // literal template — the only place besides customer-facing prompts
+  // this file uses interpolateVars.
+  const authorNote = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
+  // Arrived here from a collect_ai that couldn't finish: lead with the
+  // real reason, not just this node's generic note.
+  const collectAiReason = run.vars[COLLECT_AI_HANDOFF_REASON_VAR] as
+    | { target?: string; text?: string }
+    | undefined;
+  const reasonText =
+    collectAiReason?.target === node.node_key && collectAiReason.text
+      ? `Motivo: ${collectAiReason.text}`
+      : null;
+  const note = [reasonText, authorNote].filter(Boolean).join(" ") || null;
+  const handoffSummary = note
+    ? `🤖 El bot derivó la conversación a un asesor: ${note}`
+    : "🤖 El bot derivó la conversación a un asesor.";
+  // No number yet: hold the handoff and ask for it (see
+  // holdFlowHandoffForPhone); the author's text goes out once it arrives.
+  const hold = isDuplicate
+    ? "proceed"
+    : await holdFlowHandoffForPhone(db, {
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id,
+        contactId: run.contact_id,
+        summary: handoffSummary,
+        options: {
+          closing: cfg.customer_message,
+          closingAfterHours: cfg.customer_message_after_hours,
+          assignTo: cfg.assign_to,
+        },
+      });
+  if (hold === "held") {
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      reason: "handoff_awaiting_phone",
+      note: cfg.note ?? null,
+    });
+    await endRun(db, run.id, "handed_off", "handoff_node_awaiting_phone");
+    return;
+  }
   // Sent BEFORE the DB-side handoff writes — best-effort, mirrors every
   // other closing-message send in this file (a failure here is logged
   // but must never block the handoff itself from completing).
@@ -2528,7 +2572,10 @@ async function executeHandoff(
         userId: run.user_id,
         conversationId: run.conversation_id,
         contactId: run.contact_id,
-        text: await handoffTextForContact(db, run.contact_id, outgoingMessage),
+        text:
+          hold === "give_up"
+            ? NO_PHONE_GIVE_UP_TEXT
+            : await handoffTextForContact(db, run.contact_id, outgoingMessage),
       });
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
@@ -2538,30 +2585,7 @@ async function executeHandoff(
     }
   }
   if (run.conversation_id) {
-    // Interpolated so a note like "Quiere agendar visita para
-    // {{vars.visita_dia}} a las {{vars.visita_hora}}" actually shows the
-    // customer's answers in the agent-facing summary, instead of the
-    // literal template — the only place besides customer-facing prompts
-    // this file uses interpolateVars.
-    const authorNote = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
-    // Arrived here from a collect_ai that couldn't finish: lead with the
-    // real reason, not just this node's generic note.
-    const collectAiReason = run.vars[COLLECT_AI_HANDOFF_REASON_VAR] as
-      | { target?: string; text?: string }
-      | undefined;
-    const reasonText =
-      collectAiReason?.target === node.node_key && collectAiReason.text
-        ? `Motivo: ${collectAiReason.text}`
-        : null;
-    const note = [reasonText, authorNote].filter(Boolean).join(" ") || null;
-    await markConversationPendingHandoff(
-      db,
-      run.conversation_id,
-      note
-        ? `🤖 El bot derivó la conversación a un asesor: ${note}`
-        : "🤖 El bot derivó la conversación a un asesor.",
-      cfg.assign_to,
-    );
+    await markConversationPendingHandoff(db, run.conversation_id, handoffSummary, cfg.assign_to);
   }
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
@@ -2636,6 +2660,43 @@ function interpolateVars(template: string, vars: Record<string, unknown>): strin
     const v = vars[key];
     return v === undefined || v === null ? "" : String(v);
   });
+}
+
+/**
+ * A flow handoff for a WhatsApp contact with no number on file is never
+ * told an advisor writes back: it's put on hold and the customer is asked
+ * for the number (lib/ai/awaiting-phone.ts) — not `pending`, bot still
+ * on. The general assistant repeats the ask on the next messages and the
+ * webhook completes the handoff (closing text in `options`, pending,
+ * 📋 brief) once the number arrives. Outcomes:
+ *   - 'proceed': the contact has a number (or isn't WhatsApp) — normal handoff.
+ *   - 'held': asked, or another actor already dealt with the held handoff —
+ *     the caller ends its run and does nothing else.
+ *   - 'give_up': MAX_PHONE_ASKS asks unanswered — normal handoff, but
+ *     with NO_PHONE_GIVE_UP_TEXT instead of the closing text.
+ */
+async function holdFlowHandoffForPhone(
+  db: AdminClient,
+  args: {
+    accountId: string;
+    userId: string;
+    conversationId: string | null | undefined;
+    contactId: string | null | undefined;
+    summary: string;
+    options?: HeldHandoffOptions;
+  },
+): Promise<"proceed" | "held" | "give_up"> {
+  if (!args.conversationId || !args.contactId) return "proceed";
+  if (!(await contactNeedsPhone(db, args.contactId))) return "proceed";
+  const result = await askPhoneBeforeHandoff(db, {
+    accountId: args.accountId,
+    conversationId: args.conversationId,
+    contactId: args.contactId,
+    userId: args.userId,
+    summary: args.summary,
+    options: args.options,
+  });
+  return result === "give_up" ? "give_up" : "held";
 }
 
 /**
@@ -2728,6 +2789,27 @@ async function handOffOnHumanRequest(
   activeRun: FlowRunRow | null,
 ): Promise<DispatchInboundResult> {
   const isDuplicate = await wasHandedOffRecently(db, input.conversationId);
+  const text = input.message.kind === "text" ? input.message.text.trim() : "";
+  const handoffSummary = `🙋 El cliente pidió hablar con un asesor ("${text.slice(0, 80)}").`;
+  // No number yet: hold the handoff and ask for it (holdFlowHandoffForPhone).
+  const hold = isDuplicate
+    ? "proceed"
+    : await holdFlowHandoffForPhone(db, {
+        accountId: input.accountId,
+        userId: input.userId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        summary: handoffSummary,
+      });
+  if (hold === "held") {
+    if (activeRun) {
+      await logEvent(db, activeRun.id, "message_sent", activeRun.current_node_key, {
+        reason: "customer_requested_human_awaiting_phone",
+      });
+      await endRun(db, activeRun.id, "handed_off", "customer_requested_human_awaiting_phone");
+    }
+    return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
+  }
   if (!isDuplicate) {
     try {
       await engineSendText({
@@ -2735,13 +2817,16 @@ async function handOffOnHumanRequest(
         userId: input.userId,
         conversationId: input.conversationId,
         contactId: input.contactId,
-        text: await handoffTextForContact(
-          db,
-          input.contactId,
-          isWithinBusinessHours()
-            ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
-            : fillBusinessHoursPlaceholders(DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS),
-        ),
+        text:
+          hold === "give_up"
+            ? NO_PHONE_GIVE_UP_TEXT
+            : await handoffTextForContact(
+                db,
+                input.contactId,
+                isWithinBusinessHours()
+                  ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+                  : fillBusinessHoursPlaceholders(DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS),
+              ),
         aiGenerated: false,
       });
     } catch (err) {
@@ -2757,12 +2842,7 @@ async function handOffOnHumanRequest(
     });
     await endRun(db, activeRun.id, "handed_off", "customer_requested_human");
   }
-  const text = input.message.kind === "text" ? input.message.text.trim() : "";
-  await markConversationPendingHandoff(
-    db,
-    input.conversationId,
-    `🙋 El cliente pidió hablar con un asesor ("${text.slice(0, 80)}").`,
-  );
+  await markConversationPendingHandoff(db, input.conversationId, handoffSummary);
   return { consumed: true, flow_run_id: activeRun?.id, outcome: "handed_off" };
 }
 
@@ -3173,6 +3253,11 @@ export async function dispatchInboundToFlows(
       input.conversationId,
     );
     if (!isConversationBotEligible(conversationGate)) {
+      return { consumed: false, outcome: "no_match" };
+    }
+    // A handoff on hold for the customer's number (lib/ai/awaiting-phone.ts):
+    // no welcome, menu or new flow — the general assistant asks again.
+    if (parseAwaitingPhone(conversationGate?.ai_handoff_summary)) {
       return { consumed: false, outcome: "no_match" };
     }
     // A teammate answered by hand recently (but nobody is assigned —
@@ -3737,6 +3822,25 @@ export async function handleReplyForActiveRun(
     const isDuplicate = run.conversation_id
       ? await wasHandedOffRecently(db, run.conversation_id)
       : false;
+    const handoffSummary =
+      "🤖 El bot derivó la conversación a un asesor tras varios intentos sin una respuesta reconocida.";
+    // No number yet: hold the handoff and ask for it (holdFlowHandoffForPhone).
+    const hold = isDuplicate
+      ? "proceed"
+      : await holdFlowHandoffForPhone(db, {
+          accountId: run.account_id,
+          userId: run.user_id,
+          conversationId: run.conversation_id,
+          contactId: run.contact_id,
+          summary: handoffSummary,
+        });
+    if (hold === "held") {
+      await logEvent(db, run.id, "message_sent", run.current_node_key, {
+        reason: "fallback_exhausted_awaiting_phone",
+      });
+      await endRun(db, run.id, "handed_off", "fallback_exhausted_awaiting_phone");
+      return { consumed: true, flow_run_id: run.id, outcome: "handed_off" };
+    }
     // Same reasoning as executeHandoff's own send: this exit used to be
     // completely silent to the customer — best-effort, must not block
     // the handoff itself.
@@ -3747,13 +3851,16 @@ export async function handleReplyForActiveRun(
           userId: run.user_id,
           conversationId: run.conversation_id,
           contactId: run.contact_id,
-          text: await handoffTextForContact(
-            db,
-            run.contact_id,
-            isWithinBusinessHours()
-              ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
-              : DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
-          ),
+          text:
+            hold === "give_up"
+              ? NO_PHONE_GIVE_UP_TEXT
+              : await handoffTextForContact(
+                  db,
+                  run.contact_id,
+                  isWithinBusinessHours()
+                    ? DEFAULT_HANDOFF_CUSTOMER_MESSAGE
+                    : DEFAULT_HANDOFF_CUSTOMER_MESSAGE_AFTER_HOURS,
+                ),
         });
       } catch (err) {
         await logEvent(db, run.id, "error", run.current_node_key, {
@@ -3763,11 +3870,7 @@ export async function handleReplyForActiveRun(
       }
     }
     if (run.conversation_id) {
-      await markConversationPendingHandoff(
-        db,
-        run.conversation_id,
-        "🤖 El bot derivó la conversación a un asesor tras varios intentos sin una respuesta reconocida.",
-      );
+      await markConversationPendingHandoff(db, run.conversation_id, handoffSummary);
     }
     await logEvent(db, run.id, "handoff", run.current_node_key, {
       reason: "fallback_exhausted",

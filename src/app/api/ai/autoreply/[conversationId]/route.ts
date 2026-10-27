@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { canResumeAi } from '@/lib/auth/roles'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { parseAwaitingPhone } from '@/lib/ai/awaiting-phone'
 
 type Params = { params: Promise<{ conversationId: string }> }
 
@@ -57,7 +58,7 @@ export async function POST(request: Request, { params }: Params) {
     // Confirm the conversation is in the caller's account before writing.
     const { data: conv, error: convErr } = await supabase
       .from('conversations')
-      .select('id')
+      .select('id, ai_handoff_summary')
       .eq('id', conversationId)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -76,6 +77,10 @@ export async function POST(request: Request, { params }: Params) {
 
     if (paused) {
       if (assignToMe) update.assigned_agent_id = userId
+      // A handoff on hold for the customer's number (lib/ai/awaiting-phone.ts)
+      // ends here: keep only the note, so the banner never shows the marker.
+      const held = parseAwaitingPhone(conv.ai_handoff_summary as string | null)
+      if (held) update.ai_handoff_summary = held.summary || null
     } else {
       // Resuming hands the thread *back to the bot*. Clear the pause and
       // the handoff note, and — crucially — release ANY assignment, not
