@@ -3,6 +3,7 @@
 import { useAuth } from '@/hooks/use-auth';
 import {
   canAssignConversations,
+  canCreateContacts,
   canDeleteAccount,
   canDeleteContacts,
   canDraftWithAi,
@@ -26,6 +27,7 @@ export type CanAction =
   | 'manage-members'
   | 'edit-settings'
   | 'send-messages'
+  | 'create-contacts'
   | 'send-templates'
   | 'draft-with-ai'
   | 'view-only'
@@ -60,6 +62,8 @@ export function useCan(action: CanAction): boolean {
       return canEditSettings(accountRole);
     case 'send-messages':
       return canSendMessages(accountRole);
+    case 'create-contacts':
+      return canCreateContacts(accountRole);
     case 'send-templates':
       return canSendTemplates(accountRole);
     case 'draft-with-ai':

@@ -9,6 +9,8 @@ import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import { useTranslations } from "next-intl";
 import { isInboxThreadRoute } from "@/lib/mobile-app";
 import { useMobileThreadOpen } from "@/hooks/use-mobile-thread-open";
+import { useAuth } from "@/hooks/use-auth";
+import { restrictedRoutesFor } from "@/lib/auth/roles";
 
 /**
  * Bottom tab bar for the Android WebView wrapper (see dashboard-shell.tsx's
@@ -34,13 +36,18 @@ export function MobileBottomNav() {
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   const threadOpen = useMobileThreadOpen(isInboxThreadRoute(pathname, searchParams));
+  const { accountRole } = useAuth();
+  // Roles limited to part of the app (Analista, Community Manager) only
+  // get the tabs they can actually open (see DashboardShell).
+  const allowed = restrictedRoutesFor(accountRole);
+  const tabs = allowed ? TABS.filter((tab) => allowed.includes(tab.href)) : TABS;
 
   // Inside an open conversation thread (/inbox?c=<id>) the thread takes
   // over the whole screen, like a real chat app — a persistent tab bar
   // here would sit on top of (or steal height from) the message
   // composer. Hide it entirely and give the thread the full viewport;
   // its own back arrow returns to the list, where the bar reappears.
-  if (threadOpen) return null;
+  if (threadOpen || tabs.length === 0) return null;
 
   return (
     <nav
@@ -51,7 +58,7 @@ export function MobileBottomNav() {
           scroll frame of the list underneath — the costliest thing this
           screen could paint on a low-end phone. */}
       <div className="border-border/60 bg-card mx-auto flex max-w-sm items-center justify-around rounded-full border py-2 shadow-md">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive =
             pathname === tab.href || pathname.startsWith(`${tab.href}/`);
           const badgeCount =

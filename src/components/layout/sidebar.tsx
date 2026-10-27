@@ -19,6 +19,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  MessagesSquare,
   Radio,
   Settings,
   Shield,
@@ -31,7 +32,7 @@ import {
   Zap,
   Phone,
 } from 'lucide-react';
-import { ANALISTA_ROUTES, hasMinRole, type AccountRole } from '@/lib/auth/roles';
+import { hasMinRole, restrictedRoutesFor, type AccountRole } from '@/lib/auth/roles';
 
 // Per-role icon + label for the role chip on the sidebar profile
 // card. The chip's colour comes from the line (--header-bg), not
@@ -67,6 +68,10 @@ export const ROLE_CHIP: Record<
   analista: {
     icon: BarChart3,
     labelKey: 'roleAnalista',
+  },
+  community_manager: {
+    icon: MessagesSquare,
+    labelKey: 'roleCommunityManager',
   },
   viewer: {
     icon: User,
@@ -195,8 +200,10 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
   // same convention as useCan/RequireRole — so an admin-only item
   // never flashes visible before we actually know the role.
   const isNavItemVisible = (item: NavItem) => {
-    // Analista gets Panel + Mensajes only.
-    if (accountRole === 'analista' && !ANALISTA_ROUTES.includes(item.href)) {
+    // Analista gets Panel + Mensajes only; Community Manager gets Panel +
+    // Bandeja + Contactos (both keep Settings for their own profile).
+    const allowed = restrictedRoutesFor(accountRole);
+    if (allowed && !allowed.includes(item.href)) {
       return false;
     }
     if (!item.minRole && !item.roles) return true;
