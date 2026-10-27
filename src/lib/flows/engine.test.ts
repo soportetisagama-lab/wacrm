@@ -2183,6 +2183,41 @@ describe("handleCollectAiReply", () => {
     ).toBe(true);
   });
 
+  it("handoff_node_key and a contact with no phone: collect_ai sends no advisor promise — the node asks for the number", async () => {
+    const { db, updates, inserts } = makeFakeDb({ contactPhone: null });
+    const run = makeRun({ vars: { equipos: "2 cocinas" }, ai_turn_count: 5 });
+    const node = makeNode({
+      config: collectAiConfig({
+        max_turns: 6,
+        handoff_node_key: "human",
+        handoff_fallback_text: "Listo, un asesor te escribe por aquí en breve.",
+      }),
+    });
+    const handoffNode = makeNode({
+      node_key: "human",
+      node_type: "handoff",
+      config: { note: "AI collector exhausted" },
+    });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Y la ciudad?" }));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map([["human", handoffNode]]));
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Para ayudarte mejor, ¿nos compartes tu número de celular?" }),
+    );
+    // No "handoff" event: the node would read it as a duplicate and skip the ask.
+    expect(
+      inserts.some((i) => i.table === "flow_run_events" && i.payload.event_type === "handoff"),
+    ).toBe(false);
+    expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(false);
+    const held = updates.find(
+      (u) => u.table === "conversations" && typeof u.payload.ai_handoff_summary === "string",
+    );
+    expect(held?.payload.ai_handoff_summary).toMatch(/^📵 .*\(1\/3\)\n/);
+  });
+
   it("max_turns exhausted with no handoff_node_key configured falls back to the generic pending-conversation handoff", async () => {
     const { db, updates } = makeFakeDb();
     const run = makeRun({ ai_turn_count: 6 });
