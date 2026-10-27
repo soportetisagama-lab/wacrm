@@ -1806,6 +1806,25 @@ describe('held phone turn (./phone-ask), WhatsApp without a number and social al
     expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('+51926843129')
   })
 
+  it('a held voice note with a question is transcribed once, then answered with the ask', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }))
+    const row: Record<string, unknown> = { ...customerText('', 'audio'), transcript: null }
+    h.state.burstRows = [row]
+    h.transcribeAudio.mockImplementation(async () => {
+      row.transcript = '¿hacen envíos a Arequipa?'
+      return { text: '¿hacen envíos a Arequipa?', durationSeconds: 3 }
+    })
+    h.generateReply.mockResolvedValue({ text: 'Sí, enviamos a todo el Perú.', handoff: false })
+    await runAutoReplyNow({
+      ...ARGS,
+      isTextMessage: false,
+      audio: { mediaId: 'media-1', mimeType: 'audio/ogg', messageDbId: 'msg-1' },
+    })
+    expect(h.transcribeAudio).toHaveBeenCalledTimes(1)
+    expect(h.generateReply).toHaveBeenCalledTimes(1)
+    expect(sentTexts()).toEqual([`Sí, enviamos a todo el Perú.\n\n${ASK_PHONE_TEXT}`])
+  })
+
   it('"ok" after the share-number button (log line): no new ask', async () => {
     h.state.burstRows = [customerText('ok'), { ...customerText(PHONE_REQUEST_LOG_TEXT), sender_type: 'bot' }]
     await runAutoReplyNow(ARGS)

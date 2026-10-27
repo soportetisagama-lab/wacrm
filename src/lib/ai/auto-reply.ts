@@ -524,8 +524,6 @@ async function handOffWithoutAi(
   })
 }
 
-/** The contact's name when it looks like a real one (not empty, not
- *  just a phone number). Null on any failure — the prompt then omits it. */
 /**
  * Store a number the customer dictated while a handoff waited for it:
  * `contact_phone` on Instagram / Messenger (081/086), `phone` on WhatsApp
@@ -603,6 +601,8 @@ async function loadHeldBurst(
   }
 }
 
+/** The contact's name when it looks like a real one (not empty, not
+ *  just a phone number). Null on any failure — the prompt then omits it. */
 function realContactName(row: { name?: unknown } | null): string | null {
   const name = typeof row?.name === 'string' ? row.name.trim() : ''
   return name && /\p{L}/u.test(name) ? name : null
@@ -730,6 +730,9 @@ export async function runAutoReplyNow(
     // for a question — a normal AI answer with the ask added at the end.
     const heldHandoff = parseAwaitingPhone(conv.ai_handoff_summary)
     let heldQuestion: { marker: string; next: string } | null = null
+    // Transcript of this turn's voice note, once the held branch tried it
+    // (undefined = not tried): the non-text branch below reuses it.
+    let heldTranscript: string | null | undefined
     if (heldHandoff && conv.ai_handoff_summary && !conv.ai_autoreply_disabled) {
       const marker: string = conv.ai_handoff_summary
       const base = {
@@ -755,7 +758,11 @@ export async function runAutoReplyNow(
       // transcribeInboundAudio stores the transcript on the row, which
       // loadHeldBurst then reads.
       if (audio && config.transcribeAudioEnabled && config.embeddingsApiKey) {
-        await transcribeInboundAudio(db, { accountId, audio, embeddingsApiKey: config.embeddingsApiKey })
+        heldTranscript = await transcribeInboundAudio(db, {
+          accountId,
+          audio,
+          embeddingsApiKey: config.embeddingsApiKey,
+        })
       }
       const burst = await loadHeldBurst(db, conversationId)
       const reply = classifyHeldReply(burst.items)
@@ -876,7 +883,10 @@ export async function runAutoReplyNow(
       // (or a corrupt) embeddings key is treated the same as disabled,
       // never as an error. Defensive at the data layer: 2c's UI should
       // keep these in sync, but this can't assume it always did.
-      if (audio && config.transcribeAudioEnabled && config.embeddingsApiKey) {
+      if (heldTranscript !== undefined) {
+        // Already transcribed by the held phone turn above.
+        transcript = heldTranscript
+      } else if (audio && config.transcribeAudioEnabled && config.embeddingsApiKey) {
         transcript = await transcribeInboundAudio(db, {
           accountId,
           audio,
