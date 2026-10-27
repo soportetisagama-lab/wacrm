@@ -31,6 +31,12 @@ import {
 import { textOf, type ChatMessage } from './types'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import {
+  askPhoneBeforeHandoff,
+  contactNeedsPhone,
+  NO_PHONE_GIVE_UP_TEXT,
+  parseAwaitingPhone,
+} from './awaiting-phone'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -208,6 +214,8 @@ async function sendHandoffClosingMessage(args: {
   contactId: string
   configOwnerUserId: string
   complaint?: boolean
+  /** Replaces the closing line (the no-phone give-up text). */
+  text?: string
 }): Promise<void> {
   try {
     await engineSendText({
@@ -215,10 +223,12 @@ async function sendHandoffClosingMessage(args: {
       userId: args.configOwnerUserId,
       conversationId: args.conversationId,
       contactId: args.contactId,
-      text: handoffClosingText(new Date(), {
-        complaint: args.complaint,
-        variant: Math.floor(Math.random() * 6),
-      }),
+      text:
+        args.text ??
+        handoffClosingText(new Date(), {
+          complaint: args.complaint,
+          variant: Math.floor(Math.random() * 6),
+        }),
     })
   } catch (err) {
     console.error('[ai auto-reply] handoff closing message send failed:', err)
@@ -238,7 +248,7 @@ async function markNeedsHuman(
   db: ReturnType<typeof supabaseAdmin>,
   args: {
     conversationId: string
-    config: AiConfig
+    config: Pick<AiConfig, 'handoffAgentId'>
     assignedAgentId: string | null
     summary: string
   },
@@ -277,6 +287,116 @@ async function markNeedsHuman(
   await db.from('conversations').update(update).eq('id', args.conversationId)
 }
 
+/**
+ * Every auto-reply exit toward a human: the closing line (when
+ * `notifyCustomer`), the needs-human mark and the advisor brief. A
+ * WhatsApp contact with no phone is never told an advisor writes back:
+ * the handoff is put on hold and the customer is asked for the number
+ * (./awaiting-phone); the webhook completes it once the number arrives
+ * (completeHandoffAwaitingPhone). After MAX_PHONE_ASKS unanswered asks
+ * it hands off anyway, with a line that promises no callback.
+ */
+async function handOffToHuman(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    accountId: string
+    conversationId: string
+    contactId: string
+    configOwnerUserId: string
+    /** Null-ish config (AI turned off meanwhile) still hands off, without brief. */
+    config: AiConfig | null
+    assignedAgentId: string | null
+    summary: string
+    notifyCustomer: boolean
+    complaint?: boolean
+    /** Write the model-made advisor brief. */
+    brief: boolean
+  },
+): Promise<'handed_off' | 'awaiting_phone'> {
+  if (args.notifyCustomer) {
+    let text: string | undefined
+    if (await contactNeedsPhone(db, args.contactId)) {
+      const held = await askPhoneBeforeHandoff(db, {
+        accountId: args.accountId,
+        conversationId: args.conversationId,
+        contactId: args.contactId,
+        userId: args.configOwnerUserId,
+        summary: args.summary,
+      })
+      if (held === 'asked') return 'awaiting_phone'
+      text = NO_PHONE_GIVE_UP_TEXT
+    }
+    await sendHandoffClosingMessage({
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      configOwnerUserId: args.configOwnerUserId,
+      complaint: args.complaint,
+      text,
+    })
+  }
+  await markNeedsHuman(db, {
+    conversationId: args.conversationId,
+    config: args.config ?? { handoffAgentId: null },
+    assignedAgentId: args.assignedAgentId,
+    summary: args.summary,
+  })
+  if (args.brief && args.config) {
+    await writeHandoffBrief(db, {
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      config: args.config,
+    })
+  }
+  return 'handed_off'
+}
+
+/**
+ * The number of a contact whose handoff was on hold (./awaiting-phone)
+ * just arrived — called by the webhook after storing the message that
+ * carried it. Hands off for real: closing line, needs-human mark and the
+ * 📋 advisor brief. False (nothing done) when no handoff was on hold, or
+ * when a human already owns the thread (then only the marker is
+ * cleared). Never throws.
+ */
+export async function completeHandoffAwaitingPhone(args: {
+  accountId: string
+  conversationId: string
+  contactId: string
+  configOwnerUserId: string
+}): Promise<boolean> {
+  try {
+    const db = supabaseAdmin()
+    const { data: conv } = await db
+      .from('conversations')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary')
+      .eq('id', args.conversationId)
+      .maybeSingle()
+    const held = parseAwaitingPhone(conv?.ai_handoff_summary as string | null | undefined)
+    if (!conv || !held) return false
+    if (conv.assigned_agent_id || conv.ai_autoreply_disabled) {
+      await db
+        .from('conversations')
+        .update({ ai_handoff_summary: held.summary })
+        .eq('id', args.conversationId)
+      return false
+    }
+    const config = await loadAiConfig(db, args.accountId)
+    await handOffToHuman(db, {
+      ...args,
+      config,
+      assignedAgentId: null,
+      summary: held.summary,
+      notifyCustomer: true,
+      brief: Boolean(config) && !isAiKeyPaused(config?.apiKey ?? ''),
+    })
+    return true
+  } catch (err) {
+    console.error('[ai auto-reply] completing the held handoff failed:', err)
+    return false
+  }
+}
+
 
 /**
  * Reached the per-conversation reply cap (either the cheap pre-check
@@ -296,17 +416,11 @@ async function handleAutoReplyCapReached(
     assignedAgentId: string | null
   },
 ): Promise<void> {
-  await sendHandoffClosingMessage(args)
-  await markNeedsHuman(db, {
-    conversationId: args.conversationId,
-    config: args.config,
-    assignedAgentId: args.assignedAgentId,
+  await handOffToHuman(db, {
+    ...args,
     summary: `🤖 Se alcanzó el límite de ${args.config.autoReplyMaxPerConversation} respuestas automáticas por conversación.`,
-  })
-  await writeHandoffBrief(db, {
-    accountId: args.accountId,
-    conversationId: args.conversationId,
-    config: args.config,
+    notifyCustomer: true,
+    brief: true,
   })
 }
 
@@ -332,14 +446,14 @@ async function handOffWithoutAi(
   },
 ): Promise<void> {
   if (args.alreadyHandedOff) return
-  await sendHandoffClosingMessage(args)
-  await markNeedsHuman(db, {
-    conversationId: args.conversationId,
-    config: args.config,
-    assignedAgentId: args.assignedAgentId,
+  await handOffToHuman(db, {
+    ...args,
     // Neutral on purpose — agents see this note; why the AI stopped is
     // for admins only (notifyAdminsAiUnavailable).
     summary: '🤖 El asistente derivó la conversación a un asesor.',
+    notifyCustomer: true,
+    // Writing the brief needs the provider too.
+    brief: false,
   })
 }
 
@@ -457,6 +571,26 @@ export async function runAutoReplyNow(
       return
     }
 
+    // A handoff on hold for the customer's number (./awaiting-phone): no
+    // model call — ask again ("este mismo", "a este número" don't count),
+    // hand off if the number is on file by now, or give up after
+    // MAX_PHONE_ASKS asks.
+    const heldHandoff = parseAwaitingPhone(conv.ai_handoff_summary)
+    if (heldHandoff && !conv.ai_autoreply_disabled) {
+      await handOffToHuman(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        summary: heldHandoff.summary,
+        notifyCustomer: true,
+        brief: !isAiKeyPaused(config.apiKey),
+      })
+      return
+    }
+
     // `ai_autoreply_disabled` alone is no longer sticky forever once
     // nobody has actually claimed the thread (assigned_agent_id null,
     // checked above) — a model-decided handoff or a Flow handoff mid-
@@ -550,25 +684,21 @@ export async function runAutoReplyNow(
     // calling the model.
     const forced = await forcedHandoffReason(db, conversationId, messages)
     if (forced) {
-      if (!conv.ai_autoreply_disabled) {
-        await sendHandoffClosingMessage({
-          accountId,
-          conversationId,
-          contactId,
-          configOwnerUserId,
-          complaint: forced === 'annoyed' || looksLikeComplaint(messages),
-        })
-      }
-      await markNeedsHuman(db, {
+      await handOffToHuman(db, {
+        accountId,
         conversationId,
+        contactId,
+        configOwnerUserId,
         config,
         assignedAgentId: conv.assigned_agent_id,
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
         }),
+        notifyCustomer: !conv.ai_autoreply_disabled,
+        complaint: forced === 'annoyed' || looksLikeComplaint(messages),
+        brief: true,
       })
-      await writeHandoffBrief(db, { accountId, conversationId, config })
       return
     }
 
@@ -719,26 +849,21 @@ export async function runAutoReplyNow(
       })
       // Once per handoff: a thread already handed off (and still waiting
       // for an advisor — the bot re-opened only because nobody claimed
-      // it) already told the customer an advisor is coming.
-      if (!conv.ai_autoreply_disabled) {
-        await sendHandoffClosingMessage({
-          accountId,
-          conversationId,
-          contactId,
-          configOwnerUserId,
-          complaint: looksLikeComplaint(messages),
-        })
-      }
-      await markNeedsHuman(db, {
+      // it) already told the customer an advisor is coming. The advisor
+      // brief (details the customer gave) is written after the handoff
+      // is committed, so a slow or failed model call never delays it.
+      await handOffToHuman(db, {
+        accountId,
         conversationId,
+        contactId,
+        configOwnerUserId,
         config,
         assignedAgentId: conv.assigned_agent_id,
         summary,
+        notifyCustomer: !conv.ai_autoreply_disabled,
+        complaint: looksLikeComplaint(messages),
+        brief: true,
       })
-      // Upgrade the note to an advisor brief with the details the
-      // customer gave — after the handoff is already committed, so a
-      // slow or failed model call never delays or blocks it.
-      await writeHandoffBrief(db, { accountId, conversationId, config })
       return
     }
 

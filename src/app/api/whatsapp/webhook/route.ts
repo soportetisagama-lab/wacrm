@@ -24,7 +24,8 @@ import {
   startFlowRunAtNode,
 } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
-import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { completeHandoffAwaitingPhone, dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { ASK_PHONE_TEXT, isAwaitingPhoneHandoff } from '@/lib/ai/awaiting-phone'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
@@ -1200,7 +1201,9 @@ async function sendBsuidContactInfoRequest(
           ? 'Parece que el número está incompleto 🙏 ¿Nos lo envías de nuevo con los 9 dígitos? O presiona el botón para compartirlo.'
           : typedAttempt === 'multiple'
             ? '¿Cuál de esos números es tu WhatsApp? 🙏 Envíanos solo uno, o presiona el botón para compartirlo.'
-            : 'Para poder contactarte siempre que lo necesites, ¿nos compartes tu número de teléfono?',
+            : // Same text the bot uses when a handoff waits for the number
+              // (lib/ai/awaiting-phone.ts), so that turn needs no second message.
+              ASK_PHONE_TEXT,
     })
 
     const { error: msgErr } = await supabaseAdmin().from('messages').insert({
@@ -1584,8 +1587,14 @@ async function processMessage(
   // the welcome — the flow dispatch below must then skip it, or the
   // number itself would be read as an unmatched reply to the menu just
   // sent and get released to the AI assistant.
+  // A handoff on hold for this number (lib/ai/awaiting-phone.ts) wins
+  // over the welcome: it's completed below, once this message is stored.
+  const phoneJustKnown = Boolean(contactOutcome.phoneJustPromoted || promotedPhone)
+  const handoffAwaitingPhone = phoneJustKnown
+    ? await isAwaitingPhoneHandoff(supabaseAdmin(), conversation.id)
+    : false
   const welcomeStartedFromPhone =
-    contactOutcome.phoneJustPromoted || promotedPhone
+    phoneJustKnown && !handoffAwaitingPhone
       ? await dispatchWelcomeAfterPhoneKnown(accountId, contactRecord.id, conversation.id)
       : false
 
@@ -1814,12 +1823,26 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
+  // The number a held handoff was waiting for just arrived (and this
+  // message is stored, so the advisor brief sees it): hand off now with
+  // the normal closing line and 📋 brief. Nothing else answers it.
+  const handoffDoneFromPhone = handoffAwaitingPhone
+    ? await completeHandoffAwaitingPhone({
+        accountId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        configOwnerUserId,
+      })
+    : false
+  const phoneMessageConsumed = welcomeStartedFromPhone || handoffDoneFromPhone
+
   // Template quick-reply buttons (Meta `type: 'button'`) carry no
   // active flow_run and can't match a Flow entry trigger (text/keyword
   // only) — resolved separately, BEFORE the normal flow dispatch, so
   // it can fully own the response and suppress everything else below
   // for this inbound. See handleTemplateButtonReply's own doc comment.
   const templateButtonConsumed =
+    !handoffDoneFromPhone &&
     message.type === 'button'
       ? await handleTemplateButtonReply(
           accountId,
@@ -1836,6 +1859,7 @@ async function processMessage(
   // buttons and reactions keep their normal handling.
   const outboundTransferRoute =
     !templateButtonConsumed &&
+    !phoneMessageConsumed &&
     !interactiveReplyId &&
     message.type !== 'button' &&
     message.type !== 'reaction'
@@ -1856,7 +1880,7 @@ async function processMessage(
   const acknowledgementRoute =
     !outboundTransferRoute &&
     !templateButtonConsumed &&
-    !welcomeStartedFromPhone &&
+    !phoneMessageConsumed &&
     !interactiveReplyId &&
     message.type !== 'button' &&
     message.type !== 'reaction' &&
@@ -1873,7 +1897,7 @@ async function processMessage(
         })
       : null
 
-  const flowResult = templateButtonConsumed || welcomeStartedFromPhone
+  const flowResult = templateButtonConsumed || phoneMessageConsumed
     ? { consumed: true as const }
     : outboundTransferRoute
       ? { consumed: outboundTransferRoute === 'acknowledged' }
