@@ -9,7 +9,11 @@ import { retrieveKnowledge } from './knowledge'
 import { loadBusinessInfo } from './business-info'
 import { loadLineTransferContext } from '@/lib/line-transfer-inbound'
 import { loadOutboundTransferContext } from '@/lib/line-transfer-outbound'
-import { isWithinBusinessHours, nextOpeningPhrase } from '@/lib/flows/business-hours'
+import {
+  fillBusinessHoursPlaceholders,
+  isWithinBusinessHours,
+  nextOpeningPhrase,
+} from '@/lib/flows/business-hours'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
@@ -36,6 +40,8 @@ import {
   contactNeedsPhone,
   NO_PHONE_GIVE_UP_TEXT,
   parseAwaitingPhone,
+  swapHeldMarker,
+  type HeldHandoffOptions,
 } from './awaiting-phone'
 
 interface DispatchArgs {
@@ -295,6 +301,11 @@ async function markNeedsHuman(
  * (./awaiting-phone); the webhook completes it once the number arrives
  * (completeHandoffAwaitingPhone). After MAX_PHONE_ASKS unanswered asks
  * it hands off anyway, with a line that promises no callback.
+ *
+ * `heldMarker`: acting on a handoff already on hold — the exact marker
+ * read. Completing it first swaps that marker away (./awaiting-phone
+ * swapHeldMarker); losing that race ('lost') means someone else closed
+ * it, so nothing is sent or written.
  */
 async function handOffToHuman(
   db: ReturnType<typeof supabaseAdmin>,
@@ -311,8 +322,11 @@ async function handOffToHuman(
     complaint?: boolean
     /** Write the model-made advisor brief. */
     brief: boolean
+    heldMarker?: string | null
+    /** A flow handoff's own closing text / assignee (held handoffs). */
+    options?: HeldHandoffOptions
   },
-): Promise<'handed_off' | 'awaiting_phone'> {
+): Promise<'handed_off' | 'awaiting_phone' | 'lost'> {
   if (args.notifyCustomer) {
     let text: string | undefined
     if (await contactNeedsPhone(db, args.contactId)) {
@@ -322,9 +336,16 @@ async function handOffToHuman(
         contactId: args.contactId,
         userId: args.configOwnerUserId,
         summary: args.summary,
+        options: args.options,
       })
       if (held === 'asked') return 'awaiting_phone'
+      if (held === 'lost') return 'lost'
       text = NO_PHONE_GIVE_UP_TEXT
+    } else if (args.heldMarker) {
+      if (!(await swapHeldMarker(db, args.conversationId, args.heldMarker, args.summary))) {
+        return 'lost'
+      }
+      text = heldClosingText(args.options)
     }
     await sendHandoffClosingMessage({
       accountId: args.accountId,
@@ -337,7 +358,7 @@ async function handOffToHuman(
   }
   await markNeedsHuman(db, {
     conversationId: args.conversationId,
-    config: args.config ?? { handoffAgentId: null },
+    config: { handoffAgentId: args.options?.assignTo ?? args.config?.handoffAgentId ?? null },
     assignedAgentId: args.assignedAgentId,
     summary: args.summary,
   })
@@ -351,13 +372,25 @@ async function handOffToHuman(
   return 'handed_off'
 }
 
+/** The closing text a flow handoff configured (undefined = the default
+ *  closing line, which is after-hours aware on its own). */
+function heldClosingText(options: HeldHandoffOptions | undefined, now: Date = new Date()): string | undefined {
+  if (!options) return undefined
+  if (isWithinBusinessHours(now)) return options.closing
+  return options.closingAfterHours
+    ? fillBusinessHoursPlaceholders(options.closingAfterHours, now)
+    : undefined
+}
+
 /**
  * The number of a contact whose handoff was on hold (./awaiting-phone)
  * just arrived — called by the webhook after storing the message that
- * carried it. Hands off for real: closing line, needs-human mark and the
- * 📋 advisor brief. False (nothing done) when no handoff was on hold, or
- * when a human already owns the thread (then only the marker is
- * cleared). Never throws.
+ * carried it. Hands off for real: closing line (the flow's own text when
+ * it set one), needs-human mark and the 📋 advisor brief. Returns true
+ * when the held handoff was dealt with — by this call or by a concurrent
+ * one that won the marker swap — so the caller answers nothing else;
+ * false when nothing was on hold, or a human already owns the thread
+ * (then only the marker is stripped). Never throws.
  */
 export async function completeHandoffAwaitingPhone(args: {
   accountId: string
@@ -372,13 +405,11 @@ export async function completeHandoffAwaitingPhone(args: {
       .select('assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary')
       .eq('id', args.conversationId)
       .maybeSingle()
-    const held = parseAwaitingPhone(conv?.ai_handoff_summary as string | null | undefined)
-    if (!conv || !held) return false
+    const marker = (conv?.ai_handoff_summary as string | null | undefined) ?? null
+    const held = parseAwaitingPhone(marker)
+    if (!conv || !held || !marker) return false
     if (conv.assigned_agent_id || conv.ai_autoreply_disabled) {
-      await db
-        .from('conversations')
-        .update({ ai_handoff_summary: held.summary })
-        .eq('id', args.conversationId)
+      await swapHeldMarker(db, args.conversationId, marker, held.summary)
       return false
     }
     const config = await loadAiConfig(db, args.accountId)
@@ -389,6 +420,8 @@ export async function completeHandoffAwaitingPhone(args: {
       summary: held.summary,
       notifyCustomer: true,
       brief: Boolean(config) && !isAiKeyPaused(config?.apiKey ?? ''),
+      heldMarker: marker,
+      options: held.options,
     })
     return true
   } catch (err) {
@@ -587,6 +620,8 @@ export async function runAutoReplyNow(
         summary: heldHandoff.summary,
         notifyCustomer: true,
         brief: !isAiKeyPaused(config.apiKey),
+        heldMarker: conv.ai_handoff_summary,
+        options: heldHandoff.options,
       })
       return
     }

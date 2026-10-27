@@ -46,6 +46,8 @@ const h = vi.hoisted(() => ({
     contactChannel: 'whatsapp' as string | null,
     // account_role of the handoff target (profiles lookup in assignee-guard).
     profileRole: null as string | null,
+    swapWins: true as boolean,
+    swaps: [] as { expected: unknown; payload: Record<string, unknown> }[],
   },
 }))
 
@@ -189,7 +191,19 @@ vi.mock('./admin-client', () => ({
             h.state.updatePayload = payload
           }
           const done = Promise.resolve({ error: null })
-          return { eq: () => Object.assign(done, { lte: () => done }) }
+          // .eq('ai_handoff_summary', marker).select('id') — the held-marker
+          // swap (awaiting-phone swapHeldMarker); swapWins decides the race.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const chain: any = Object.assign(done, {
+            eq: (col: string, val: unknown) => {
+              if (col === 'ai_handoff_summary') h.state.swaps.push({ expected: val, payload })
+              return chain
+            },
+            lte: () => done,
+            select: () =>
+              Promise.resolve({ data: h.state.swapWins ? [{ id: 'conv-1' }] : [], error: null }),
+          })
+          return chain
         },
       }
     },
@@ -261,6 +275,8 @@ beforeEach(() => {
   }
   h.state.autoResponders = []
   h.state.profileRole = null
+  h.state.swapWins = true
+  h.state.swaps = []
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
@@ -1532,5 +1548,64 @@ describe('completeHandoffAwaitingPhone (webhook, the number just arrived)', () =
     await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(false)
     expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.state.updatePayload).toEqual({ ai_handoff_summary: 'Nota para el asesor' })
+  })
+})
+
+describe('held handoff — only whoever swaps the marker acts', () => {
+  const held = () => awaitingPhoneSummary(1, 'Nota para el asesor')
+
+  it('assistant: number on file but the webhook already closed it → sends nothing, marks nothing', async () => {
+    h.state.swapWins = false
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: held(),
+    }
+    await runAutoReplyNow(ARGS)
+    expect(h.state.swaps[0]?.expected).toBe(held())
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).not.toHaveProperty('status')
+  })
+
+  it('assistant: still no number and the marker changed meanwhile → no second ask', async () => {
+    h.state.contactPhone = null
+    h.state.swapWins = false
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: held(),
+    }
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('webhook: losing the swap sends no closing line but still reports it as handled', async () => {
+    h.state.swapWins = false
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_handoff_summary: held() }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(true)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).not.toHaveProperty('status')
+  })
+
+  it("webhook: a flow's own closing text and assignee are used once the number arrives", async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota del flujo', {
+        closing: 'Ya te derivo, ¡gracias!',
+        closingAfterHours: 'Ya te derivo, ¡gracias!',
+        assignTo: 'agent-9',
+      }),
+    }
+    await completeHandoffAwaitingPhone(ARGS)
+    expect(h.engineSendText.mock.calls[0][0].text).toBe('Ya te derivo, ¡gracias!')
+    expect(h.state.updatePayload).toMatchObject({
+      status: 'pending',
+      ai_handoff_summary: 'Nota del flujo',
+      assigned_agent_id: 'agent-9',
+    })
   })
 })
