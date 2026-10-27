@@ -44,6 +44,9 @@ const h = vi.hoisted(() => ({
     // The contact's phone — null is a BSUID-only WhatsApp contact.
     contactPhone: '51999888777' as string | null,
     contactChannel: 'whatsapp' as string | null,
+    // Instagram/Messenger typed number (migration 086). undefined = the
+    // column doesn't exist yet (086 not run).
+    contactSocialPhone: undefined as string | null | undefined,
     // account_role of the handoff target (profiles lookup in assignee-guard).
     profileRole: null as string | null,
     swapWins: true as boolean,
@@ -122,6 +125,9 @@ vi.mock('./admin-client', () => ({
                 name: h.state.contactName,
                 phone: h.state.contactPhone,
                 channel: h.state.contactChannel,
+                ...(h.state.contactSocialPhone !== undefined
+                  ? { contact_phone: h.state.contactSocialPhone }
+                  : {}),
               },
               error: null,
             }),
@@ -233,6 +239,8 @@ import {
   ASK_PHONE_TEXT,
   NO_PHONE_GIVE_UP_TEXT,
   PHONE_REQUEST_LOG_TEXT,
+  SOCIAL_HANDOFF_CLOSING_TEXT,
+  SOCIAL_NO_PHONE_GIVE_UP_TEXT,
   awaitingPhoneSummary,
 } from './awaiting-phone'
 
@@ -298,6 +306,7 @@ beforeEach(() => {
   h.state.contactName = null
   h.state.contactPhone = '51999888777'
   h.state.contactChannel = 'whatsapp'
+  h.state.contactSocialPhone = undefined
   // Every test answers from the same account — keep the per-account
   // throttle from tripping as the suite grows.
   __resetRateLimitForTests()
@@ -1506,12 +1515,73 @@ describe('handoff on hold until a phone-less WhatsApp contact shares the number'
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: false })
   })
 
-  it('Instagram/Messenger contacts (never a phone) keep the normal handoff', async () => {
+  it('Instagram/Messenger before migration 086: hands off, without promising an advisor', async () => {
     h.state.contactChannel = 'instagram'
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await runAutoReplyNow(ARGS)
-    expect(sentTexts()[0]).toMatch(/asesor del equipo/)
+    expect(sentTexts()).toEqual([SOCIAL_NO_PHONE_GIVE_UP_TEXT])
+    expect(sentTexts()[0]).not.toMatch(/asesor/)
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('Instagram / Messenger: ask for the number before handing off', () => {
+  const sentTexts = () => h.engineSendText.mock.calls.map((c) => (c[0] as { text: string }).text)
+
+  beforeEach(() => {
+    h.state.contactPhone = null
+    h.state.contactChannel = 'instagram'
+    h.state.contactSocialPhone = null
+  })
+
+  it('[[HANDOFF]] without a typed number asks for it (text only) and keeps the bot on', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: false })
+    expect(h.state.updatePayload?.ai_handoff_summary).toMatch(/^📵 .*\(1\/3\)\n/)
+  })
+
+  it('"el mismo" asks again; after 3 asks gives up without promising an advisor', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: awaitingPhoneSummary(2, 'Nota'),
+    }
+    h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'el mismo' }])
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(awaitingPhoneSummary(3, 'Nota'))
+
+    h.engineSendText.mockClear()
+    h.state.conv = { ...h.state.conv, ai_handoff_summary: awaitingPhoneSummary(3, 'Nota') }
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([SOCIAL_NO_PHONE_GIVE_UP_TEXT])
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+  })
+
+  it('with the number on file: social closing line and the number in the note', async () => {
+    h.state.contactSocialPhone = '51974710551'
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([SOCIAL_HANDOFF_CLOSING_TEXT])
+    expect(SOCIAL_HANDOFF_CLOSING_TEXT).not.toMatch(/asesor|te escribe por aquí/)
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('📱 Celular del cliente: +51974710551')
+  })
+
+  it('the number just arrived: completes the held handoff with the social closing line', async () => {
+    h.state.contactSocialPhone = '51974710551'
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor', { closing: 'Un asesor te escribe por aquí' }),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(true)
+    expect(sentTexts()).toEqual([SOCIAL_HANDOFF_CLOSING_TEXT])
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('📱 Celular del cliente: +51974710551')
   })
 })
 

@@ -88,6 +88,8 @@ export async function writeHandoffBrief(
     accountId: string
     conversationId: string
     config: AiConfig
+    /** Line kept under the brief (e.g. the social contact's 📱 number). */
+    appendNote?: string
   },
 ): Promise<void> {
   // Own, longer text-only window: the brief must cover every detail the
@@ -112,7 +114,12 @@ export async function writeHandoffBrief(
   })
   const { error } = await db
     .from('conversations')
-    .update({ ai_handoff_summary: result.brief })
+    .update({
+      ai_handoff_summary:
+        args.appendNote && !result.brief.includes(args.appendNote)
+          ? `${result.brief}\n${args.appendNote}`
+          : result.brief,
+    })
     .eq('id', args.conversationId)
   if (error) console.error('[ai handoff brief] handoff brief save failed:', error.message)
 }
