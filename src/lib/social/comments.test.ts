@@ -220,5 +220,8 @@ describe('commentReplyTextError', () => {
     expect(DEFAULT_COMMENT_PUBLIC_REPLY).toBe('¡Hola! Te escribimos por mensaje privado 👋')
     expect(commentReplyTextError('Un asesor te escribirá pronto')).toMatch(/asesor/)
     expect(commentReplyTextError('Nuestros asesores te contactan')).not.toBeNull()
+    // "asesoría" / "asesoramiento" are not a promise of an advisor.
+    expect(commentReplyTextError('Te damos asesoría para tu proyecto')).toBeNull()
+    expect(commentReplyTextError('Ofrecemos asesoramiento')).toBeNull()
   })
 })

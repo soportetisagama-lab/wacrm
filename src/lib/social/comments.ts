@@ -31,7 +31,8 @@ export const DEFAULT_COMMENT_PUBLIC_REPLY = '¡Hola! Te escribimos por mensaje p
 export const DEFAULT_COMMENT_PRIVATE_REPLY =
   '¡Hola! Vimos tu comentario 😊 Para ayudarte mejor, ¿nos compartes tu número de celular?'
 
-const PROMISES_ADVISOR_RE = /\basesor(?:a|es|as)?\b/i
+// Letter-aware end (\b would treat the "í" of "asesoría" as a boundary).
+const PROMISES_ADVISOR_RE = /\basesor(?:a|es|as)?(?![\p{L}])/iu
 
 /** Max length accepted for each editable text. */
 export const COMMENT_REPLY_MAX_LENGTH = 900
