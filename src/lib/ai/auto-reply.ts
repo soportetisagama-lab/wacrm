@@ -34,6 +34,7 @@ import {
 } from './debounce'
 import { textOf, type ChatMessage } from './types'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
+import { filterAdvisorPromises } from './advisor-promise'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import {
   askPhoneBeforeHandoff,
@@ -775,7 +776,12 @@ export async function runAutoReplyNow(
       recentUserMessages(messages, 3),
     )
 
+    // Instagram/Messenger, or WhatsApp without a number: the reply must
+    // never promise an advisor (prompt guard + filter before sending).
+    const phoneState = await loadContactPhoneState(db, contactId)
+    const noAdvisorPromise = Boolean(phoneState && (phoneState.social || phoneState.needsPhone))
     const systemPrompt = buildSystemPrompt({
+      noAdvisorPromise,
       // Línea Maxi: el catálogo lo envía un asesor (lib/catalog-request).
       userPrompt: [config.systemPrompt, CATALOG_PROMPT_RULE].filter(Boolean).join('\n\n'),
       mode: 'auto_reply',
@@ -961,11 +967,23 @@ export async function runAutoReplyNow(
     // the customer never sees the hint said twice in one message.
     // Nor when the menu was already sent in this chat — the customer has
     // seen it and answered in their own words.
-    const mentionsMenuAlready = /men[uú]/i.test(text)
+    let replyText = text
+    if (noAdvisorPromise && phoneState) {
+      const filtered = filterAdvisorPromises(text, {
+        hasPhone: phoneState.social ? Boolean(phoneState.socialPhone) : !phoneState.needsPhone,
+      })
+      if (filtered.removed.length > 0) {
+        console.log(
+          `[ai auto-reply] advisor promise filtered (${phoneState.social ? 'social' : 'whatsapp sin número'}) in conversation ${conversationId}: ${filtered.removed.length} sentence(s) removed`,
+        )
+        replyText = filtered.text
+      }
+    }
+    const mentionsMenuAlready = /men[uú]/i.test(replyText)
     const outgoingText =
       conv.ai_reply_count === 0 && !mentionsMenuAlready && !(await menuAlreadySent(db, conversationId))
-        ? `${text}${FIRST_REPLY_MENU_HINT}`
-        : text
+        ? `${replyText}${FIRST_REPLY_MENU_HINT}`
+        : replyText
 
     await engineSendText({
       accountId,
