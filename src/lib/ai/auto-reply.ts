@@ -905,7 +905,11 @@ export async function runAutoReplyNow(
     // Instagram/Messenger, or WhatsApp without a number: the reply must
     // never promise an advisor (prompt guard + filter before sending).
     const { name: contactName, phoneState } = await loadContactForReply(db, contactId)
-    const noAdvisorPromise = Boolean(phoneState && (phoneState.social || phoneState.needsPhone))
+    // Only while the number is missing: with it on file (and the data),
+    // "te contactamos pronto" is allowed again.
+    const noAdvisorPromise = Boolean(
+      phoneState && (phoneState.needsPhone || (phoneState.social && !phoneState.socialPhone)),
+    )
     const systemPrompt = buildSystemPrompt({
       noAdvisorPromise,
       pendingPhoneAsk: heldQuestion !== null,
@@ -1097,7 +1101,7 @@ export async function runAutoReplyNow(
     let replyText = text
     if (noAdvisorPromise && phoneState) {
       const filtered = filterAdvisorPromises(text, {
-        hasPhone: phoneState.social ? Boolean(phoneState.socialPhone) : !phoneState.needsPhone,
+        hasPhone: false,
       })
       if (filtered.removed.length > 0) {
         console.log(

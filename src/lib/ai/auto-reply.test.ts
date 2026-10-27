@@ -1708,13 +1708,14 @@ describe('advisor-promise filter on the AI reply', () => {
     log.mockRestore()
   })
 
-  it('Messenger with the number on file: the promise is only removed', async () => {
+  it('Messenger with the number on file: no filter, "te contactamos pronto" is allowed', async () => {
     h.state.contactPhone = null
     h.state.contactChannel = 'messenger'
     h.state.contactSocialPhone = '51974710551'
     h.generateReply.mockResolvedValue({ text: 'Listo, anoté tu pedido. Te contactamos pronto.', handoff: false })
     await runAutoReplyNow(ARGS)
-    expect(sentTexts()).toEqual(['Listo, anoté tu pedido.'])
+    expect(sentTexts()).toEqual(['Listo, anoté tu pedido. Te contactamos pronto.'])
+    expect(systemPrompt()).not.toContain('never promise or imply that an advisor')
   })
 
   it('WhatsApp without a number: filtered too', async () => {
