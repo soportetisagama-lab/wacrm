@@ -22,7 +22,7 @@
 // ============================================================
 
 import { classifyTypedPhone } from '@/lib/whatsapp/phone-utils'
-import { ASK_PHONE_TEXT } from './awaiting-phone'
+import { ASK_PHONE_TEXT, PHONE_REQUEST_LOG_TEXT } from './awaiting-phone'
 
 /** Every bot turn spent waiting for the number, then hand off anyway. */
 export const MAX_HELD_TURNS = 8
@@ -42,9 +42,11 @@ export const PHONE_REFUSED_TEXT =
   'Entendido, no hay problema 😊 Dejamos tu consulta registrada y seguimos por este mismo chat.'
 export const PHONE_UPSET_TEXT = 'Entendido. Dejamos tu consulta registrada y seguimos por este mismo chat.'
 
-/** Every text the bot uses to ask for the number (for "already asked?"). */
+/** Every text the bot uses to ask for the number (for "already asked?"),
+ *  including the log line of WhatsApp's share-number button. */
 export const PHONE_ASK_TEXTS = [
   ASK_PHONE_TEXT,
+  PHONE_REQUEST_LOG_TEXT,
   PHONE_INCOMPLETE_TEXT,
   PHONE_MULTIPLE_TEXT,
   PHONE_FOREIGN_TEXT,
