@@ -37,9 +37,11 @@ import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import {
   askPhoneBeforeHandoff,
-  contactNeedsPhone,
-  NO_PHONE_GIVE_UP_TEXT,
+  loadContactPhoneState,
+  noPhoneGiveUpTextFor,
   parseAwaitingPhone,
+  socialClosingTextFor,
+  socialPhoneNote,
   swapHeldMarker,
   type HeldHandoffOptions,
 } from './awaiting-phone'
@@ -327,9 +329,16 @@ async function handOffToHuman(
     options?: HeldHandoffOptions
   },
 ): Promise<'handed_off' | 'awaiting_phone' | 'lost'> {
+  // Instagram / Messenger: the Community Manager serves these chats first,
+  // so the closing never promises an advisor and the note carries the
+  // number the customer typed (social contacts have no `phone`).
+  const phoneState = await loadContactPhoneState(db, args.contactId)
+  const social = phoneState?.social === true
+  const phoneNote = socialPhoneNote(phoneState)
+  const summary = phoneNote && !args.summary.includes(phoneNote) ? `${args.summary}\n${phoneNote}` : args.summary
   if (args.notifyCustomer) {
     let text: string | undefined
-    if (await contactNeedsPhone(db, args.contactId)) {
+    if (phoneState?.needsPhone) {
       const held = await askPhoneBeforeHandoff(db, {
         accountId: args.accountId,
         conversationId: args.conversationId,
@@ -340,12 +349,14 @@ async function handOffToHuman(
       })
       if (held === 'asked') return 'awaiting_phone'
       if (held === 'lost') return 'lost'
-      text = NO_PHONE_GIVE_UP_TEXT
+      text = noPhoneGiveUpTextFor(phoneState)
     } else if (args.heldMarker) {
-      if (!(await swapHeldMarker(db, args.conversationId, args.heldMarker, args.summary))) {
+      if (!(await swapHeldMarker(db, args.conversationId, args.heldMarker, summary))) {
         return 'lost'
       }
-      text = heldClosingText(args.options)
+      text = social && phoneState ? socialClosingTextFor(phoneState) : heldClosingText(args.options)
+    } else if (social && phoneState) {
+      text = socialClosingTextFor(phoneState)
     }
     await sendHandoffClosingMessage({
       accountId: args.accountId,
@@ -360,13 +371,14 @@ async function handOffToHuman(
     conversationId: args.conversationId,
     config: { handoffAgentId: args.options?.assignTo ?? args.config?.handoffAgentId ?? null },
     assignedAgentId: args.assignedAgentId,
-    summary: args.summary,
+    summary,
   })
   if (args.brief && args.config) {
     await writeHandoffBrief(db, {
       accountId: args.accountId,
       conversationId: args.conversationId,
       config: args.config,
+      ...(phoneNote ? { appendNote: phoneNote } : {}),
     })
   }
   return 'handed_off'

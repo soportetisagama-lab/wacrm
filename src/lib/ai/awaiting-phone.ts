@@ -96,19 +96,77 @@ export function parseAwaitingPhone(summary: string | null | undefined): HeldHand
   return { asks: Number(m[1]), summary: rest, options }
 }
 
-/** True for a WhatsApp contact with no phone on file. Instagram/Messenger
- *  contacts never have one and keep their own handoff. Fails toward the
- *  normal handoff (false). */
-export async function contactNeedsPhone(db: SupabaseClient, contactId: string): Promise<boolean> {
+/** Instagram / Messenger give-up line: those chats are served first by
+ *  the Community Manager, so no advisor is promised either. */
+export const SOCIAL_NO_PHONE_GIVE_UP_TEXT = 'Gracias. Ya registramos tu consulta y el equipo la revisará.'
+
+/** Instagram / Messenger closing line once the number is on file —
+ *  never "un asesor te escribe por aquí". */
+export const SOCIAL_HANDOFF_CLOSING_TEXT = '¡Gracias! Ya registramos tu número y te contactamos pronto.'
+
+export interface ContactPhoneState {
+  /** Instagram / Messenger (anything but WhatsApp). */
+  social: boolean
+  /** The handoff must wait for the number. */
+  needsPhone: boolean
+  /** Instagram / Messenger: the number the customer typed (migration 086). */
+  socialPhone: string | null
+}
+
+/**
+ * Pure: phone state of a contact row.
+ * - WhatsApp: needs a phone when `phone` is empty (BSUID-only contact).
+ * - Instagram / Messenger: `phone` stays NULL on purpose (migration 081 —
+ *   a phone there would make findExistingContact() merge the person's
+ *   WhatsApp chats into the social one); the typed number lives in
+ *   `contact_phone` (migration 086). Before 086 runs the column doesn't
+ *   exist and the handoff goes through as before (fail toward handoff).
+ */
+export function phoneStateOf(row: { phone?: string | null; channel?: string | null; contact_phone?: string | null }): ContactPhoneState {
+  const social = Boolean(row.channel && row.channel !== 'whatsapp')
+  if (social) {
+    const socialPhone = (row.contact_phone ?? '').trim() || null
+    return { social, needsPhone: 'contact_phone' in row && !socialPhone, socialPhone }
+  }
+  return { social, needsPhone: !(row.phone ?? '').trim(), socialPhone: null }
+}
+
+/** Phone state of a contact, or null when it can't be read. */
+export async function loadContactPhoneState(
+  db: SupabaseClient,
+  contactId: string,
+): Promise<ContactPhoneState | null> {
   try {
     const { data, error } = await db.from('contacts').select('*').eq('id', contactId).maybeSingle()
-    if (error || !data) return false
-    const row = data as { phone?: string | null; channel?: string | null }
-    if (row.channel && row.channel !== 'whatsapp') return false
-    return !(row.phone ?? '').trim()
+    if (error || !data) return null
+    return phoneStateOf(data as { phone?: string | null; channel?: string | null; contact_phone?: string | null })
   } catch {
-    return false
+    return null
   }
+}
+
+/** True for a contact whose handoff must wait for their number: a
+ *  WhatsApp contact with no phone, or an Instagram/Messenger contact that
+ *  hasn't typed one yet. Fails toward the normal handoff (false). */
+export async function contactNeedsPhone(db: SupabaseClient, contactId: string): Promise<boolean> {
+  return (await loadContactPhoneState(db, contactId))?.needsPhone ?? false
+}
+
+/** The give-up line for this contact's channel. */
+export function noPhoneGiveUpTextFor(state: Pick<ContactPhoneState, 'social'> | null): string {
+  return state?.social ? SOCIAL_NO_PHONE_GIVE_UP_TEXT : NO_PHONE_GIVE_UP_TEXT
+}
+
+/** Instagram / Messenger closing line: the number on file, or the give-up
+ *  line when there is none (no promise either way). */
+export function socialClosingTextFor(state: Pick<ContactPhoneState, 'socialPhone'>): string {
+  return state.socialPhone ? SOCIAL_HANDOFF_CLOSING_TEXT : SOCIAL_NO_PHONE_GIVE_UP_TEXT
+}
+
+/** Line added to the advisor note so the Community Manager sees the
+ *  number (social contacts have no `phone`). */
+export function socialPhoneNote(state: Pick<ContactPhoneState, 'socialPhone'> | null): string {
+  return state?.socialPhone ? `📱 Celular del cliente: +${state.socialPhone.replace(/^\+/, '')}` : ''
 }
 
 /** The conversation's current `ai_handoff_summary` (null on any failure). */
