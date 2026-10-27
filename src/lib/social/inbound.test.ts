@@ -251,6 +251,19 @@ describe('processSocialEvent', () => {
     expect(dispatchInboundToFlows).not.toHaveBeenCalled()
   })
 
+  it('a typed number after the AI was already talking (no hold, no flow): saved, the AI goes on, no welcome restart', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    await processSocialEvent(db, event({ mid: 'mid-a', text: 'Hola' }))
+    tables.conversations[0].ai_handoff_summary = null
+    tables.conversations[0].ai_reply_count = 2
+    dispatchInboundToAiReply.mockClear()
+    await processSocialEvent(db, event({ mid: 'mid-b', text: '974710551' }))
+    expect(tables.contacts[0].contact_phone).toBe('51974710551')
+    expect(restartWelcomeAfterPhoneKnown).not.toHaveBeenCalled()
+    expect(completeHandoffAwaitingPhone).not.toHaveBeenCalled()
+    expect(dispatchInboundToAiReply).toHaveBeenCalled()
+  })
+
   it('a foreign number with "+" is saved too; the welcome decides the branch', async () => {
     const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
     await processSocialEvent(db, event({ text: '+54 9 11 1234 5678' }))

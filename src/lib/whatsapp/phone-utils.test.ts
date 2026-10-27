@@ -244,6 +244,10 @@ describe("classifyTypedPhone", () => {
     expect(classifyTypedPhone("mi DNI es 45678912")).toEqual({ kind: "none" });
     expect(classifyTypedPhone("RUC 20123456789")).toEqual({ kind: "none" });
     expect(classifyTypedPhone("quiero 2 mesas de 120x60")).toEqual({ kind: "none" });
+    expect(classifyTypedPhone("4155552671")).toEqual({ kind: "foreign_no_plus" });
+    for (const word of ["modelo", "SKU", "código", "codigo", "serie"]) {
+      expect(classifyTypedPhone(`${word} 4155552671`)).toEqual({ kind: "none" });
+    }
     expect(
       classifyTypedPhone("mi pedido 97471055 llegó mal y quiero saber qué pasó con el envío"),
     ).toEqual({ kind: "none" });

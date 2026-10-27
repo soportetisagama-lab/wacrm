@@ -498,9 +498,10 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
   // (081: a phone there would merge the person's WhatsApp chats into this
   // one). Then, as on WhatsApp (webhook phoneJustKnown):
   //   - a handoff on hold for it goes through now (closing + 📋 brief);
-  //   - the first-message hold (options.welcome), or no flow running at
-  //     all: the welcome restarts at its phone gate, which now finds the
-  //     number and follows the flow's own Peru / foreign branch;
+  //   - the first-message hold (options.welcome), or no flow running and
+  //     no AI reply yet: the welcome restarts at its phone gate, which now
+  //     finds the number and follows the flow's own Peru / foreign branch;
+  //   - the AI already talking (no hold, no flow): saved, the AI goes on;
   // and nothing else answers this message.
   let handoffDoneFromPhone = false
   const typedPhone =
@@ -533,7 +534,12 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
         } else {
           handoffDoneFromPhone = true
         }
-      } else if (!(await hasActiveFlowRun(db, accountId, contact.id))) {
+      } else if (
+        !(await hasActiveFlowRun(db, accountId, contact.id)) &&
+        !(await aiAlreadyConversing(db, conversation.id))
+      ) {
+        // Still waiting for the first exchange: restart the welcome. If the
+        // AI was already talking, the number is just saved and the AI goes on.
         handoffDoneFromPhone = await restartWelcomeAfterPhoneKnown(accountId, contact.id, conversation.id, {
           reason: 'social_phone_typed',
         })
@@ -704,6 +710,19 @@ export async function handOffIfUnanswered(
     })
     .eq('id', conversationId)
   return true
+}
+
+/** True when the AI already answered in this conversation (then a typed
+ *  number is saved and the AI goes on; no welcome restart). */
+async function aiAlreadyConversing(db: SupabaseClient, conversationId: string): Promise<boolean> {
+  const { data, error } = await db
+    .from('conversations')
+    .select('ai_reply_count')
+    .eq('id', conversationId)
+    .maybeSingle()
+  // Unknown: don't restart anything.
+  if (error) return true
+  return Number((data as { ai_reply_count?: number | null } | null)?.ai_reply_count ?? 0) > 0
 }
 
 /** True when a flow run is still active for this contact (then a typed

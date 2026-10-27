@@ -217,7 +217,7 @@ function classifyTypedPhoneChunk(text: string): TypedPhoneResult {
 
 /** Digits next to these words are an order/ID number, not a phone. */
 const NOT_A_PHONE_CONTEXT_RE =
-  /(?<![\p{L}])(?:pedido|orden|dni|ruc|factura|boleta|c[oó]digo|ticket|gu[ií]a|serie|cuenta|operaci[oó]n|tracking)(?![\p{L}])/iu
+  /(?<![\p{L}])(?:pedido|orden|dni|ruc|factura|boleta|c[oó]digo|ticket|gu[ií]a|serie|cuenta|operaci[oó]n|tracking|modelo|sku)(?![\p{L}])/iu
 
 /** The phone from classifyTypedPhone, or null for every other outcome. */
 export function extractTypedPhone(text: string): string | null {
