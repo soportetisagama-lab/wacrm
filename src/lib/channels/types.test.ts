@@ -55,6 +55,14 @@ describe('canViewChannel (mirror of can_view_social_channel, migration 080)', ()
     }
   })
 
+  it('always shows Instagram/Messenger to community_manager, never TikTok', () => {
+    for (const showToAgents of [false, true]) {
+      expect(canViewChannel({ channel: 'instagram', role: 'community_manager', showToAgents })).toBe(true)
+      expect(canViewChannel({ channel: 'messenger', role: 'community_manager', showToAgents })).toBe(true)
+      expect(canViewChannel({ channel: 'tiktok', role: 'community_manager', showToAgents })).toBe(false)
+    }
+  })
+
   it('opens them to the rest of the team when the toggle is on', () => {
     expect(canViewChannel({ channel: 'instagram', role: 'agent', showToAgents: true })).toBe(true)
     expect(canViewChannel({ channel: 'messenger', role: 'atc', showToAgents: true })).toBe(true)

@@ -65,7 +65,8 @@ export function isWithinMessagingWindow(
  * enforces it, through RLS): WhatsApp is never restricted here; social
  * channels are owner/admin only unless the account switched on
  * "Mostrar estos chats también a los asesores", in which case the normal
- * per-role conversation rules apply.
+ * per-role conversation rules apply. Community Manager always sees
+ * Instagram/Messenger (migration 084).
  */
 export function canViewChannel(args: {
   channel: Channel
@@ -74,6 +75,11 @@ export function canViewChannel(args: {
 }): boolean {
   if (args.channel === 'whatsapp') return true
   if (args.role === 'owner' || args.role === 'admin') return true
+  // Community Manager works Instagram/Messenger whatever the toggle says
+  // (migration 084). TikTok isn't one of its channels.
+  if (args.role === 'community_manager') {
+    return args.channel === 'instagram' || args.channel === 'messenger'
+  }
   return args.showToAgents
 }
 
