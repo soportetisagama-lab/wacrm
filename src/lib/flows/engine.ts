@@ -60,6 +60,7 @@ import { logAiUsage } from "@/lib/ai/usage";
 import { loadCustomerMemory } from "@/lib/ai/learning/memory";
 import { loadLearnedRules } from "@/lib/ai/learning/rules";
 import { handoffClosingText, runAutoReplyForPendingBurst } from "@/lib/ai/auto-reply";
+import { writeHandoffBrief } from "@/lib/ai/handoff-brief";
 import {
   lastBusinessMessageIs,
   runDebounced,
@@ -2706,7 +2707,7 @@ async function markConversationPendingHandoff(
   // the inbox + unread badge (see lib/conversations/attention.ts).
   const { data: current } = await db
     .from("conversations")
-    .select("unread_count")
+    .select("unread_count, account_id")
     .eq("id", conversationId)
     .maybeSingle();
   const update: Record<string, unknown> = {
@@ -2718,6 +2719,31 @@ async function markConversationPendingHandoff(
   };
   if (assignTo) update.assigned_agent_id = assignTo;
   await db.from("conversations").update(update).eq("id", conversationId);
+  // Same advisor brief ("📋 Producto: …, Distrito: …") the free AI leaves
+  // on its handoffs — without it a menu/collect_ai handoff only showed
+  // the node's generic author note. `summary` stays as the fallback.
+  if (current?.account_id) {
+    await writeFlowHandoffBrief(db, current.account_id as string, conversationId);
+  }
+}
+
+/** Best-effort: a missing/inactive AI config or a model failure keeps
+ *  the deterministic note — the handoff itself never depends on it. */
+async function writeFlowHandoffBrief(
+  db: AdminClient,
+  accountId: string,
+  conversationId: string,
+): Promise<void> {
+  try {
+    const config = await loadAiConfig(db, accountId);
+    if (!config) return;
+    await writeHandoffBrief(db, { accountId, conversationId, config });
+  } catch (err) {
+    console.error(
+      "[flows] handoff brief failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 /** True when a free-text inbound explicitly asks for a person — see

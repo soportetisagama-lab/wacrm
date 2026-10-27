@@ -8,6 +8,7 @@ vi.mock("@/lib/ai/generate", () => ({ extractWithReply: vi.fn() }));
 vi.mock("@/lib/ai/config", () => ({ loadAiConfig: vi.fn() }));
 vi.mock("@/lib/ai/context", () => ({ buildConversationContext: vi.fn() }));
 vi.mock("@/lib/ai/inbound-audio", () => ({ transcribeInboundAudio: vi.fn() }));
+vi.mock("@/lib/ai/handoff-brief", () => ({ writeHandoffBrief: vi.fn() }));
 vi.mock("@/lib/ai/classify-first-inbound", () => ({
   classifyFirstInboundContext: vi.fn(),
 }));
@@ -67,6 +68,7 @@ import { extractWithReply } from "@/lib/ai/generate";
 import { loadAiConfig } from "@/lib/ai/config";
 import { buildConversationContext } from "@/lib/ai/context";
 import { transcribeInboundAudio } from "@/lib/ai/inbound-audio";
+import { writeHandoffBrief } from "@/lib/ai/handoff-brief";
 import { classifyFirstInboundContext } from "@/lib/ai/classify-first-inbound";
 import {
   engineSendText,
@@ -1891,6 +1893,9 @@ function makeFakeDb(
     /** What `contacts.phone` holds for the run's contact. Omitted =
      *  the contacts lookup finds nothing (every older test). */
     contactPhone?: string | null;
+    /** What `conversations.account_id` holds — lets the handoff brief
+     *  run. Omitted = the conversations lookup finds nothing. */
+    conversationAccountId?: string;
   } = {},
 ) {
   const advanceSucceeds = opts.advanceSucceeds ?? true;
@@ -1944,6 +1949,12 @@ function makeFakeDb(
       maybeSingle() {
         if (table === "contacts" && opts.contactPhone !== undefined) {
           return Promise.resolve({ data: { phone: opts.contactPhone }, error: null });
+        }
+        if (table === "conversations" && opts.conversationAccountId) {
+          return Promise.resolve({
+            data: { unread_count: 0, account_id: opts.conversationAccountId },
+            error: null,
+          });
         }
         return Promise.resolve({ data: null, error: null });
       },
@@ -3214,6 +3225,41 @@ describe("handleReplyForActiveRun — release_unmatched_text_to_assistant", () =
         text: "Gracias, un asesor va a continuar tu consulta en breve.",
       }),
     );
+  });
+
+  it("a flow handoff also writes the advisor brief, like the free AI's handoffs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T13:30:00Z")); // Monday 8:30am Peru — open
+    const { db, updates } = makeFakeDb({ conversationAccountId: "acct-1" });
+    const config = aiConfig();
+    mockLoadAiConfig.mockResolvedValue(config);
+    const run = makeRun({ current_node_key: "topics" });
+    const handoffNode = makeNode({
+      node_key: "human_handoff",
+      node_type: "handoff",
+      config: { note: "escalated" },
+    });
+
+    await handleReplyForActiveRun(
+      db,
+      run,
+      { kind: "text", text: "quiero hablar con un asesor", meta_message_id: "wamid.2" },
+      new Map([["topics", topicsNode({})], ["human_handoff", handoffNode]]),
+    );
+    vi.useRealTimers();
+
+    // The deterministic note is still written first (the fallback)…
+    expect(
+      updates.some(
+        (u) => u.table === "conversations" && typeof u.payload.ai_handoff_summary === "string",
+      ),
+    ).toBe(true);
+    // …then replaced by the model-written brief.
+    expect(writeHandoffBrief).toHaveBeenCalledWith(db, {
+      accountId: "acct-1",
+      conversationId: run.conversation_id,
+      config,
+    });
   });
 
   describe("handoff node when the contact has no phone yet", () => {
