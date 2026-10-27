@@ -34,7 +34,7 @@ const ART = String.raw`(?:(?:un|una|el|la|los|las|nuestr[oa]s?)\s+)?`
 /** Words allowed between the subject and the verb ("un asesor DEL EQUIPO te…",
  *  "un asesor EN BREVE te…"). A closed list, so "un asesor PUEDE ayudarte"
  *  or "el asesor QUE te atendió" never match. */
-const FILLER = String.raw`(?:del|de|nuestro|equipo|ventas|comercial|ya|pronto|en|breve|hoy|mañana|luego|enseguida|seguro|más|tarde|unos|minutos|momento|un|los|próximos|días|horas|personalmente|también)`
+const FILLER = String.raw`(?:del|de|nuestro|equipo|ventas|comercial|ya|pronto|en|breve|hoy|mañana|luego|enseguida|seguro|más|tarde|unos|minutos|momento|un|los|próximos|días|horas|personalmente|también|especializad[oa]s?|técnic[oa]s?|asignad[oa]s?)`
 const FILLERS = String.raw`(?:\s+${FILLER}){0,4}`
 
 /** When / how, for the present tense: "te llama EN BREVE", "te escribimos PRONTO". */
@@ -46,10 +46,14 @@ const PRESENT_TAIL = String.raw`(?=\s+${SOON}|[^\S\n]*[.!,]*[^\S\n]*\p{Extended_
 
 const QUOTE = String.raw`(?:tu|la|su|una)\s+(?:cotizaci[oó]n|proforma|presupuesto)${END}`
 const CASE = String.raw`(?:tu|su)\s+(?:caso|consulta|solicitud|pedido|cotizaci[oó]n)${END}`
+/** Usted: "lo/la contactará / escribirá / llamará", future or "va a" only —
+ *  the present "lo/la llama(n)" is naming ("lo llaman acero 304"). */
+const USTED_VERB = String.raw`(?:lo|la)\s+(?:(?:va|van)\s+a\s+)?(?:contactar|escribir|llamar)\p{L}*`
+
 /** "va a" / "van a" before an infinitive. */
 const WILL = String.raw`(?:(?:va|van)\s+a\s+)?`
 
-/** Contact verbs after `te`/`le` (only those objects: "lo/la llama" is naming). */
+/** Contact verbs after `te`/`le` (usted "lo/la" goes through USTED_VERB). */
 function contactVerb(withAttend: boolean): string {
   return (
     String.raw`(?:escrib\p{L}*|contact\p{L}*|respond\p{L}*|llamar\p{L}*|llaman?${PRESENT_TAIL}` +
@@ -73,7 +77,7 @@ function promiseRes(withAttend: boolean): RegExp[] {
         ART +
         SUBJECT +
         FILLERS +
-        String.raw`\s+(?:(?:te|le)\s+${WILL}${verb}` +
+        String.raw`\s+(?:(?:te|le)\s+${WILL}${verb}|${USTED_VERB}` +
         String.raw`|${WILL}(?:preparar\p{L}*|envi\p{L}*|mand\p{L}*|har[aá]n?|hacer)\s+${QUOTE}` +
         String.raw`|se\s+${WILL}(?:comunic\p{L}*|pondr\p{L}*\s+en\s+contacto|ponen?\s+en\s+contacto|contact\p{L}*)` +
         String.raw`|(?:va|van)\s+a\s+(?:tomar|continuar|seguir)\s+(?:con\s+)?${CASE}` +
@@ -83,9 +87,29 @@ function promiseRes(withAttend: boolean): RegExp[] {
     // Verb first: "(pronto) te contactará un asesor".
     new RegExp(
       START +
-        String.raw`(?:te|le)\s+${WILL}(?:contact\p{L}*|escribir\p{L}*|llamar\p{L}*|responder\p{L}*` +
+        String.raw`(?:te|le|lo|la)\s+${WILL}(?:contact\p{L}*|escribir\p{L}*|llamar\p{L}*|responder\p{L}*` +
         (withAttend ? String.raw`|atender\p{L}*` : '') +
         String.raw`)(?:\s+${FILLER}){0,3}\s+${ART}${SUBJECT}`,
+      'iu',
+    ),
+    // Compound: "un asesor revisará tu caso y te contactará".
+    new RegExp(
+      START +
+        ART +
+        SUBJECT +
+        String.raw`(?:\s+\p{L}+){1,4}\s+y\s+(?:te|le|lo|la)\s+${WILL}(?:contactar|escribir|llamar|responder)\p{L}*`,
+      'iu',
+    ),
+    // No subject: "te van a contactar", "te estará contactando",
+    // "le enviaremos la cotización".
+    new RegExp(
+      START +
+        String.raw`(?:te|le|lo|la)\s+(?:van\s+a\s+(?:contactar|llamar|escribir)|estar[aá]n?\s+(?:contactando|llamando|escribiendo))${END}`,
+      'iu',
+    ),
+    new RegExp(
+      START +
+        String.raw`(?:te|le)\s+(?:enviaremos|mandaremos|vamos\s+a\s+(?:enviar|mandar))\s+${QUOTE}`,
       'iu',
     ),
     // Handover: "te derivo / te paso / te comunicamos con un asesor",
