@@ -41,6 +41,8 @@ const h = vi.hoisted(() => ({
     // The latest business message, read by lastBusinessMessageIs.
     lastBusinessRows: [] as Record<string, unknown>[],
     contactName: null as string | null,
+    // account_role of the handoff target (profiles lookup in assignee-guard).
+    profileRole: null as string | null,
   },
 }))
 
@@ -89,6 +91,18 @@ vi.mock('./admin-client', () => ({
             Promise.resolve({
               data: h.state.waConfig,
               error: h.state.waConfig ? null : { message: 'not found' },
+            }),
+        }
+        return chain
+      }
+      if (table === 'profiles') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () =>
+            Promise.resolve({
+              data: h.state.profileRole ? { account_role: h.state.profileRole } : null,
+              error: null,
             }),
         }
         return chain
@@ -229,6 +243,7 @@ beforeEach(() => {
     ai_reply_count: 1,
   }
   h.state.autoResponders = []
+  h.state.profileRole = null
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
@@ -424,6 +439,33 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+
+  it('does not route a WhatsApp handoff to a Community Manager, but still hands off', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'cm-1' }))
+    h.state.profileRole = 'community_manager'
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+      channel: 'whatsapp',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('routes an Instagram handoff to a Community Manager', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'cm-1' }))
+    h.state.profileRole = 'community_manager'
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+      channel: 'instagram',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload).toMatchObject({ assigned_agent_id: 'cm-1' })
   })
 
   it('a second capped inbound sends nothing further — ai_autoreply_disabled already true short-circuits it first', async () => {
