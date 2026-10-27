@@ -69,6 +69,7 @@ import {
   parseAwaitingPhone,
   phoneStateOf,
   socialClosingTextFor,
+  socialPhoneNote,
   type HeldHandoffOptions,
 } from "@/lib/ai/awaiting-phone";
 import {
@@ -2635,7 +2636,8 @@ async function executeHandoff(
  *     `subject_key` IS the tag UUID; the SELECT returns 1 row or 0.
  *   - `contact_field` → one of name/email/phone/company on `contacts`.
  */
-async function evaluateConditionNode(
+/** Exported for tests only. */
+export async function evaluateConditionNode(
   db: AdminClient,
   run: FlowRunRow,
   cfg: ConditionNodeConfig,
@@ -2663,10 +2665,17 @@ async function evaluateConditionNode(
     }
     const { data } = await db
       .from("contacts")
-      .select(cfg.subject_key)
+      .select("*")
       .eq("id", run.contact_id!)
       .maybeSingle();
-    const raw = (data as Record<string, unknown> | null)?.[cfg.subject_key];
+    const row = data as Record<string, unknown> | null;
+    // Instagram / Messenger keep `phone` NULL on purpose (migration 081);
+    // the number the customer typed is `contact_phone` (086), same digits
+    // shape ("51926843129"), so the welcome's phone gate and its Peru /
+    // foreign branch work the same as on WhatsApp.
+    const social = typeof row?.channel === "string" && row.channel !== "whatsapp";
+    const raw =
+      cfg.subject_key === "phone" && social ? row?.contact_phone : row?.[cfg.subject_key];
     subjectValue = typeof raw === "string" && raw.length > 0 ? raw : undefined;
   }
   return evaluateConditionPredicate({
@@ -2753,14 +2762,19 @@ async function markConversationPendingHandoff(
   // the inbox + unread badge (see lib/conversations/attention.ts).
   const { data: current } = await db
     .from("conversations")
-    .select("unread_count, account_id")
+    .select("unread_count, account_id, contact_id")
     .eq("id", conversationId)
     .maybeSingle();
+  // Instagram / Messenger: the number the customer typed, for the team.
+  const phoneNote =
+    typeof current?.contact_id === "string"
+      ? socialPhoneNote(await loadContactPhoneState(db, current.contact_id))
+      : "";
   const update: Record<string, unknown> = {
     ...attentionFields(current?.unread_count),
     status: "pending",
     ai_autoreply_disabled: true,
-    ai_handoff_summary: summary,
+    ai_handoff_summary: phoneNote && !summary.includes(phoneNote) ? `${summary}\n${phoneNote}` : summary,
     updated_at: new Date().toISOString(),
   };
   // A Community Manager only owns Messenger/Instagram chats — the DB
@@ -2773,7 +2787,7 @@ async function markConversationPendingHandoff(
   // on its handoffs — without it a menu/collect_ai handoff only showed
   // the node's generic author note. `summary` stays as the fallback.
   if (current?.account_id) {
-    await writeFlowHandoffBrief(db, current.account_id as string, conversationId);
+    await writeFlowHandoffBrief(db, current.account_id as string, conversationId, phoneNote);
   }
 }
 
@@ -2783,11 +2797,12 @@ async function writeFlowHandoffBrief(
   db: AdminClient,
   accountId: string,
   conversationId: string,
+  appendNote = "",
 ): Promise<void> {
   try {
     const config = await loadAiConfig(db, accountId);
     if (!config) return;
-    await writeHandoffBrief(db, { accountId, conversationId, config });
+    await writeHandoffBrief(db, { accountId, conversationId, config, ...(appendNote ? { appendNote } : {}) });
   } catch (err) {
     console.error(
       "[flows] handoff brief failed:",

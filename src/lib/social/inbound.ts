@@ -36,10 +36,13 @@ import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { completeHandoffAwaitingPhone, dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import {
   askPhoneBeforeHandoff,
-  isAwaitingPhoneHandoff,
   loadContactPhoneState,
+  loadHandoffSummary,
+  parseAwaitingPhone,
   socialClosingTextFor,
+  swapHeldMarker,
 } from '@/lib/ai/awaiting-phone'
+import { restartWelcomeAfterPhoneKnown } from '@/lib/flows/welcome'
 import { extractTypedPhone } from '@/lib/whatsapp/phone-utils'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { sendPushToUser } from '@/lib/notifications/push-send'
@@ -493,8 +496,12 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
   // ---- The number, typed (no share button on these networks) ----------
   // Stored in contacts.contact_phone (migration 086), never in `phone`
   // (081: a phone there would merge the person's WhatsApp chats into this
-  // one). If a handoff was on hold for it, it goes through now — closing
-  // line + 📋 brief — and nothing else answers this message.
+  // one). Then, as on WhatsApp (webhook phoneJustKnown):
+  //   - a handoff on hold for it goes through now (closing + 📋 brief);
+  //   - the first-message hold (options.welcome), or no flow running at
+  //     all: the welcome restarts at its phone gate, which now finds the
+  //     number and follows the flow's own Peru / foreign branch;
+  // and nothing else answers this message.
   let handoffDoneFromPhone = false
   const typedPhone =
     event.kind === 'message' && !interactiveReplyId && event.text && 'contact_phone' in contact && !contact.contact_phone
@@ -507,13 +514,30 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
       .eq('id', contact.id)
     if (phoneErr) {
       console.error('[social webhook] saving the typed phone failed:', phoneErr.message)
-    } else if (await isAwaitingPhoneHandoff(db, conversation.id)) {
-      handoffDoneFromPhone = await completeHandoffAwaitingPhone({
-        accountId,
-        conversationId: conversation.id,
-        contactId: contact.id,
-        configOwnerUserId: config.user_id,
-      })
+    } else {
+      const marker = await loadHandoffSummary(db, conversation.id)
+      const held = parseAwaitingPhone(marker)
+      if (held && marker && !held.options.welcome) {
+        handoffDoneFromPhone = await completeHandoffAwaitingPhone({
+          accountId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          configOwnerUserId: config.user_id,
+        })
+      } else if (held && marker) {
+        // Only whoever clears the first-message hold restarts the welcome.
+        if (await swapHeldMarker(db, conversation.id, marker, null)) {
+          handoffDoneFromPhone = await restartWelcomeAfterPhoneKnown(accountId, contact.id, conversation.id, {
+            reason: 'social_phone_typed',
+          })
+        } else {
+          handoffDoneFromPhone = true
+        }
+      } else if (!(await hasActiveFlowRun(db, accountId, contact.id))) {
+        handoffDoneFromPhone = await restartWelcomeAfterPhoneKnown(accountId, contact.id, conversation.id, {
+          reason: 'social_phone_typed',
+        })
+      }
     }
   }
 
@@ -645,12 +669,16 @@ export async function handOffIfUnanswered(
   const summary = `El bot no pudo atender este chat de ${CHANNEL_LABEL[config.channel]}. Atiéndelo un asesor.`
   const phoneState = await loadContactPhoneState(db, contactId)
   if (phoneState?.needsPhone) {
+    // Usually the welcome stopped at its phone gate (as on WhatsApp, where
+    // the share-number button asks): ask here and restart the welcome once
+    // the number arrives (options.welcome).
     const held = await askPhoneBeforeHandoff(db, {
       accountId: config.account_id,
       conversationId,
       contactId,
       userId: config.user_id,
       summary,
+      options: { welcome: true },
     })
     if (held !== 'give_up') return true
   }
@@ -676,4 +704,19 @@ export async function handOffIfUnanswered(
     })
     .eq('id', conversationId)
   return true
+}
+
+/** True when a flow run is still active for this contact (then a typed
+ *  number is just part of that conversation, not a welcome restart). */
+async function hasActiveFlowRun(db: SupabaseClient, accountId: string, contactId: string): Promise<boolean> {
+  const { data, error } = await db
+    .from('flow_runs')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactId)
+    .eq('status', 'active')
+    .limit(1)
+  // Unknown: don't restart anything.
+  if (error) return true
+  return Array.isArray(data) && data.length > 0
 }

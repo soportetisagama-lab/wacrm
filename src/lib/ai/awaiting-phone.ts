@@ -49,6 +49,10 @@ export interface HeldHandoffOptions {
   /** Every bot turn spent waiting (questions and attempts included) —
    *  the hard cap of lib/ai/phone-ask.ts (MAX_HELD_TURNS). */
   turns?: number
+  /** Instagram / Messenger first message: the welcome flow stopped at its
+   *  phone gate. Once the number arrives the welcome restarts (Peru /
+   *  foreign branch, the basic questions) instead of handing off. */
+  welcome?: boolean
 }
 
 export interface HeldHandoff {
@@ -67,6 +71,7 @@ function cleanOptions(o: HeldHandoffOptions | undefined): HeldHandoffOptions {
   if (o?.closingAfterHours?.trim()) out.closingAfterHours = o.closingAfterHours.trim()
   if (o?.assignTo) out.assignTo = o.assignTo
   if (typeof o?.turns === 'number' && Number.isFinite(o.turns) && o.turns > 0) out.turns = Math.floor(o.turns)
+  if (o?.welcome === true) out.welcome = true
   return out
 }
 
@@ -106,7 +111,7 @@ export const SOCIAL_NO_PHONE_GIVE_UP_TEXT = 'Gracias. Ya registramos tu consulta
 
 /** Instagram / Messenger closing line once the number is on file —
  *  never "un asesor te escribe por aquí". */
-export const SOCIAL_HANDOFF_CLOSING_TEXT = '¡Gracias! Ya registramos tu número y te contactamos pronto.'
+export const SOCIAL_HANDOFF_CLOSING_TEXT = '¡Gracias! Ya tenemos tus datos y te contactamos pronto.'
 
 export interface ContactPhoneState {
   /** Instagram / Messenger (anything but WhatsApp). */
@@ -208,7 +213,7 @@ export async function swapHeldMarker(
   db: SupabaseClient,
   conversationId: string,
   expected: string,
-  next: string,
+  next: string | null,
   extra: Record<string, unknown> = {},
 ): Promise<boolean> {
   try {

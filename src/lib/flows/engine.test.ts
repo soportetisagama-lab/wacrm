@@ -2224,7 +2224,7 @@ describe("handleCollectAiReply", () => {
     await handleCollectAiReply(db, run, node, new Map());
 
     expect(mockSendText).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "¡Gracias! Ya registramos tu número y te contactamos pronto." }),
+      expect.objectContaining({ text: "¡Gracias! Ya tenemos tus datos y te contactamos pronto." }),
     );
     expect(mockSendText).not.toHaveBeenCalledWith(expect.objectContaining({ text: "Un asesor te escribe por aquí." }));
     expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(true);

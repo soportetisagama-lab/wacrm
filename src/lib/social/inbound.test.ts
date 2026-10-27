@@ -8,6 +8,10 @@ const engineSendText = vi.fn()
 const dispatchInboundToAiReply = vi.fn()
 const routeAcknowledgement = vi.fn()
 const completeHandoffAwaitingPhone = vi.fn()
+const restartWelcomeAfterPhoneKnown = vi.fn()
+vi.mock('@/lib/flows/welcome', () => ({
+  restartWelcomeAfterPhoneKnown: (...a: unknown[]) => restartWelcomeAfterPhoneKnown(...a),
+}))
 
 vi.mock('@/lib/flows/engine', () => ({
   dispatchInboundToFlows: (a: unknown) => dispatchInboundToFlows(a),
@@ -75,6 +79,7 @@ beforeEach(() => {
   dispatchInboundToAiReply.mockResolvedValue(undefined)
   engineSendText.mockResolvedValue({ whatsapp_message_id: 'm-out' })
   completeHandoffAwaitingPhone.mockResolvedValue(true)
+  restartWelcomeAfterPhoneKnown.mockResolvedValue(true)
 })
 
 /** An Instagram contact as it reads once migration 086 ran. */
@@ -209,6 +214,7 @@ describe('processSocialEvent', () => {
     await processSocialEvent(db, event())
     expect(engineSendText).toHaveBeenCalledTimes(1)
     expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: ASK_PHONE_TEXT }))
+    expect(String(tables.conversations[0].ai_handoff_summary)).toContain('"welcome":true')
     expect(tables.conversations[0].status).not.toBe('pending')
     expect(String(tables.conversations[0].ai_handoff_summary)).toMatch(/^📵 .*\(1\/3\)/)
   })
@@ -234,12 +240,44 @@ describe('processSocialEvent', () => {
     expect(dispatchInboundToAiReply).not.toHaveBeenCalled()
   })
 
-  it('a typed number with nothing on hold is saved and the bot answers as usual', async () => {
+  it('a typed number with no flow running restarts the welcome at its phone gate (as on WhatsApp)', async () => {
     const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
     await processSocialEvent(db, event({ text: '974710551' }))
     expect(tables.contacts[0].contact_phone).toBe('51974710551')
     expect(completeHandoffAwaitingPhone).not.toHaveBeenCalled()
+    expect(restartWelcomeAfterPhoneKnown).toHaveBeenCalledWith(ACCOUNT, 'contact-1', tables.conversations[0].id, {
+      reason: 'social_phone_typed',
+    })
+    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+  })
+
+  it('a foreign number with "+" is saved too; the welcome decides the branch', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    await processSocialEvent(db, event({ text: '+54 9 11 1234 5678' }))
+    expect(tables.contacts[0].contact_phone).toBe('5491112345678')
+    expect(restartWelcomeAfterPhoneKnown).toHaveBeenCalled()
+  })
+
+  it('a typed number while a flow is running: saved, and the flow goes on', async () => {
+    const { db, tables } = fakeDb({
+      social_channel_configs: [config()],
+      contacts: [socialContact()],
+      flow_runs: [{ id: 'run-1', account_id: ACCOUNT, contact_id: 'contact-1', status: 'active' }],
+    })
+    await processSocialEvent(db, event({ text: '974710551' }))
+    expect(tables.contacts[0].contact_phone).toBe('51974710551')
+    expect(restartWelcomeAfterPhoneKnown).not.toHaveBeenCalled()
     expect(dispatchInboundToFlows).toHaveBeenCalled()
+  })
+
+  it('first-message hold (welcome): the typed number clears it and restarts the welcome, no handoff', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    await processSocialEvent(db, event({ mid: 'mid-a', text: 'Hola' }))
+    tables.conversations[0].ai_handoff_summary = awaitingPhoneSummary(1, 'Nota', { welcome: true })
+    await processSocialEvent(db, event({ mid: 'mid-b', text: '974710551' }))
+    expect(completeHandoffAwaitingPhone).not.toHaveBeenCalled()
+    expect(restartWelcomeAfterPhoneKnown).toHaveBeenCalled()
+    expect(tables.conversations[0].ai_handoff_summary).toBeNull()
   })
 
   it('"el mismo" is not a number: nothing is saved', async () => {
