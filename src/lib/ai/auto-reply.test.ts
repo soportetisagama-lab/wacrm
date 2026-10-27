@@ -1679,3 +1679,44 @@ describe('held handoff — only whoever swaps the marker acts', () => {
     })
   })
 })
+
+describe('advisor-promise filter on the AI reply', () => {
+  const sentTexts = () => h.engineSendText.mock.calls.map((c) => (c[0] as { text: string }).text)
+  const systemPrompt = () => (h.generateReply.mock.calls[0]?.[0] as { systemPrompt: string }).systemPrompt
+
+  it('Instagram without a number: the promise becomes the ask and the prompt carries the guard', async () => {
+    h.state.contactPhone = null
+    h.state.contactChannel = 'instagram'
+    h.state.contactSocialPhone = null
+    h.generateReply.mockResolvedValue({ text: 'Perfecto. Un asesor te escribe en breve.', handoff: false })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([`Perfecto. ${ASK_PHONE_TEXT}`])
+    expect(systemPrompt()).toContain('never promise or imply that an advisor')
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('advisor promise filtered'))
+    log.mockRestore()
+  })
+
+  it('Messenger with the number on file: the promise is only removed', async () => {
+    h.state.contactPhone = null
+    h.state.contactChannel = 'messenger'
+    h.state.contactSocialPhone = '51974710551'
+    h.generateReply.mockResolvedValue({ text: 'Listo, anoté tu pedido. Te contactamos pronto.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual(['Listo, anoté tu pedido.'])
+  })
+
+  it('WhatsApp without a number: filtered too', async () => {
+    h.state.contactPhone = null
+    h.generateReply.mockResolvedValue({ text: 'Te paso con un asesor.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+  })
+
+  it('WhatsApp with a number: nothing changes', async () => {
+    h.generateReply.mockResolvedValue({ text: 'Perfecto. Un asesor te escribe en breve.', handoff: false })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual(['Perfecto. Un asesor te escribe en breve.'])
+    expect(systemPrompt()).not.toContain('never promise or imply that an advisor')
+  })
+})

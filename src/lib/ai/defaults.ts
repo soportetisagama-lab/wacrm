@@ -95,6 +95,18 @@ export const NO_PRICES_GUIDANCE =
   'If the customer asks for a price or a quote, tell them naturally, in one short sentence, that an advisor will prepare their quotation, and keep gathering the details of their project (do not hand off just for that).'
 
 /**
+ * Instagram / Messenger chats (served first by the Community Manager) and
+ * WhatsApp contacts without a number: the auto-reply never promises an
+ * advisor or a callback and asks for the number instead (same text as
+ * ASK_PHONE_TEXT in ./awaiting-phone). Backed by the deterministic filter
+ * in ./advisor-promise.
+ */
+export const NO_ADVISOR_PROMISE_GUIDANCE =
+  'Strict rule for this chat: never promise or imply that an advisor, a salesperson or anyone on the team will write to, call, contact or get back to the customer, and never say you are passing or transferring them to one (no "un asesor te escribe", "te contactamos", "te paso con un asesor"). ' +
+  'This overrides any other instruction here that tells you to say an advisor will contact them or will prepare their quotation; every other rule, including never giving prices, still applies. ' +
+  'If the customer asks for an advisor or a person, or one is needed (for example for a quotation), ask for their mobile number instead, with exactly: "Para ayudarte mejor, ¿nos compartes tu número de celular?"'
+
+/**
  * When the auto-reply bot should hand off. Advisors reported it
  * handing off far too often (any doubt, any sign of impatience), so it
  * only does so for a real reason; otherwise it keeps helping, or says
@@ -230,6 +242,9 @@ export function buildSystemPrompt(args: {
    *  (lib/ai/business-info.ts), already price-filtered and capped;
    *  null/undefined when there are none. */
   businessInfo?: string | null
+  /** auto_reply only: Instagram/Messenger chat or WhatsApp contact
+   *  without a number — never promise an advisor (./advisor-promise). */
+  noAdvisorPromise?: boolean
 }): string {
   const {
     userPrompt,
@@ -243,6 +258,7 @@ export function buildSystemPrompt(args: {
     customerMemory,
     learnedRules,
     businessInfo,
+    noAdvisorPromise,
   } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
@@ -323,6 +339,10 @@ export function buildSystemPrompt(args: {
           .join('\n\n---\n\n')}`,
     )
   }
+
+  // Right before the price rule: overrides the "an advisor will contact
+  // you / prepare your quote" wording of the guidance above.
+  if (mode === 'auto_reply' && noAdvisorPromise) parts.push(NO_ADVISOR_PROMISE_GUIDANCE)
 
   // Last on purpose: overrides any price in the context or knowledge above.
   // Drafts too: the advisor sends them as-is more often than not.
