@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { callAction } from '@/lib/whatsapp/meta-api'
+import { canUseWhatsAppCalls } from '@/lib/auth/roles'
 
 // Answer / reject / hang up an inbound WhatsApp call (migration 071).
 //
@@ -33,7 +34,7 @@ export async function POST(
     .select('account_id, account_role')
     .eq('user_id', user.id)
     .maybeSingle()
-  if (!profile?.account_id || profile.account_role === 'viewer') {
+  if (!profile?.account_id || !canUseWhatsAppCalls(profile.account_role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

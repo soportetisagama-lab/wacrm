@@ -70,6 +70,7 @@ import {
 import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
+import { canAssignAgentToConversation } from "@/lib/conversations/assignee-guard";
 import {
   CATALOG_PROMPT_RULE,
   CATALOG_REQUEST_NOTE,
@@ -2717,7 +2718,11 @@ async function markConversationPendingHandoff(
     ai_handoff_summary: summary,
     updated_at: new Date().toISOString(),
   };
-  if (assignTo) update.assigned_agent_id = assignTo;
+  // A Community Manager only owns Messenger/Instagram chats — the DB
+  // trigger would reject the whole write, so hand off unassigned instead.
+  if (assignTo && (await canAssignAgentToConversation(db, assignTo, conversationId))) {
+    update.assigned_agent_id = assignTo;
+  }
   await db.from("conversations").update(update).eq("id", conversationId);
   // Same advisor brief ("📋 Producto: …, Distrito: …") the free AI leaves
   // on its handoffs — without it a menu/collect_ai handoff only showed
