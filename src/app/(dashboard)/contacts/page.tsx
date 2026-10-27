@@ -71,7 +71,9 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const t = useTranslations('Contacts.page');
   const supabase = createClient();
-  const canEdit = useCan('send-messages');
+  // Add / import. Community Manager edits its Instagram/Messenger
+  // contacts but can't add WhatsApp ones by hand — see canCreateContacts.
+  const canCreate = useCan('create-contacts');
   // Gerencia / admin / owner only — see canDeleteContacts.
   const canDelete = useCan('delete-contacts');
   const canEditSettings = useCan('edit-settings');
@@ -389,7 +391,7 @@ export default function ContactsPage() {
           )}
           <GatedButton
             variant="outline"
-            canAct={canEdit}
+            canAct={canCreate}
             gateReason="add or import contacts"
             onClick={() => setImportOpen(true)}
             className="border-border text-muted-foreground hover:bg-muted"
@@ -398,7 +400,7 @@ export default function ContactsPage() {
             {t('importBtn')}
           </GatedButton>
           <GatedButton
-            canAct={canEdit}
+            canAct={canCreate}
             gateReason="add or import contacts"
             onClick={openAddForm}
             className="bg-primary hover:bg-primary/90 text-primary-foreground"
@@ -575,7 +577,7 @@ export default function ContactsPage() {
               </p>
               {!hasActiveFilters && (
                 <GatedButton
-                  canAct={canEdit}
+                  canAct={canCreate}
                   gateReason="add or import contacts"
                   variant="outline"
                   size="sm"
@@ -719,7 +721,7 @@ export default function ContactsPage() {
                     </p>
                     {!hasActiveFilters && (
                       <GatedButton
-                        canAct={canEdit}
+                        canAct={canCreate}
                         gateReason="add or import contacts"
                         variant="outline"
                         size="sm"

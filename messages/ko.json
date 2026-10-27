@@ -47,6 +47,7 @@
     "roleAgent": "상담원",
     "roleViewer": "뷰어",
     "roleAnalista": "분석가",
+    "roleCommunityManager": "커뮤니티 매니저",
     "closeMenu": "메뉴 닫기",
     "defaultUser": "사용자",
     "defaultAvatar": "아바타",
@@ -170,7 +171,8 @@
           "atc": "Customer care",
           "agent": "Advisor",
           "viewer": "Viewer",
-          "analista": "Analyst"
+          "analista": "Analyst",
+          "community_manager": "커뮤니티 매니저"
         },
         "greeting": {
           "morning": "Good morning, {name}",
@@ -1866,7 +1868,9 @@
       "owner": "소유자",
       "ownerHint": "계정과 결제에 대한 전체 권한",
       "analista": "분석가",
-      "analistaHint": "대시보드와 메시지 보고서만 조회; 읽기 전용"
+      "analistaHint": "대시보드와 메시지 보고서만 조회; 읽기 전용",
+      "community_manager": "커뮤니티 매니저",
+      "community_managerHint": "Instagram 및 Facebook Messenger 전용: 대시보드, 받은편지함, 연락처; 해당 대화 배정 가능"
     },
     "whatsapp": {
       "title": "WhatsApp 연결",

@@ -83,7 +83,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              "'role' must be one of owner, admin, gerencia, jefe_linea, atc, agent, analista, viewer",
+              "'role' must be one of owner, admin, gerencia, jefe_linea, atc, agent, analista, community_manager, viewer",
           },
           { status: 400 }
         );
