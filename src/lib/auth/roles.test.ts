@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_ROLES,
   type AccountRole,
+  COMMUNITY_MANAGER_CHANNELS,
+  COMMUNITY_MANAGER_ROUTES,
   canAssignConversations,
+  canCreateContacts,
   canResumeAi,
   canCreateSharedTags,
   canDeleteAccount,
@@ -13,11 +16,14 @@ import {
   canSendTemplates,
   canDraftWithAi,
   canTransferOwnership,
+  canUseQuickActions,
   canViewMessageUsage,
   canViewOnly,
   canViewTeamMembers,
   hasMinRole,
   isAccountRole,
+  isRouteAllowed,
+  restrictedRoutesFor,
   roleRank,
 } from './roles';
 
@@ -260,6 +266,7 @@ describe('canDraftWithAi', () => {
     ['agent', false],
     ['viewer', false],
     ['analista', false],
+    ['community_manager', true],
   ])('%s -> %s', (role, expected) => {
     expect(canDraftWithAi(role)).toBe(expected);
   });
@@ -274,5 +281,66 @@ describe('analista', () => {
     expect(canViewMessageUsage('owner')).toBe(true);
     expect(canViewMessageUsage('atc')).toBe(false);
     expect(canViewMessageUsage('agent')).toBe(false);
+  });
+});
+
+describe('community_manager', () => {
+  it('is a valid role ranked like an Asesor (SQL: is_account_member, migration 083)', () => {
+    expect(isAccountRole('community_manager')).toBe(true);
+    expect(roleRank('community_manager')).toBe(2);
+    expect(roleRank('community_manager')).toBe(roleRank('agent'));
+    expect(hasMinRole('community_manager', 'agent')).toBe(true);
+    expect(hasMinRole('community_manager', 'atc')).toBe(false);
+  });
+
+  it('answers, edits contacts, assigns and resumes the AI', () => {
+    expect(canSendMessages('community_manager')).toBe(true);
+    expect(canViewOnly('community_manager')).toBe(false);
+    expect(canAssignConversations('community_manager')).toBe(true);
+    expect(canResumeAi('community_manager')).toBe(true);
+    expect(canDraftWithAi('community_manager')).toBe(true);
+  });
+
+  it('has no supervisor, settings or WhatsApp-only capabilities', () => {
+    expect(canSendTemplates('community_manager')).toBe(false);
+    expect(canUseQuickActions('community_manager')).toBe(false);
+    expect(canDeleteContacts('community_manager')).toBe(false);
+    expect(canCreateContacts('community_manager')).toBe(false);
+    expect(canEditSettings('community_manager')).toBe(false);
+    expect(canManageMembers('community_manager')).toBe(false);
+    expect(canViewTeamMembers('community_manager')).toBe(false);
+    expect(canCreateSharedTags('community_manager')).toBe(false);
+    expect(canViewMessageUsage('community_manager')).toBe(false);
+  });
+
+  it('works only Messenger and Instagram', () => {
+    expect([...COMMUNITY_MANAGER_CHANNELS].sort()).toEqual(['instagram', 'messenger']);
+    expect(COMMUNITY_MANAGER_CHANNELS).not.toContain('whatsapp');
+  });
+
+  it('only opens Panel, Bandeja, Contactos and its own Settings', () => {
+    expect(restrictedRoutesFor('community_manager')).toBe(COMMUNITY_MANAGER_ROUTES);
+    for (const path of ['/dashboard', '/inbox', '/contacts', '/contacts/123', '/settings']) {
+      expect(isRouteAllowed(COMMUNITY_MANAGER_ROUTES, path)).toBe(true);
+    }
+    for (const path of ['/broadcasts', '/calls', '/notifications', '/messages', '/inboxes']) {
+      expect(isRouteAllowed(COMMUNITY_MANAGER_ROUTES, path)).toBe(false);
+    }
+  });
+
+  it('leaves every other role unrestricted except Analista', () => {
+    expect(restrictedRoutesFor('analista')).not.toBeNull();
+    for (const role of ['owner', 'admin', 'gerencia', 'jefe_linea', 'atc', 'agent', 'viewer'] as const) {
+      expect(restrictedRoutesFor(role)).toBeNull();
+    }
+    expect(restrictedRoutesFor(null)).toBeNull();
+  });
+});
+
+describe('canCreateContacts', () => {
+  it('matches canSendMessages except for community_manager', () => {
+    for (const role of ACCOUNT_ROLES) {
+      expect(canCreateContacts(role)).toBe(role !== 'community_manager' && canSendMessages(role));
+    }
   });
 });
