@@ -67,6 +67,7 @@ import { MobileThreadTags } from './mobile-thread-tags';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
 import { canBeAssignedConversation, channelOfRow } from '@/lib/auth/roles';
+import { readJsonBody } from '@/lib/http/response-body';
 import {
   CALLS_START,
   CallLogChip,
@@ -797,7 +798,7 @@ export function MessageThread({
           }),
         });
 
-        const payload = await res.json().catch(() => ({}));
+        const payload = await readJsonBody(res);
 
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
@@ -863,7 +864,7 @@ export function MessageThread({
           }),
         });
 
-        const data = await res.json().catch(() => ({}));
+        const data = await readJsonBody(res);
 
         if (!res.ok) {
           const reason = data?.error || `HTTP ${res.status}`;
@@ -924,7 +925,7 @@ export function MessageThread({
           }),
         });
 
-        const data = await res.json().catch(() => ({}));
+        const data = await readJsonBody(res);
 
         if (!res.ok) {
           const reason = data?.error || `HTTP ${res.status}`;
@@ -1013,7 +1014,7 @@ export function MessageThread({
           }),
         });
 
-        const payload = await res.json().catch(() => ({}));
+        const payload = await readJsonBody(res);
 
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
@@ -1205,7 +1206,7 @@ export function MessageThread({
           body: JSON.stringify({ message_id: messageId, emoji }),
         });
         if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
+          const payload = await readJsonBody(res);
           throw new Error(payload?.error || `HTTP ${res.status}`);
         }
       } catch (err) {

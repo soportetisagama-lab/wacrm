@@ -171,6 +171,16 @@ describe('10. does not want to give the number', () => {
   )
 })
 
+describe('a bare request for information is a question (answer, then ask)', () => {
+  it.each(['informacion', 'Info por favor', 'información'])('"%s"', (text) => {
+    expect(kind(text)).toBe('question')
+    expect(decideHeldAction({ kind: 'question' }, ctx)).toEqual({ action: 'answer_then_ask' })
+  })
+  it('"informal" is not', () => {
+    expect(kind('informal')).not.toBe('question')
+  })
+})
+
 describe('11. acknowledgements', () => {
   it.each(['gracias', 'ok', '👍', 'ok gracias', 'listo!', 'Sí, claro'])('"%s" sends no new ask', (text) => {
     expect(kind(text)).toBe('ack')
