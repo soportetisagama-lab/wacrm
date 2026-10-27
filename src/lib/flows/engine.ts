@@ -62,6 +62,11 @@ import { loadLearnedRules } from "@/lib/ai/learning/rules";
 import { handoffClosingText, runAutoReplyForPendingBurst } from "@/lib/ai/auto-reply";
 import { writeHandoffBrief } from "@/lib/ai/handoff-brief";
 import {
+  askPhoneBeforeHandoff,
+  contactNeedsPhone,
+  NO_PHONE_GIVE_UP_TEXT,
+} from "@/lib/ai/awaiting-phone";
+import {
   lastBusinessMessageIs,
   runDebounced,
   summarizePendingBurst,
@@ -1659,15 +1664,57 @@ async function handOffFromCollectAi(
   // still reaches the customer as a fallback instead of them getting
   // nothing.
   let sentOutgoingMessage = false;
-  if (outgoingText && !isDuplicate) {
+
+  // provider_error: neutral wording — why the AI failed is for admins
+  // only (notifyAdminsAiUnavailable), not the agent's note.
+  const handoffSummary =
+    reason === "provider_error"
+      ? "🤖 El asistente derivó la conversación a un asesor."
+      : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`;
+
+  // A WhatsApp contact with no number is never told an advisor writes
+  // back: the terminal handoff is put on hold and the customer is asked
+  // for the number (lib/ai/awaiting-phone.ts). The run ends here; the
+  // general assistant repeats the ask and the webhook completes the
+  // handoff once the number arrives. Past the ask limit: a line that
+  // promises no callback.
+  let noPhoneText: string | undefined;
+  if (
+    !cfg.handoff_node_key &&
+    !isDuplicate &&
+    run.conversation_id &&
+    run.contact_id &&
+    (await contactNeedsPhone(db, run.contact_id))
+  ) {
+    const held = await askPhoneBeforeHandoff(db, {
+      accountId: run.account_id,
+      conversationId: run.conversation_id,
+      contactId: run.contact_id,
+      userId: run.user_id,
+      summary: handoffSummary,
+    });
+    if (held === "asked") {
+      await logEvent(db, run.id, "message_sent", node.node_key, {
+        reason: "collect_ai_handoff_awaiting_phone",
+        handoff_reason: reason,
+        collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+      });
+      await endRun(db, run.id, "handed_off", `collect_ai_${reason}_awaiting_phone`);
+      return { outcome: "handed_off" };
+    }
+    noPhoneText = NO_PHONE_GIVE_UP_TEXT;
+  }
+  const finalText = noPhoneText ?? outgoingText;
+
+  if (finalText && !isDuplicate) {
     try {
       await engineSendText({
         accountId: run.account_id,
         userId: run.user_id,
         conversationId: run.conversation_id!,
         contactId: run.contact_id!,
-        text: outgoingText,
-        aiGenerated: usedModelMessage,
+        text: finalText,
+        aiGenerated: usedModelMessage && !noPhoneText,
       });
       sentOutgoingMessage = true;
     } catch (err) {
@@ -1702,15 +1749,7 @@ async function handOffFromCollectAi(
     // correctly `pending`/`ai_autoreply_disabled: true`; see
     // executeHandoff's identical note on why this write can't be
     // skipped just because the customer-facing message was.
-    await markConversationPendingHandoff(
-      db,
-      run.conversation_id,
-      // provider_error: neutral wording — why the AI failed is for
-      // admins only (notifyAdminsAiUnavailable), not the agent's note.
-      reason === "provider_error"
-        ? "🤖 El asistente derivó la conversación a un asesor."
-        : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`,
-    );
+    await markConversationPendingHandoff(db, run.conversation_id, handoffSummary);
   }
   await endRun(
     db,
