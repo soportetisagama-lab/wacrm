@@ -8,6 +8,7 @@ import {
   startCall,
 } from '@/lib/whatsapp/meta-api'
 import { resolveRecipient, toRecipientTarget } from '@/lib/whatsapp/recipient'
+import { canUseWhatsAppCalls } from '@/lib/auth/roles'
 
 // Outbound WhatsApp calls (migrations 071 + 073). One route, three steps
 // the call button walks through:
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
     .select('account_id, account_role')
     .eq('user_id', user.id)
     .maybeSingle()
-  if (!profile?.account_id || profile.account_role === 'viewer') {
+  if (!profile?.account_id || !canUseWhatsAppCalls(profile.account_role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

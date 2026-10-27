@@ -36,7 +36,12 @@
 --    políticas consultan contacts, que aplica su RLS.
 -- 5. Trigger enforce_conversation_assignment_column (038): el Community
 --    Manager puede asignar/reasignar a otra persona las conversaciones
---    que ve.
+--    que ve. Además, NADIE (tampoco el service role: webhook, flujos,
+--    automatizaciones) puede dejar como asignado a un Community Manager
+--    una conversación que no sea de Messenger/Instagram: el asignado
+--    recibe push con el texto del mensaje, timbre de llamadas,
+--    notificación de asignación (027) y conteo de pendientes. Corre
+--    también en INSERT y al cambiar el canal.
 --
 -- En Inox, además, 084 lo agrega a can_view_social_channel() (080).
 --
@@ -307,6 +312,28 @@ CREATE POLICY conversation_referrals_community_manager ON conversation_referrals
   );
 
 -- ---- 5. Asignación (vigente: 038) ---------------------------------------
+-- ¿`target_user_id` es Community Manager? SECURITY DEFINER para no
+-- depender de la RLS de profiles de quien escribe (el trigger corre como
+-- invocador, porque 038 distingue current_user = 'authenticated').
+CREATE OR REPLACE FUNCTION public.user_is_community_manager(target_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM profiles p
+    WHERE p.user_id = target_user_id
+      AND p.account_role = 'community_manager'
+  );
+$$;
+
+ALTER FUNCTION public.user_is_community_manager(UUID) OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.user_is_community_manager(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.user_is_community_manager(UUID) TO authenticated, service_role;
+
 CREATE OR REPLACE FUNCTION public.enforce_conversation_assignment_column()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -314,22 +341,43 @@ SET search_path = public
 AS $$
 DECLARE
   v_role account_role_enum;
+  v_check_cm BOOLEAN := false;
 BEGIN
-  IF NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
-     AND current_user = 'authenticated'
-     AND NEW.assigned_agent_id IS NOT NULL
-     AND NEW.assigned_agent_id <> auth.uid()
-  THEN
-    SELECT account_role INTO v_role
-    FROM profiles
-    WHERE user_id = auth.uid();
-
-    IF v_role IS NULL
-       OR v_role NOT IN ('owner', 'admin', 'gerencia', 'jefe_linea', 'atc', 'community_manager')
+  -- a) Quién puede asignar a otra persona (038), solo en UPDATE desde el
+  --    navegador.
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
+       AND current_user = 'authenticated'
+       AND NEW.assigned_agent_id IS NOT NULL
+       AND NEW.assigned_agent_id <> auth.uid()
     THEN
-      RAISE EXCEPTION 'Your role cannot assign this conversation to someone else'
-        USING ERRCODE = 'insufficient_privilege';
+      SELECT account_role INTO v_role
+      FROM profiles
+      WHERE user_id = auth.uid();
+
+      IF v_role IS NULL
+         OR v_role NOT IN ('owner', 'admin', 'gerencia', 'jefe_linea', 'atc', 'community_manager')
+      THEN
+        RAISE EXCEPTION 'Your role cannot assign this conversation to someone else'
+          USING ERRCODE = 'insufficient_privilege';
+      END IF;
     END IF;
+
+    v_check_cm := NEW.assigned_agent_id IS NOT NULL
+      AND (NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
+           OR NEW.channel IS DISTINCT FROM OLD.channel);
+  ELSE
+    v_check_cm := NEW.assigned_agent_id IS NOT NULL;
+  END IF;
+
+  -- b) Un Community Manager solo puede ser el asignado de Messenger o
+  --    Instagram, sea quien sea current_user (también service role).
+  IF v_check_cm
+     AND COALESCE(NEW.channel, 'whatsapp') NOT IN ('messenger', 'instagram')
+     AND public.user_is_community_manager(NEW.assigned_agent_id)
+  THEN
+    RAISE EXCEPTION 'A Community Manager can only be assigned Messenger or Instagram conversations'
+      USING ERRCODE = 'check_violation';
   END IF;
 
   RETURN NEW;
@@ -340,7 +388,7 @@ ALTER FUNCTION public.enforce_conversation_assignment_column() OWNER TO postgres
 
 DROP TRIGGER IF EXISTS enforce_conversation_assignment_column ON public.conversations;
 CREATE TRIGGER enforce_conversation_assignment_column
-  BEFORE UPDATE ON public.conversations
+  BEFORE INSERT OR UPDATE ON public.conversations
   FOR EACH ROW EXECUTE FUNCTION public.enforce_conversation_assignment_column();
 
 -- ============================================================
@@ -355,5 +403,9 @@ CREATE TRIGGER enforce_conversation_assignment_column
 --   4. Asignar un chat de Instagram a un Asesor: funciona. Borrar un
 --      contacto: falla (068 exige 'gerencia').
 --   5. whatsapp_calls: 0 filas.
+--   5b. Asignar un chat de WhatsApp a un Community Manager (desde la
+--      Bandeja o con service role): falla con check_violation.
+--      UPDATE de un chat de Instagram asignado a un CM a channel =
+--      'whatsapp': falla igual.
 --   6. Los demás roles: sin cambios.
 -- ============================================================

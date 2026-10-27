@@ -204,6 +204,45 @@ export const COMMUNITY_MANAGER_ROUTES: readonly string[] = [
  */
 export const COMMUNITY_MANAGER_CHANNELS: readonly string[] = ['messenger', 'instagram'];
 
+/**
+ * Place, answer, reject or hang up WhatsApp calls (/api/whatsapp/calls/*).
+ * Not the viewer (read-only) nor the Community Manager, which never works
+ * WhatsApp.
+ */
+export function canUseWhatsAppCalls(role: string | null | undefined): boolean {
+  return !!role && role !== 'viewer' && role !== 'community_manager';
+}
+
+/** True iff `channel` is one a Community Manager works (missing = WhatsApp). */
+export function isCommunityManagerChannel(channel: string | null | undefined): boolean {
+  return !!channel && COMMUNITY_MANAGER_CHANNELS.includes(channel);
+}
+
+/**
+ * May a member with `role` be the assignee of a conversation on `channel`?
+ * Everyone may, except a Community Manager on anything that isn't
+ * Messenger/Instagram — an assignee gets pushes with the message text,
+ * call rings and pending-reply counts for that chat. The database
+ * enforces it in enforce_conversation_assignment_column() (migration 083).
+ */
+export function canBeAssignedConversation(
+  role: string | null | undefined,
+  channel: string | null | undefined,
+): boolean {
+  return role !== 'community_manager' || isCommunityManagerChannel(channel);
+}
+
+/**
+ * `channel` of a conversation/contact row, or null. Reads it defensively
+ * so callers don't depend on the row type declaring the column (only the
+ * lines with social channels type it; migration 083 adds it everywhere).
+ */
+export function channelOfRow(row: unknown): string | null {
+  if (!row || typeof row !== 'object' || !('channel' in row)) return null;
+  const channel = (row as { channel?: unknown }).channel;
+  return typeof channel === 'string' ? channel : null;
+}
+
 /** Route allow-list for roles that only see part of the app, or null. */
 export function restrictedRoutesFor(role: AccountRole | null | undefined): readonly string[] | null {
   if (role === 'analista') return ANALISTA_ROUTES;

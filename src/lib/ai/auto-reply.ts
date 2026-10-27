@@ -1,6 +1,7 @@
 import { supabaseAdmin } from './admin-client'
 import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
+import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
 import { AiError, type AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
@@ -263,7 +264,13 @@ async function markNeedsHuman(
   }
   // Only set the assignee when a target is configured AND the thread
   // isn't already owned — never stomp an existing human assignment.
-  if (args.config.handoffAgentId && !args.assignedAgentId) {
+  // A Community Manager only owns Messenger/Instagram chats — the DB
+  // trigger would reject the whole write, so skip the assignee instead.
+  if (
+    args.config.handoffAgentId &&
+    !args.assignedAgentId &&
+    (await canAssignAgentToConversation(db, args.config.handoffAgentId, args.conversationId))
+  ) {
     update.assigned_agent_id = args.config.handoffAgentId
   }
   await db.from('conversations').update(update).eq('id', args.conversationId)
