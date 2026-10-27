@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import { filterAdvisorPromises, sentencePromisesAdvisor } from './advisor-promise'
 import { ASK_PHONE_TEXT } from './awaiting-phone'
-import { NO_ADVISOR_PROMISE_GUIDANCE, buildSystemPrompt } from './defaults'
+import {
+  NO_ADVISOR_PROMISE_GUIDANCE,
+  NO_PRICES_GUIDANCE,
+  NO_PRICES_NO_PROMISE_GUIDANCE,
+  buildSystemPrompt,
+} from './defaults'
 
 describe('sentencePromisesAdvisor', () => {
   it.each([
@@ -22,6 +27,23 @@ describe('sentencePromisesAdvisor', () => {
     'Te llamaremos mañana.',
     'Nos pondremos en contacto contigo.',
     'Un asesor va a tomar tu caso.',
+    // Quotation promises.
+    'Un asesor preparará tu cotización.',
+    'Un asesor te enviará la cotización.',
+    'Un asesor te mandará la cotización por aquí.',
+    // Verb before the subject.
+    'Te contactará un asesor.',
+    'Pronto te contactará un asesor 👍',
+    'Te escribirá un asesor del equipo.',
+    // Present tense.
+    'En breve un asesor te atiende.',
+    'Un asesor te llama en breve.',
+    'Te escribimos pronto.',
+    'Te responderemos pronto.',
+    'Te comunicamos con un asesor.',
+    // Handover with the case.
+    'Derivaré tu consulta a un asesor.',
+    'Le pasaremos tu consulta a un asesor.',
   ])('flags "%s"', (s) => {
     expect(sentencePromisesAdvisor(s)).toBe(true)
   })
@@ -37,6 +59,15 @@ describe('sentencePromisesAdvisor', () => {
     'Nuestro equipo trabaja de lunes a viernes.',
     'Te escribimos la información aquí mismo.',
     'Hacemos cocinas de acero inoxidable a medida.',
+    // Opening hours, naming, other objects.
+    'Nuestro equipo te atenderá de lunes a viernes de 9 a 6.',
+    'Un asesor te atiende de 9 am a 6 pm.',
+    'Los vendedores le llaman acero 304.',
+    'El especialista lo llama acero quirúrgico.',
+    'El especialista la llama "mesa isla".',
+    'Te escribimos el detalle aquí mismo: mesa de 1.20 m.',
+    'Te enviamos el catálogo por aquí.',
+    'Un asesor puede preparar planos a medida.',
   ])('keeps "%s"', (s) => {
     expect(sentencePromisesAdvisor(s)).toBe(false)
   })
@@ -80,6 +111,15 @@ describe('filterAdvisorPromises', () => {
 describe('NO_ADVISOR_PROMISE_GUIDANCE in the auto-reply prompt', () => {
   it('uses the exact ask text', () => {
     expect(NO_ADVISOR_PROMISE_GUIDANCE).toContain(ASK_PHONE_TEXT)
+  })
+
+  it('the price rule comes without "an advisor will prepare" in no-promise chats', () => {
+    const on = buildSystemPrompt({ userPrompt: null, mode: 'auto_reply', noAdvisorPromise: true })
+    expect(on.trimEnd().endsWith(NO_PRICES_NO_PROMISE_GUIDANCE)).toBe(true)
+    expect(on).not.toContain(NO_PRICES_GUIDANCE)
+    expect(NO_PRICES_NO_PROMISE_GUIDANCE).not.toMatch(/advisor will/)
+    const off = buildSystemPrompt({ userPrompt: null, mode: 'auto_reply' })
+    expect(off.trimEnd().endsWith(NO_PRICES_GUIDANCE)).toBe(true)
   })
 
   it('only in auto_reply mode, only when asked, before the price rule', () => {

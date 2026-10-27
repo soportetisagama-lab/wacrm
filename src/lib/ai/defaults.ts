@@ -94,6 +94,13 @@ export const NO_PRICES_GUIDANCE =
   'Strict business rule: never give prices, amounts, rates, costs or discounts — not even approximate ones or ranges — even when they appear in the business context, the knowledge base or earlier in the conversation. ' +
   'If the customer asks for a price or a quote, tell them naturally, in one short sentence, that an advisor will prepare their quotation, and keep gathering the details of their project (do not hand off just for that).'
 
+/** NO_PRICES_GUIDANCE for chats that can't be promised an advisor
+ *  (NO_ADVISOR_PROMISE_GUIDANCE): same rule, no "an advisor will prepare
+ *  their quotation". */
+export const NO_PRICES_NO_PROMISE_GUIDANCE =
+  'Strict business rule: never give prices, amounts, rates, costs or discounts — not even approximate ones or ranges — even when they appear in the business context, the knowledge base or earlier in the conversation. ' +
+  'If the customer asks for a price or a quote, tell them naturally, in one short sentence, that the quotation is prepared for each project, without saying who will prepare it or that anyone will contact them; keep gathering the details of their project (do not hand off just for that) and, if their mobile number is not known yet, ask for it with exactly: "Para ayudarte mejor, ¿nos compartes tu número de celular?"'
+
 /**
  * Instagram / Messenger chats (served first by the Community Manager) and
  * WhatsApp contacts without a number: the auto-reply never promises an
@@ -341,12 +348,14 @@ export function buildSystemPrompt(args: {
   }
 
   // Right before the price rule: overrides the "an advisor will contact
-  // you / prepare your quote" wording of the guidance above.
-  if (mode === 'auto_reply' && noAdvisorPromise) parts.push(NO_ADVISOR_PROMISE_GUIDANCE)
+  // you" wording of the guidance above. The price rule itself then comes
+  // in its no-promise variant.
+  const noPromise = mode === 'auto_reply' && noAdvisorPromise === true
+  if (noPromise) parts.push(NO_ADVISOR_PROMISE_GUIDANCE)
 
   // Last on purpose: overrides any price in the context or knowledge above.
   // Drafts too: the advisor sends them as-is more often than not.
-  parts.push(NO_PRICES_GUIDANCE)
+  parts.push(noPromise ? NO_PRICES_NO_PROMISE_GUIDANCE : NO_PRICES_GUIDANCE)
 
   return parts.join('\n\n')
 }
