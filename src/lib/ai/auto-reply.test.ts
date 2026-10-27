@@ -41,6 +41,9 @@ const h = vi.hoisted(() => ({
     // The latest business message, read by lastBusinessMessageIs.
     lastBusinessRows: [] as Record<string, unknown>[],
     contactName: null as string | null,
+    // The contact's phone — null is a BSUID-only WhatsApp contact.
+    contactPhone: '51999888777' as string | null,
+    contactChannel: 'whatsapp' as string | null,
     // account_role of the handoff target (profiles lookup in assignee-guard).
     profileRole: null as string | null,
   },
@@ -112,7 +115,14 @@ vi.mock('./admin-client', () => ({
           select: () => chain,
           eq: () => chain,
           maybeSingle: () =>
-            Promise.resolve({ data: { name: h.state.contactName }, error: null }),
+            Promise.resolve({
+              data: {
+                name: h.state.contactName,
+                phone: h.state.contactPhone,
+                channel: h.state.contactChannel,
+              },
+              error: null,
+            }),
         }
         return chain
       }
@@ -197,6 +207,7 @@ vi.mock('./admin-client', () => ({
 }))
 
 import {
+  completeHandoffAwaitingPhone,
   dispatchInboundToAiReply,
   endsWithRepeatedAiReply,
   handoffClosingText,
@@ -204,6 +215,12 @@ import {
   runAutoReplyForPendingBurst,
   runAutoReplyNow,
 } from './auto-reply'
+import {
+  ASK_PHONE_TEXT,
+  NO_PHONE_GIVE_UP_TEXT,
+  PHONE_REQUEST_LOG_TEXT,
+  awaitingPhoneSummary,
+} from './awaiting-phone'
 
 const ARGS = {
   accountId: 'acct-1',
@@ -263,6 +280,8 @@ beforeEach(() => {
   h.state.burstRows = null
   h.state.lastBusinessRows = []
   h.state.contactName = null
+  h.state.contactPhone = '51999888777'
+  h.state.contactChannel = 'whatsapp'
   // Every test answers from the same account — keep the per-account
   // throttle from tripping as the suite grows.
   __resetRateLimitForTests()
@@ -1381,5 +1400,137 @@ describe('endsWithRepeatedAiReply', () => {
   it('does not trigger for human or flow messages', () => {
     const h = { sender_type: 'agent', ai_generated: false, content_text: 'x' }
     expect(endsWithRepeatedAiReply([h, h, h])).toBe(false)
+  })
+})
+
+describe('handoff on hold until a phone-less WhatsApp contact shares the number', () => {
+  const sentTexts = () => h.engineSendText.mock.calls.map((c) => (c[0] as { text: string }).text)
+
+  beforeEach(() => {
+    h.state.contactPhone = null
+  })
+
+  it('[[HANDOFF]] without a number asks for it instead of promising an advisor, and keeps the bot on', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: false })
+    expect(h.state.updatePayload).not.toHaveProperty('status')
+    expect(h.state.updatePayload?.ai_handoff_summary).toMatch(/^📵 .*\(1\/3\)\n/)
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain('AI agent handed off')
+  })
+
+  it('sends nothing more when the webhook just sent the share-number button this turn', async () => {
+    h.state.lastBusinessRows = [
+      { content_text: PHONE_REQUEST_LOG_TEXT, created_at: new Date().toISOString() },
+    ]
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_handoff_summary).toMatch(/\(1\/3\)/)
+  })
+
+  it('"a este mismo número" does not count: asks again without calling the model', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'a este mismo número' }])
+    await runAutoReplyNow(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(h.state.updatePayload).toEqual({
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: awaitingPhoneSummary(2, 'Nota para el asesor'),
+    })
+  })
+
+  it('after 3 asks without a number hands off anyway, without "te escribe por aquí"', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: awaitingPhoneSummary(3, 'Nota para el asesor'),
+    }
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([NO_PHONE_GIVE_UP_TEXT])
+    expect(NO_PHONE_GIVE_UP_TEXT).not.toMatch(/te escribe/)
+    expect(h.state.updatePayload).toMatchObject({
+      status: 'pending',
+      ai_autoreply_disabled: true,
+      ai_handoff_summary: 'Nota para el asesor',
+    })
+  })
+
+  it('a held handoff whose number is on file by now goes through with the normal closing line', async () => {
+    h.state.contactPhone = '51974710551'
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    await runAutoReplyNow(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(sentTexts()[0]).toMatch(/asesor del equipo/)
+    expect(h.state.updatePayload).toMatchObject({
+      status: 'pending',
+      ai_autoreply_disabled: true,
+      ai_handoff_summary: 'Nota para el asesor',
+    })
+  })
+
+  it('the reply cap without a number also asks for it first', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_reply_count: 3 }
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()).toEqual([ASK_PHONE_TEXT])
+    expect(h.state.updatePayload?.ai_handoff_summary).toMatch(/límite de 3 respuestas/)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: false })
+  })
+
+  it('Instagram/Messenger contacts (never a phone) keep the normal handoff', async () => {
+    h.state.contactChannel = 'instagram'
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await runAutoReplyNow(ARGS)
+    expect(sentTexts()[0]).toMatch(/asesor del equipo/)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('completeHandoffAwaitingPhone (webhook, the number just arrived)', () => {
+  it('hands off with the closing line and the held note', async () => {
+    h.state.contactPhone = '51974710551'
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: awaitingPhoneSummary(2, 'Nota para el asesor'),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(true)
+    expect(h.engineSendText.mock.calls[0][0].text).toMatch(/asesor del equipo/)
+    expect(h.state.updatePayload).toMatchObject({
+      status: 'pending',
+      ai_autoreply_disabled: true,
+      ai_handoff_summary: 'Nota para el asesor',
+    })
+  })
+
+  it('does nothing when no handoff was on hold', async () => {
+    h.state.conv = { assigned_agent_id: null, ai_autoreply_disabled: false, ai_handoff_summary: null }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(false)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toBeNull()
+  })
+
+  it('a human already owns the chat: only clears the marker', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-1',
+      ai_autoreply_disabled: false,
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(false)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toEqual({ ai_handoff_summary: 'Nota para el asesor' })
   })
 })
