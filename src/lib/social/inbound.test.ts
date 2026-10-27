@@ -7,12 +7,16 @@ const dispatchInboundToFlows = vi.fn()
 const engineSendText = vi.fn()
 const dispatchInboundToAiReply = vi.fn()
 const routeAcknowledgement = vi.fn()
+const completeHandoffAwaitingPhone = vi.fn()
 
 vi.mock('@/lib/flows/engine', () => ({
   dispatchInboundToFlows: (a: unknown) => dispatchInboundToFlows(a),
 }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: (a: unknown) => engineSendText(a) }))
-vi.mock('@/lib/ai/auto-reply', () => ({ dispatchInboundToAiReply: (a: unknown) => dispatchInboundToAiReply(a) }))
+vi.mock('@/lib/ai/auto-reply', () => ({
+  dispatchInboundToAiReply: (a: unknown) => dispatchInboundToAiReply(a),
+  completeHandoffAwaitingPhone: (a: unknown) => completeHandoffAwaitingPhone(a),
+}))
 vi.mock('@/lib/conversations/acknowledgement', () => ({ routeAcknowledgement: (a: unknown) => routeAcknowledgement(a) }))
 vi.mock('@/lib/automations/engine', () => ({ runAutomationsForTrigger: async () => undefined }))
 vi.mock('@/lib/webhooks/deliver', () => ({ dispatchWebhookEvent: async () => undefined }))
@@ -26,6 +30,7 @@ import { encrypt } from '@/lib/whatsapp/encryption'
 import { claimInboundEvent, processSocialEvent, SOCIAL_FALLBACK_HANDOFF_TEXT } from './inbound'
 import type { SocialInboundEvent } from './parse'
 import { lastInboundWasStandby } from './thread-control'
+import { ASK_PHONE_TEXT, awaitingPhoneSummary } from '@/lib/ai/awaiting-phone'
 
 const ACCOUNT = 'acct-1'
 
@@ -69,7 +74,22 @@ beforeEach(() => {
   routeAcknowledgement.mockResolvedValue(null)
   dispatchInboundToAiReply.mockResolvedValue(undefined)
   engineSendText.mockResolvedValue({ whatsapp_message_id: 'm-out' })
+  completeHandoffAwaitingPhone.mockResolvedValue(true)
 })
+
+/** An Instagram contact as it reads once migration 086 ran. */
+function socialContact(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'contact-1',
+    account_id: ACCOUNT,
+    channel: 'instagram',
+    channel_user_id: 'IGSID-9',
+    phone: null,
+    contact_phone: null,
+    name: 'Ana',
+    ...overrides,
+  }
+}
 
 describe('claimInboundEvent', () => {
   it('claims a mid once; a redelivery is refused', async () => {
@@ -181,6 +201,51 @@ describe('processSocialEvent', () => {
     await processSocialEvent(db, event())
     expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: SOCIAL_FALLBACK_HANDOFF_TEXT }))
     expect(tables.conversations[0]).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+  })
+
+  it('no answer and no number yet: asks for the celular instead of promising an advisor', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    dispatchInboundToFlows.mockResolvedValue({ consumed: true })
+    await processSocialEvent(db, event())
+    expect(engineSendText).toHaveBeenCalledTimes(1)
+    expect(engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: ASK_PHONE_TEXT }))
+    expect(tables.conversations[0].status).not.toBe('pending')
+    expect(String(tables.conversations[0].ai_handoff_summary)).toMatch(/^📵 .*\(1\/3\)/)
+  })
+
+  it('SOCIAL_FALLBACK_HANDOFF_TEXT promises no advisor', () => {
+    expect(SOCIAL_FALLBACK_HANDOFF_TEXT).not.toMatch(/asesor|te escribe por aquí/)
+  })
+
+  it('a typed number completes the held handoff; nothing else answers it', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    // First message opens the conversation; then the handoff is on hold.
+    await processSocialEvent(db, event({ mid: 'mid-a', text: 'Hola' }))
+    tables.conversations[0].ai_handoff_summary = awaitingPhoneSummary(1, 'Nota')
+    dispatchInboundToFlows.mockClear()
+    dispatchInboundToAiReply.mockClear()
+
+    await processSocialEvent(db, event({ mid: 'mid-b', text: 'mi cel es 974 710 551' }))
+    expect(tables.contacts[0]).toMatchObject({ contact_phone: '51974710551', phone: null })
+    expect(completeHandoffAwaitingPhone).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: tables.conversations[0].id, contactId: 'contact-1' }),
+    )
+    expect(dispatchInboundToFlows).not.toHaveBeenCalled()
+    expect(dispatchInboundToAiReply).not.toHaveBeenCalled()
+  })
+
+  it('a typed number with nothing on hold is saved and the bot answers as usual', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    await processSocialEvent(db, event({ text: '974710551' }))
+    expect(tables.contacts[0].contact_phone).toBe('51974710551')
+    expect(completeHandoffAwaitingPhone).not.toHaveBeenCalled()
+    expect(dispatchInboundToFlows).toHaveBeenCalled()
+  })
+
+  it('"el mismo" is not a number: nothing is saved', async () => {
+    const { db, tables } = fakeDb({ social_channel_configs: [config()], contacts: [socialContact()] })
+    await processSocialEvent(db, event({ text: 'el mismo' }))
+    expect(tables.contacts[0].contact_phone).toBeNull()
   })
 
   it('does not hand off when the bot already answered', async () => {

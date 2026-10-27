@@ -1829,6 +1829,8 @@ function makeFakeDb(
     /** What `contacts.phone` holds for the run's contact. Omitted =
      *  the contacts lookup finds nothing (every older test). */
     contactPhone?: string | null;
+    /** Full contacts row (wins over contactPhone) — Instagram/Messenger cases. */
+    contactRow?: Record<string, unknown>;
     /** What `conversations.account_id` holds — lets the handoff brief
      *  run. Omitted = the conversations lookup finds nothing. */
     conversationAccountId?: string;
@@ -1886,6 +1888,9 @@ function makeFakeDb(
         return chain;
       },
       maybeSingle() {
+        if (table === "contacts" && opts.contactRow) {
+          return Promise.resolve({ data: opts.contactRow, error: null });
+        }
         if (table === "contacts" && opts.contactPhone !== undefined) {
           return Promise.resolve({ data: { phone: opts.contactPhone }, error: null });
         }
@@ -2185,6 +2190,44 @@ describe("handleCollectAiReply", () => {
     expect(
       updates.some((u) => u.table === "flow_runs" && u.payload.status === "handed_off"),
     ).toBe(true);
+  });
+
+  it("Instagram contact without a typed number: asks for the celular and holds the handoff", async () => {
+    const { db, updates } = makeFakeDb({
+      contactRow: { phone: null, channel: "instagram", contact_phone: null },
+    });
+    const run = makeRun({ ai_turn_count: 6, vars: ONE_FIELD_COLLECTED });
+    const node = makeNode({
+      config: collectAiConfig({ max_turns: 6, handoff_fallback_text: "Un asesor te escribe por aquí." }),
+    });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Para ayudarte mejor, ¿nos compartes tu número de celular?" }),
+    );
+    expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(false);
+  });
+
+  it("Instagram contact with the number on file: closes without promising an advisor", async () => {
+    const { db, updates } = makeFakeDb({
+      contactRow: { phone: null, channel: "instagram", contact_phone: "51974710551" },
+    });
+    const run = makeRun({ ai_turn_count: 6, vars: ONE_FIELD_COLLECTED });
+    const node = makeNode({
+      config: collectAiConfig({ max_turns: 6, handoff_fallback_text: "Un asesor te escribe por aquí." }),
+    });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "¡Gracias! Ya registramos tu número y te contactamos pronto." }),
+    );
+    expect(mockSendText).not.toHaveBeenCalledWith(expect.objectContaining({ text: "Un asesor te escribe por aquí." }));
+    expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(true);
   });
 
   it("no handoff_node_key and a contact with a phone: the usual handoff", async () => {

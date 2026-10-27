@@ -64,8 +64,11 @@ import { writeHandoffBrief } from "@/lib/ai/handoff-brief";
 import {
   askPhoneBeforeHandoff,
   contactNeedsPhone,
-  NO_PHONE_GIVE_UP_TEXT,
+  loadContactPhoneState,
+  noPhoneGiveUpTextFor,
   parseAwaitingPhone,
+  phoneStateOf,
+  socialClosingTextFor,
   type HeldHandoffOptions,
 } from "@/lib/ai/awaiting-phone";
 import {
@@ -1167,13 +1170,6 @@ const NO_PHONE_HANDOFF_MESSAGE =
 const NO_PHONE_HANDOFF_PREFIX =
   "Para que un asesor pueda llamarte, necesitamos tu número de teléfono. Compártelo con el botón de WhatsApp o escríbelo aquí.";
 
-/** NO_PHONE_HANDOFF_MESSAGE / _PREFIX for Instagram and Messenger chats,
- *  where the customer can only type the number. */
-const SOCIAL_NO_PHONE_HANDOFF_MESSAGE =
-  "Para que un asesor pueda llamarte, escríbenos aquí tu número de teléfono y un asesor continuará tu consulta.";
-const SOCIAL_NO_PHONE_HANDOFF_PREFIX =
-  "Para que un asesor pueda llamarte, escríbenos aquí tu número de teléfono.";
-
 /** After-hours text for a collect_ai handoff that gathered nothing — the
  *  configured "ya tengo tu información" line would be false here. */
 const NO_DATA_AFTER_HOURS_HANDOFF_MESSAGE =
@@ -1185,6 +1181,27 @@ const NO_DATA_AFTER_HOURS_HANDOFF_MESSAGE =
  * fails or finds nothing — get `text` unchanged, so the handoff itself
  * is never blocked or altered by this check.
  */
+/** The no-number give-up line for this contact's channel (Instagram /
+ *  Messenger never promise an advisor). */
+async function giveUpTextForContact(
+  db: AdminClient,
+  contactId: string | null | undefined,
+): Promise<string> {
+  return noPhoneGiveUpTextFor(contactId ? await loadContactPhoneState(db, contactId) : null);
+}
+
+/** Instagram / Messenger closing line instead of `text` (which may promise
+ *  an advisor); WhatsApp keeps `text`. */
+async function socialClosingOr(
+  db: AdminClient,
+  contactId: string | null | undefined,
+  text: string | undefined,
+): Promise<string | undefined> {
+  if (!contactId || !text) return text;
+  const state = await loadContactPhoneState(db, contactId);
+  return state?.social ? socialClosingTextFor(state) : text;
+}
+
 async function handoffTextForContact(
   db: AdminClient,
   contactId: string | null | undefined,
@@ -1197,15 +1214,14 @@ async function handoffTextForContact(
       .select("*")
       .eq("id", contactId)
       .maybeSingle();
-    if (!data || (data.phone ?? "").trim() !== "") return text;
-    // Instagram / Messenger: there's no WhatsApp share button there.
+    if (!data) return text;
+    // Instagram / Messenger: the Community Manager serves these chats
+    // first — never "un asesor te escribe", whatever the flow says. The
+    // number was asked before (holdFlowHandoffForPhone) when missing.
     if (data.channel && data.channel !== "whatsapp") {
-      return text === DEFAULT_HANDOFF_CUSTOMER_MESSAGE
-        ? SOCIAL_NO_PHONE_HANDOFF_MESSAGE
-        : `${SOCIAL_NO_PHONE_HANDOFF_PREFIX}
-
-${text}`;
+      return socialClosingTextFor(phoneStateOf(data));
     }
+    if ((data.phone ?? "").trim() !== "") return text;
   } catch {
     return text;
   }
@@ -1639,7 +1655,7 @@ async function handOffFromCollectAi(
       ? "🤖 El asistente derivó la conversación a un asesor."
       : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`;
 
-  // A WhatsApp contact with no number is never told an advisor writes
+  // A contact with no number (WhatsApp, or Instagram/Messenger without a typed one) is never told an advisor writes
   // back: the terminal handoff is put on hold (holdFlowHandoffForPhone).
   // The run ends here; the general assistant repeats the ask and the
   // webhook completes the handoff once the number arrives.
@@ -1666,8 +1682,8 @@ async function handOffFromCollectAi(
     await endRun(db, run.id, "handed_off", `collect_ai_${reason}_awaiting_phone`);
     return { outcome: "handed_off" };
   }
-  const noPhoneText = hold === "give_up" ? NO_PHONE_GIVE_UP_TEXT : undefined;
-  // Advancing to a handoff node for a WhatsApp contact with no number:
+  const noPhoneText = hold === "give_up" ? await giveUpTextForContact(db, run.contact_id) : undefined;
+  // Advancing to a handoff node for a contact with no number:
   // that node asks for it and holds the handoff (holdFlowHandoffForPhone),
   // so collect_ai sends nothing here — its text usually promises an
   // advisor — and logs no "handoff" event, which would make the node
@@ -1678,7 +1694,8 @@ async function handOffFromCollectAi(
     !isDuplicate &&
     Boolean(run.contact_id) &&
     (await contactNeedsPhone(db, run.contact_id!));
-  const finalText = nodeWillAskPhone ? undefined : (noPhoneText ?? outgoingText);
+  const closingText = noPhoneText ?? (await socialClosingOr(db, run.contact_id, outgoingText));
+  const finalText = nodeWillAskPhone ? undefined : closingText;
 
   if (finalText && !isDuplicate) {
     try {
@@ -1688,7 +1705,7 @@ async function handOffFromCollectAi(
         conversationId: run.conversation_id!,
         contactId: run.contact_id!,
         text: finalText,
-        aiGenerated: usedModelMessage && !noPhoneText,
+        aiGenerated: usedModelMessage && closingText === outgoingText,
       });
     } catch (err) {
       await logEvent(db, run.id, "error", node.node_key, {
@@ -2585,7 +2602,7 @@ async function executeHandoff(
         contactId: run.contact_id,
         text:
           hold === "give_up"
-            ? NO_PHONE_GIVE_UP_TEXT
+            ? await giveUpTextForContact(db, run.contact_id)
             : await handoffTextForContact(db, run.contact_id, outgoingMessage),
       });
     } catch (err) {
@@ -2674,17 +2691,17 @@ function interpolateVars(template: string, vars: Record<string, unknown>): strin
 }
 
 /**
- * A flow handoff for a WhatsApp contact with no number on file is never
+ * A flow handoff for a contact with no number on file (WhatsApp phone or social contact_phone) is never
  * told an advisor writes back: it's put on hold and the customer is asked
  * for the number (lib/ai/awaiting-phone.ts) — not `pending`, bot still
  * on. The general assistant repeats the ask on the next messages and the
  * webhook completes the handoff (closing text in `options`, pending,
  * 📋 brief) once the number arrives. Outcomes:
- *   - 'proceed': the contact has a number (or isn't WhatsApp) — normal handoff.
+ *   - 'proceed': the contact has a number (or the column of 086 is missing) — normal handoff.
  *   - 'held': asked, or another actor already dealt with the held handoff —
  *     the caller ends its run and does nothing else.
  *   - 'give_up': MAX_PHONE_ASKS asks unanswered — normal handoff, but
- *     with NO_PHONE_GIVE_UP_TEXT instead of the closing text.
+ *     with the give-up line (giveUpTextForContact) instead of the closing text.
  */
 async function holdFlowHandoffForPhone(
   db: AdminClient,
@@ -2830,7 +2847,7 @@ async function handOffOnHumanRequest(
         contactId: input.contactId,
         text:
           hold === "give_up"
-            ? NO_PHONE_GIVE_UP_TEXT
+            ? await giveUpTextForContact(db, input.contactId)
             : await handoffTextForContact(
                 db,
                 input.contactId,
@@ -3864,7 +3881,7 @@ export async function handleReplyForActiveRun(
           contactId: run.contact_id,
           text:
             hold === "give_up"
-              ? NO_PHONE_GIVE_UP_TEXT
+              ? await giveUpTextForContact(db, run.contact_id)
               : await handoffTextForContact(
                   db,
                   run.contact_id,

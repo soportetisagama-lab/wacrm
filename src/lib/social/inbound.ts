@@ -15,7 +15,11 @@
 //      mapped back to the option id here, so Flows route it as a tap;
 //   6. if this was the contact's first message and nothing at all
 //      answered it (a flow step that only works on WhatsApp, a failed
-//      send…), hand the chat to an advisor instead of leaving it silent.
+//      send…), ask for the celular (or, with it on file, thank them and
+//      flag the chat) instead of leaving it silent.
+// Before any handoff the bot asks for the celular (lib/ai/awaiting-phone)
+// and never promises an advisor: the Community Manager serves these chats
+// first. A typed number is kept in contacts.contact_phone (migration 086).
 // ============================================================
 
 import { randomUUID } from 'node:crypto'
@@ -29,7 +33,14 @@ import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
-import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { completeHandoffAwaitingPhone, dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import {
+  askPhoneBeforeHandoff,
+  isAwaitingPhoneHandoff,
+  loadContactPhoneState,
+  socialClosingTextFor,
+} from '@/lib/ai/awaiting-phone'
+import { extractTypedPhone } from '@/lib/whatsapp/phone-utils'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { sendPushToUser } from '@/lib/notifications/push-send'
 import { storeInboundMediaCopy } from '@/lib/whatsapp/inbound-media'
@@ -48,9 +59,12 @@ import type { SocialConfigRow } from './send'
 import { noteInboundControl } from './thread-control'
 import { processSocialCommentsBody } from './comments'
 
-/** Sent when nothing answered a contact's first message (see step 6). */
+/** Sent when nothing answered a contact's first message and their number
+ *  is already on file (see step 6). The Community Manager serves these
+ *  chats first: no advisor is promised. Without a number the bot asks for
+ *  it instead (ASK_PHONE_TEXT) and holds the handoff. */
 export const SOCIAL_FALLBACK_HANDOFF_TEXT =
-  '¡Hola! Gracias por escribirnos. Un asesor del equipo te responderá por aquí en breve.'
+  '¡Gracias por escribirnos! Ya registramos tu consulta y te contactamos pronto.'
 
 /** Media bigger than this is linked, not copied (keeps the webhook fast). */
 const MAX_MEDIA_COPY_BYTES = 25 * 1024 * 1024
@@ -466,6 +480,48 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
     contentType === 'text' && contentText ? contentText : attachmentPreview(firstAttachment?.type ?? ''),
   )
 
+  const emitMessageReceived = () =>
+    dispatchWebhookEvent(db, accountId, 'message.received', {
+      conversation_id: conversation.id,
+      contact_id: contact.id,
+      whatsapp_message_id: event.mid,
+      content_type: contentType,
+      text: contentText,
+      channel: event.channel,
+    })
+
+  // ---- The number, typed (no share button on these networks) ----------
+  // Stored in contacts.contact_phone (migration 086), never in `phone`
+  // (081: a phone there would merge the person's WhatsApp chats into this
+  // one). If a handoff was on hold for it, it goes through now — closing
+  // line + 📋 brief — and nothing else answers this message.
+  let handoffDoneFromPhone = false
+  const typedPhone =
+    event.kind === 'message' && !interactiveReplyId && event.text && 'contact_phone' in contact && !contact.contact_phone
+      ? extractTypedPhone(event.text)
+      : null
+  if (typedPhone) {
+    const { error: phoneErr } = await db
+      .from('contacts')
+      .update({ contact_phone: typedPhone, updated_at: new Date().toISOString() })
+      .eq('id', contact.id)
+    if (phoneErr) {
+      console.error('[social webhook] saving the typed phone failed:', phoneErr.message)
+    } else if (await isAwaitingPhoneHandoff(db, conversation.id)) {
+      handoffDoneFromPhone = await completeHandoffAwaitingPhone({
+        accountId,
+        conversationId: conversation.id,
+        contactId: contact.id,
+        configOwnerUserId: config.user_id,
+      })
+    }
+  }
+
+  if (handoffDoneFromPhone) {
+    await emitMessageReceived()
+    return
+  }
+
   // ---- Bot pipeline (same order as the WhatsApp webhook) ---------------
   const inboundText = contentText ?? ''
   const isSticker = firstAttachment?.type === 'sticker'
@@ -552,22 +608,17 @@ export async function processSocialEvent(db: SupabaseClient, event: SocialInboun
     await handOffIfUnanswered(db, config, conversation.id, contact.id, createdAt)
   }
 
-  await dispatchWebhookEvent(db, accountId, 'message.received', {
-    conversation_id: conversation.id,
-    contact_id: contact.id,
-    whatsapp_message_id: event.mid,
-    content_type: contentType,
-    text: contentText,
-    channel: event.channel,
-  })
+  await emitMessageReceived()
 }
 
 /**
  * Step 6: the contact's first message got no answer from Flows,
  * automations or the AI (e.g. a flow branch that only makes sense on
- * WhatsApp, like asking for the phone through WhatsApp's own button, or
- * a send that failed). Rather than leave a new lead in silence, tell them
- * an advisor will write and flag the chat for a human.
+ * WhatsApp, or a send that failed). Rather than leave a new lead in
+ * silence: without their number on file, ask for it and hold the handoff
+ * (lib/ai/awaiting-phone — completed when they type it); with it, thank
+ * them and flag the chat for the team. No advisor is promised either way:
+ * the Community Manager serves these chats first.
  */
 export async function handOffIfUnanswered(
   db: SupabaseClient,
@@ -591,13 +642,26 @@ export async function handOffIfUnanswered(
     .maybeSingle()
   if ((conv as { assigned_agent_id?: string | null } | null)?.assigned_agent_id) return false
 
+  const summary = `El bot no pudo atender este chat de ${CHANNEL_LABEL[config.channel]}. Atiéndelo un asesor.`
+  const phoneState = await loadContactPhoneState(db, contactId)
+  if (phoneState?.needsPhone) {
+    const held = await askPhoneBeforeHandoff(db, {
+      accountId: config.account_id,
+      conversationId,
+      contactId,
+      userId: config.user_id,
+      summary,
+    })
+    if (held !== 'give_up') return true
+  }
+
   try {
     await engineSendText({
       accountId: config.account_id,
       userId: config.user_id,
       conversationId,
       contactId,
-      text: SOCIAL_FALLBACK_HANDOFF_TEXT,
+      text: phoneState?.socialPhone ? socialClosingTextFor(phoneState) : SOCIAL_FALLBACK_HANDOFF_TEXT,
     })
   } catch (err) {
     console.error('[social webhook] fallback handoff text failed:', err)
@@ -607,7 +671,7 @@ export async function handOffIfUnanswered(
     .update({
       status: 'pending',
       ai_autoreply_disabled: true,
-      ai_handoff_summary: `El bot no pudo atender este chat de ${CHANNEL_LABEL[config.channel]}. Atiéndelo un asesor.`,
+      ai_handoff_summary: summary,
       updated_at: new Date().toISOString(),
     })
     .eq('id', conversationId)

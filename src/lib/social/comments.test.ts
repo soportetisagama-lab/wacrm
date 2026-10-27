@@ -214,4 +214,11 @@ describe('commentReplyTextError', () => {
     expect(commentReplyTextError('El precio es S/ 120')).not.toBeNull()
     expect(commentReplyTextError('x'.repeat(901))).not.toBeNull()
   })
+
+  it('the defaults ask for the celular and never promise an advisor', () => {
+    expect(DEFAULT_COMMENT_PRIVATE_REPLY).toContain('¿nos compartes tu número de celular?')
+    expect(DEFAULT_COMMENT_PUBLIC_REPLY).toBe('¡Hola! Te escribimos por mensaje privado 👋')
+    expect(commentReplyTextError('Un asesor te escribirá pronto')).toMatch(/asesor/)
+    expect(commentReplyTextError('Nuestros asesores te contactan')).not.toBeNull()
+  })
 })

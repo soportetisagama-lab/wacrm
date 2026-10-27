@@ -24,9 +24,14 @@ import { hasPrice } from '@/lib/ai/learning/guards'
 import { GraphApiError, replyToComment, sendPrivateReply } from './graph'
 import { parseSocialComments, type SocialCommentEvent } from './parse'
 
-export const DEFAULT_COMMENT_PUBLIC_REPLY = '¡Hola! Te escribimos por interno 👋'
+// The Community Manager serves these chats first: no text promises an
+// advisor. The private message asks for the number right away, the same
+// ask the bot makes before any handoff (lib/ai/awaiting-phone).
+export const DEFAULT_COMMENT_PUBLIC_REPLY = '¡Hola! Te escribimos por mensaje privado 👋'
 export const DEFAULT_COMMENT_PRIVATE_REPLY =
-  '¡Hola! Vimos tu comentario en nuestra publicación. ¿En qué te podemos ayudar?'
+  '¡Hola! Vimos tu comentario 😊 Para ayudarte mejor, ¿nos compartes tu número de celular?'
+
+const PROMISES_ADVISOR_RE = /\basesor(?:a|es|as)?\b/i
 
 /** Max length accepted for each editable text. */
 export const COMMENT_REPLY_MAX_LENGTH = 900
@@ -58,6 +63,9 @@ export function commentReplyTextError(text: string): string | null {
     return `El texto puede tener hasta ${COMMENT_REPLY_MAX_LENGTH} caracteres.`
   }
   if (hasPrice(text)) return 'Los textos automáticos no pueden incluir precios ni montos.'
+  if (PROMISES_ADVISOR_RE.test(text)) {
+    return 'Los textos automáticos no pueden prometer un asesor: estos chats los atiende primero el Community Manager.'
+  }
   return null
 }
 
