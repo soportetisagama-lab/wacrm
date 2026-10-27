@@ -24,6 +24,8 @@ import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
+import { canBeAssignedConversation } from '@/lib/auth/roles'
+import { canAssignAgentToContact, contactChannel } from '@/lib/conversations/assignee-guard'
 
 // ------------------------------------------------------------
 // Public API
@@ -488,12 +490,22 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         // Pick any member of the account. The existing implementation
         // only ever returned the automation's author; preserving that
         // shape until a real round-robin algorithm replaces it.
+        // A Community Manager only takes Messenger/Instagram chats (the
+        // DB trigger rejects the rest), so it's skipped otherwise. The
+        // role is filtered here, not in SQL, so the query never names an
+        // enum value the database may not have yet.
         const { data: profiles } = await db
           .from('profiles')
-          .select('user_id')
+          .select('user_id, account_role')
           .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+          .limit(50)
+        const rows = (profiles ?? []) as { user_id: string; account_role?: string | null }[]
+        const channel = rows.some((p) => p.account_role === 'community_manager')
+          ? await contactChannel(db, args.contactId)
+          : null
+        agentId = rows.find((p) => canBeAssignedConversation(p.account_role, channel))?.user_id
+      } else if (agentId && !(await canAssignAgentToContact(db, agentId, args.contactId))) {
+        return `skipped: ${agentId} is a community manager and the conversation is not Messenger/Instagram`
       }
       if (!agentId) return 'no agent resolved'
       await db
