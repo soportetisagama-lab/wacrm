@@ -47,6 +47,7 @@
     "roleAgent": "Asesor",
     "roleViewer": "Viewer",
     "roleAnalista": "Analyst",
+    "roleCommunityManager": "Community Manager",
     "closeMenu": "Close menu",
     "defaultUser": "User",
     "defaultAvatar": "Avatar",
@@ -170,7 +171,8 @@
           "atc": "Customer care",
           "agent": "Advisor",
           "viewer": "Viewer",
-          "analista": "Analyst"
+          "analista": "Analyst",
+          "community_manager": "Community Manager"
         },
         "greeting": {
           "morning": "Good morning, {name}",
@@ -1862,7 +1864,9 @@
       "owner": "Owner",
       "ownerHint": "Full control over account and billing",
       "analista": "Analyst",
-      "analistaHint": "Sees only the Dashboard and the Messages report; read-only"
+      "analistaHint": "Sees only the Dashboard and the Messages report; read-only",
+      "community_manager": "Community Manager",
+      "community_managerHint": "Handles Instagram and Facebook Messenger only: Dashboard, Inbox and Contacts; can assign those conversations"
     },
     "whatsapp": {
       "title": "WhatsApp connection",

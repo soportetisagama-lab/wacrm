@@ -21,7 +21,7 @@ import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { ROLE_CHIP } from "@/components/layout/sidebar";
 import { UpdateBanner } from "@/components/layout/update-banner";
 import { App } from "@capacitor/app";
-import { ANALISTA_ROUTES } from "@/lib/auth/roles";
+import { isRouteAllowed, restrictedRoutesFor } from "@/lib/auth/roles";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -35,12 +35,14 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Analista only works the Panel + Mensajes report — typing another
-  // route by hand bounces back to the Panel (RLS keeps them read-only
-  // anyway; this just keeps the app matching their menu).
+  // Analista only works the Panel + Mensajes report, Community Manager
+  // only Panel + Bandeja + Contactos — typing another route by hand
+  // bounces back to the Panel (RLS keeps their data scoped anyway; this
+  // just keeps the app matching their menu).
   useEffect(() => {
-    if (accountRole !== "analista") return;
-    if (!ANALISTA_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`))) {
+    const allowed = restrictedRoutesFor(accountRole);
+    if (!allowed) return;
+    if (!isRouteAllowed(allowed, pathname)) {
       router.replace("/dashboard");
     }
   }, [accountRole, pathname, router]);

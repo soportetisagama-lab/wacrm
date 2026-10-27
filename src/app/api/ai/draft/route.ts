@@ -11,7 +11,7 @@ import { latestUserMessage } from '@/lib/ai/query'
 import { logAiUsage } from '@/lib/ai/usage'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { AiError } from '@/lib/ai/types'
-import { hasMinRole, type AccountRole } from '@/lib/auth/roles'
+import { canDraftWithAi, hasMinRole, type AccountRole } from '@/lib/auth/roles'
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -25,10 +25,17 @@ import { hasMinRole, type AccountRole } from '@/lib/auth/roles'
 export async function POST(request: Request) {
   let role: AccountRole | null = null
   try {
-    // ATC and above — an agent (asesor) has no "draft with AI" (canDraftWithAi).
-    const ctx = await requireRole('atc')
+    // ATC and above, plus Community Manager — an agent (asesor) has no
+    // "draft with AI" (canDraftWithAi).
+    const ctx = await requireRole('agent')
     const { supabase, accountId, userId } = ctx
     role = ctx.role
+    if (!canDraftWithAi(ctx.role)) {
+      return NextResponse.json(
+        { error: 'Your role cannot draft replies with AI' },
+        { status: 403 },
+      )
+    }
 
     const userLimit = checkRateLimit(`ai-draft:${userId}`, RATE_LIMITS.aiDraft)
     if (!userLimit.success) return rateLimitResponse(userLimit)

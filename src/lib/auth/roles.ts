@@ -19,6 +19,7 @@
 //   Administrador -> owner        Gerencia -> gerencia
 //   Jefe de Línea -> jefe_linea   ATC      -> atc
 //   Asesor        -> agent        Analista -> analista
+//   Community Manager -> community_manager
 // `admin` and `viewer` are not part of that 5-role business mapping
 // but remain valid, functioning roles (admin = generic technical
 // power role, not offered at invite time; viewer = unrestricted
@@ -33,7 +34,8 @@ export type AccountRole =
   | 'atc'
   | 'agent'
   | 'viewer'
-  | 'analista';
+  | 'analista'
+  | 'community_manager';
 
 /**
  * Ordered list of every valid role, lowest privilege first.
@@ -56,6 +58,7 @@ export const ACCOUNT_ROLES: readonly AccountRole[] = [
   'analista',
   'viewer',
   'agent',
+  'community_manager',
   'atc',
   'jefe_linea',
   'gerencia',
@@ -80,6 +83,11 @@ export function roleRank(role: AccountRole): number {
     case 'atc':
       return 3;
     case 'agent':
+    // Community Manager writes like an Asesor (send messages, create/edit
+    // contacts) but has no supervisor rank: everything it gets beyond
+    // that (assign, resume AI, draft with AI) comes from explicit lists
+    // below. Same rank in is_account_member (migration 083).
+    case 'community_manager':
       return 2;
     case 'viewer':
     // Analista is read-only like viewer (same rank in is_account_member,
@@ -141,6 +149,16 @@ export function canSendMessages(role: AccountRole): boolean {
 }
 
 /**
+ * Add or import contacts by hand. Same as canSendMessages except for
+ * Community Manager: contacts created by hand are always WhatsApp (they
+ * need a phone), a channel it never sees — its Instagram/Messenger
+ * contacts arrive through the webhook. It can still edit them.
+ */
+export function canCreateContacts(role: AccountRole): boolean {
+  return canSendMessages(role) && role !== 'community_manager';
+}
+
+/**
  * Viewer: read-only across everything. Provided as a positive
  * predicate so UI gates read naturally (`if (canViewOnly(role))`
  * shows the "Read-only" tooltip without inverting `canSendMessages`).
@@ -167,6 +185,38 @@ export function canViewMessageUsage(role: AccountRole): boolean {
 export const ANALISTA_ROUTES: readonly string[] = ['/dashboard', '/messages', '/settings'];
 
 /**
+ * Routes a Community Manager may open — everything else redirects to the
+ * Panel (see DashboardShell). Settings stays reachable for their own profile.
+ */
+export const COMMUNITY_MANAGER_ROUTES: readonly string[] = [
+  '/dashboard',
+  '/inbox',
+  '/contacts',
+  '/settings',
+];
+
+/**
+ * Channels a Community Manager works: Facebook Messenger and Instagram
+ * only — never WhatsApp (nor TikTok). The database enforces it through
+ * can_view_conversation() / can_view_contact() (migration 083); this list
+ * is the TypeScript mirror, kept as plain strings so it doesn't depend on
+ * the channels module.
+ */
+export const COMMUNITY_MANAGER_CHANNELS: readonly string[] = ['messenger', 'instagram'];
+
+/** Route allow-list for roles that only see part of the app, or null. */
+export function restrictedRoutesFor(role: AccountRole | null | undefined): readonly string[] | null {
+  if (role === 'analista') return ANALISTA_ROUTES;
+  if (role === 'community_manager') return COMMUNITY_MANAGER_ROUTES;
+  return null;
+}
+
+/** True iff `pathname` is one of `routes` or nested under one. */
+export function isRouteAllowed(routes: readonly string[], pathname: string): boolean {
+  return routes.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+}
+
+/**
  * Owner / admin / gerencia / jefe_linea / atc: dashboard quick-action
  * shortcuts (new contact / deal / broadcast / automation). A plain
  * agent (asesor) works the inbound conversations they're assigned,
@@ -188,12 +238,14 @@ export function canSendTemplates(role: AccountRole): boolean {
 }
 
 /**
- * Owner / admin / gerencia / jefe_linea / atc: the inbox "draft with
+ * Owner / admin / gerencia / jefe_linea / atc / community_manager: the inbox "draft with
  * AI" button. A plain agent (asesor) writes their own replies — the
  * button is hidden for them and /api/ai/draft refuses the role.
  */
 export function canDraftWithAi(role: AccountRole): boolean {
-  return hasMinRole(role, 'atc');
+  // Community Manager is below ATC rank but drafts with AI in its own
+  // (Instagram/Messenger) conversations.
+  return hasMinRole(role, 'atc') || role === 'community_manager';
 }
 
 /**
@@ -247,14 +299,15 @@ export function canViewTeamMembers(role: AccountRole): boolean {
 }
 
 /**
- * Owner / admin / gerencia / jefe_linea / atc: may assign or
+ * Owner / admin / gerencia / jefe_linea / atc / community_manager: may assign or
  * reassign a conversation's `assigned_agent_id`. Deliberately NOT a
  * `hasMinRole` check — agent (Asesor) must keep every other
  * agent-rank capability (canSendMessages) while being excluded from
  * this one, which a single ordinal rank can't express. Keep this
  * allow-list in sync with the DB-side backstop in
  * `enforce_conversation_assignment_column()`
- * (supabase/migrations/038_conversation_assignment_permission.sql) —
+ * (supabase/migrations/038_conversation_assignment_permission.sql, re-created
+ * in 083 with community_manager) —
  * that trigger is what actually enforces this, since the UI writes
  * `assigned_agent_id` straight from the browser with no API route in
  * front of it. This predicate only drives what the UI shows/enables.
@@ -265,6 +318,8 @@ const ASSIGN_CONVERSATION_ROLES: readonly AccountRole[] = [
   'gerencia',
   'jefe_linea',
   'atc',
+  // Assigns/reassigns the Instagram/Messenger conversations it sees.
+  'community_manager',
 ];
 
 export function canAssignConversations(role: AccountRole): boolean {

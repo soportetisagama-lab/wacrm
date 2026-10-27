@@ -3,6 +3,7 @@ import {
   Briefcase,
   Crown,
   Headphones,
+  MessagesSquare,
   Shield,
   UserCog,
   UserIcon,
@@ -73,6 +74,12 @@ export const ROLE_META: Record<
     label: 'analista',
     variant: 'analista',
     className: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
+  },
+  community_manager: {
+    icon: MessagesSquare,
+    label: 'community_manager',
+    variant: 'community_manager',
+    className: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
   },
   viewer: {
     icon: UserIcon,
