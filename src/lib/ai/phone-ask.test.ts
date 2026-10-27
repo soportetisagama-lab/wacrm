@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { classifyTypedPhone } from '@/lib/whatsapp/phone-utils'
-import { ASK_PHONE_TEXT } from './awaiting-phone'
+import { ASK_PHONE_TEXT, PHONE_REQUEST_LOG_TEXT } from './awaiting-phone'
 import {
   MAX_HELD_TURNS,
   PHONE_AUDIO_TEXT,
@@ -180,6 +180,12 @@ describe('11. acknowledgements', () => {
     expect(decideHeldAction({ kind: 'ack' }, { turns: 0, lastBusinessText: 'Hola' })).toEqual({
       action: 'ask_free',
       text: ASK_PHONE_TEXT,
+    })
+  })
+  it("after the share-number button's log line it does not ask again", () => {
+    expect(decideHeldAction({ kind: 'ack' }, { turns: 0, lastBusinessText: PHONE_REQUEST_LOG_TEXT })).toEqual({
+      action: 'ask_free',
+      text: null,
     })
   })
 })

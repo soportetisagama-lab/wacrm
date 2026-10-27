@@ -51,6 +51,9 @@ const h = vi.hoisted(() => ({
     profileRole: null as string | null,
     swapWins: true as boolean,
     swaps: [] as { expected: unknown; payload: Record<string, unknown> }[],
+    // Other contacts of the account (findExistingContact's .like() read).
+    otherContacts: [] as Record<string, unknown>[],
+    contactUpdates: [] as Record<string, unknown>[],
   },
 }))
 
@@ -119,6 +122,13 @@ vi.mock('./admin-client', () => ({
         const chain = {
           select: () => chain,
           eq: () => chain,
+          like: () => Promise.resolve({ data: h.state.otherContacts, error: null }),
+          update: (payload: Record<string, unknown>) => {
+            h.state.contactUpdates.push(payload)
+            if (typeof payload.phone === 'string') h.state.contactPhone = payload.phone
+            if (typeof payload.contact_phone === 'string') h.state.contactSocialPhone = payload.contact_phone
+            return { eq: () => Promise.resolve({ error: null }) }
+          },
           maybeSingle: () =>
             Promise.resolve({
               data: {
@@ -318,6 +328,8 @@ beforeEach(() => {
   h.state.contactPhone = '51999888777'
   h.state.contactChannel = 'whatsapp'
   h.state.contactSocialPhone = undefined
+  h.state.otherContacts = []
+  h.state.contactUpdates = []
   // Every test answers from the same account — keep the per-account
   // throttle from tripping as the suite grows.
   __resetRateLimitForTests()
@@ -1786,10 +1798,44 @@ describe('held phone turn (./phone-ask), WhatsApp without a number and social al
   })
 
   it('WhatsApp: a number that could not be linked (another contact has it) hands off with it in the note', async () => {
+    h.state.otherContacts = [{ id: 'contact-2', phone: '51926843129', channel: 'whatsapp' }]
     h.state.burstRows = [customerText('926843129')]
     await runAutoReplyNow(ARGS)
+    expect(h.state.contactUpdates).toEqual([])
     expect(sentTexts()).toEqual([SOCIAL_HANDOFF_CLOSING_TEXT])
     expect(String(h.state.updatePayload?.ai_handoff_summary)).toContain('+51926843129')
+  })
+
+  it('"ok" after the share-number button (log line): no new ask', async () => {
+    h.state.burstRows = [customerText('ok'), { ...customerText(PHONE_REQUEST_LOG_TEXT), sender_type: 'bot' }]
+    await runAutoReplyNow(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_handoff_summary).toBe(held(1, 1))
+  })
+
+  it.each([
+    ['whatsapp', 'phone'],
+    ['instagram', 'contact_phone'],
+  ])('%s: a dictated number is transcribed first, stored and handed off', async (channel, column) => {
+    h.state.contactChannel = channel
+    if (channel !== 'whatsapp') h.state.contactSocialPhone = null
+    h.loadAiConfig.mockResolvedValue(aiConfig({ transcribeAudioEnabled: true, embeddingsApiKey: 'sk-embed' }))
+    const row: Record<string, unknown> = { ...customerText('', 'audio'), transcript: null }
+    h.state.burstRows = [row]
+    h.transcribeAudio.mockImplementation(async () => {
+      row.transcript = 'mi número es 926 843 129'
+      return { text: 'mi número es 926 843 129', durationSeconds: 3 }
+    })
+    await runAutoReplyNow({
+      ...ARGS,
+      isTextMessage: false,
+      audio: { mediaId: 'media-1', mimeType: 'audio/ogg', messageDbId: 'msg-1' },
+    })
+    expect(h.transcribeAudio).toHaveBeenCalledTimes(1)
+    expect(sentTexts().join(' ')).not.toMatch(/audios/)
+    expect(h.state.contactUpdates).toEqual([expect.objectContaining({ [column]: '51926843129' })])
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(String(h.state.updatePayload?.ai_handoff_summary)).not.toContain('no se pudo vincular')
   })
 
   it('the hard cap hands off with the give-up line, whatever the customer writes', async () => {

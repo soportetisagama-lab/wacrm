@@ -35,6 +35,7 @@ import {
 import { textOf, type ChatMessage } from './types'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { filterAdvisorPromises } from './advisor-promise'
+import { findExistingContact } from '@/lib/contacts/dedupe'
 import { classifyHeldReply, decideHeldAction, withPhoneAsk, type HeldBurstItem } from './phone-ask'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import {
@@ -525,6 +526,40 @@ async function handOffWithoutAi(
 
 /** The contact's name when it looks like a real one (not empty, not
  *  just a phone number). Null on any failure — the prompt then omits it. */
+/**
+ * Store a number the customer dictated while a handoff waited for it:
+ * `contact_phone` on Instagram / Messenger (081/086), `phone` on WhatsApp
+ * only when no other contact of the account already has it (same guard
+ * as the webhook's typed-number promotion). False when it wasn't stored.
+ */
+async function saveHeldPhone(
+  db: ReturnType<typeof supabaseAdmin>,
+  accountId: string,
+  contactId: string,
+  phone: string,
+): Promise<boolean> {
+  try {
+    const state = await loadContactPhoneState(db, contactId)
+    if (!state?.needsPhone) return false
+    if (!state.social) {
+      const other = await findExistingContact(db, accountId, phone)
+      if (other && other.id !== contactId) return false
+    }
+    const { error } = await db
+      .from('contacts')
+      .update({ [state.social ? 'contact_phone' : 'phone']: phone, updated_at: new Date().toISOString() })
+      .eq('id', contactId)
+    if (error) {
+      console.warn('[ai auto-reply] dictated phone not stored:', error.message)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[ai auto-reply] dictated phone save failed:', err)
+    return false
+  }
+}
+
 /** The customer's burst since the bot last wrote, for ./phone-ask, and
  *  the bot's last text. Empty on any failure (→ a plain re-ask). */
 async function loadHeldBurst(
@@ -715,11 +750,25 @@ export async function runAutoReplyNow(
       }
       const turnsBefore = heldHandoff.options.turns ?? 0
       const options = { ...heldHandoff.options, turns: turnsBefore + 1 }
+      // A voice note not transcribed yet (e.g. the cron sweep path):
+      // transcribe it first — the customer may be dictating the number.
+      // transcribeInboundAudio stores the transcript on the row, which
+      // loadHeldBurst then reads.
+      if (audio && config.transcribeAudioEnabled && config.embeddingsApiKey) {
+        await transcribeInboundAudio(db, { accountId, audio, embeddingsApiKey: config.embeddingsApiKey })
+      }
       const burst = await loadHeldBurst(db, conversationId)
       const reply = classifyHeldReply(burst.items)
       const action = decideHeldAction(reply, { turns: turnsBefore, lastBusinessText: burst.lastBusinessText })
       console.log(`[ai auto-reply] held phone turn in ${conversationId}: ${reply.kind} -> ${action.action}`)
       if (action.action === 'handoff_with_phone') {
+        // The contact still lacks it (checked above): a dictated number was
+        // never promoted by the webhook — store it with the same guards
+        // (never onto another contact's number).
+        if (await saveHeldPhone(db, accountId, contactId, action.phone)) {
+          await handOffToHuman(db, { ...base, options })
+          return
+        }
         await handOffToHuman(db, {
           ...base,
           options,
