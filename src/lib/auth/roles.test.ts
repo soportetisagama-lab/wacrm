@@ -5,6 +5,10 @@ import {
   COMMUNITY_MANAGER_CHANNELS,
   COMMUNITY_MANAGER_ROUTES,
   canAssignConversations,
+  canBeAssignedConversation,
+  canUseWhatsAppCalls,
+  channelOfRow,
+  isCommunityManagerChannel,
   canCreateContacts,
   canResumeAi,
   canCreateSharedTags,
@@ -342,5 +346,46 @@ describe('canCreateContacts', () => {
     for (const role of ACCOUNT_ROLES) {
       expect(canCreateContacts(role)).toBe(role !== 'community_manager' && canSendMessages(role));
     }
+  });
+});
+
+describe('canBeAssignedConversation', () => {
+  it('lets a Community Manager own only Messenger/Instagram chats', () => {
+    expect(canBeAssignedConversation('community_manager', 'messenger')).toBe(true);
+    expect(canBeAssignedConversation('community_manager', 'instagram')).toBe(true);
+    for (const channel of ['whatsapp', 'tiktok', null, undefined]) {
+      expect(canBeAssignedConversation('community_manager', channel)).toBe(false);
+    }
+  });
+
+  it('leaves every other role unrestricted on any channel', () => {
+    for (const role of ACCOUNT_ROLES.filter((r) => r !== 'community_manager')) {
+      for (const channel of ['whatsapp', 'instagram', null]) {
+        expect(canBeAssignedConversation(role, channel)).toBe(true);
+      }
+    }
+  });
+
+  it('treats a missing channel as WhatsApp', () => {
+    expect(isCommunityManagerChannel(null)).toBe(false);
+    expect(isCommunityManagerChannel('')).toBe(false);
+  });
+});
+
+describe('channelOfRow', () => {
+  it('reads channel only when it is a string', () => {
+    expect(channelOfRow({ channel: 'instagram' })).toBe('instagram');
+    expect(channelOfRow({ id: 'x' })).toBeNull();
+    expect(channelOfRow({ channel: 3 })).toBeNull();
+    expect(channelOfRow(null)).toBeNull();
+  });
+});
+
+describe('canUseWhatsAppCalls', () => {
+  it('blocks viewer and community_manager only', () => {
+    for (const role of ACCOUNT_ROLES) {
+      expect(canUseWhatsAppCalls(role)).toBe(role !== 'viewer' && role !== 'community_manager');
+    }
+    expect(canUseWhatsAppCalls(null)).toBe(false);
   });
 });

@@ -68,6 +68,7 @@ import { CallContactButton, callContact } from '@/components/calls/call-contact-
 import { MobileThreadTags } from './mobile-thread-tags';
 import { buildReplyPreview } from './reply-quote';
 import { toast } from 'sonner';
+import { canBeAssignedConversation, channelOfRow } from '@/lib/auth/roles';
 import {
   CALLS_START,
   CallLogChip,
@@ -1311,6 +1312,12 @@ export function MessageThread({
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
+  // A Community Manager only takes Messenger/Instagram chats — the DB
+  // trigger (migration 083) rejects assigning it anything else.
+  const conversationChannel = channelOfRow(conversation);
+  const assignableProfiles = profiles.filter((p) =>
+    canBeAssignedConversation(p.account_role, conversationChannel)
+  );
   const assignLabel = assignedAgentId
     ? (currentAssignee?.full_name ?? t('assigned'))
     : t('assign');
@@ -1697,7 +1704,7 @@ export function MessageThread({
                 align="end"
                 className="border-border bg-popover"
               >
-                {profiles.length === 0 ? (
+                {assignableProfiles.length === 0 ? (
                   <DropdownMenuItem
                     disabled
                     className="text-muted-foreground text-sm"
@@ -1705,7 +1712,7 @@ export function MessageThread({
                     {t('noTeammates')}
                   </DropdownMenuItem>
                 ) : (
-                  profiles.map((p) => {
+                  assignableProfiles.map((p) => {
                     const isSelected = p.user_id === assignedAgentId;
                     const presence = getPresence(p.user_id);
                     return (
