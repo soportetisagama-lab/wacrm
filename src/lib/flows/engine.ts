@@ -1703,6 +1703,7 @@ async function handOffFromCollectAi(
   // read as a duplicate (wasHandedOffRecently) and skip the ask.
   const nodeWillAskPhone =
     Boolean(cfg.handoff_node_key) &&
+    nodes.get(cfg.handoff_node_key!)?.node_type === "handoff" &&
     !isDuplicate &&
     Boolean(run.contact_id) &&
     (await contactNeedsPhone(db, run.contact_id!));
