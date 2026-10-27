@@ -34,10 +34,14 @@ import {
 import { textOf, type ChatMessage } from './types'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { filterAdvisorPromises } from './advisor-promise'
+import { classifyHeldReply, decideHeldAction, withPhoneAsk, type HeldBurstItem } from './phone-ask'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import {
   askPhoneBeforeHandoff,
+  awaitingPhoneSummary,
+  contactNeedsPhone,
   loadContactPhoneState,
+  SOCIAL_HANDOFF_CLOSING_TEXT,
   noPhoneGiveUpTextFor,
   phoneStateOf,
   parseAwaitingPhone,
@@ -329,6 +333,12 @@ async function handOffToHuman(
     heldMarker?: string | null
     /** A flow handoff's own closing text / assignee (held handoffs). */
     options?: HeldHandoffOptions
+    /** Re-ask with this text instead of ASK_PHONE_TEXT (./phone-ask). */
+    askText?: string
+    /** Hand off now even without the number (./phone-ask: refusal,
+     *  insult, hard cap, a number that couldn't be linked): this closing
+     *  line ('' = the channel's give-up line) and this line in the note. */
+    withoutPhone?: { text: string; note: string }
   },
 ): Promise<'handed_off' | 'awaiting_phone' | 'lost'> {
   // Instagram / Messenger: the Community Manager serves these chats first,
@@ -336,11 +346,18 @@ async function handOffToHuman(
   // number the customer typed (social contacts have no `phone`).
   const phoneState = await loadContactPhoneState(db, args.contactId)
   const social = phoneState?.social === true
-  const phoneNote = socialPhoneNote(phoneState)
-  const summary = phoneNote && !args.summary.includes(phoneNote) ? `${args.summary}\n${phoneNote}` : args.summary
+  const phoneNote = [socialPhoneNote(phoneState), args.withoutPhone?.note ?? '']
+    .filter((n) => n && !args.summary.includes(n))
+    .join('\n')
+  const summary = phoneNote ? `${args.summary}\n${phoneNote}` : args.summary
   if (args.notifyCustomer) {
     let text: string | undefined
-    if (phoneState?.needsPhone) {
+    if (args.withoutPhone) {
+      if (args.heldMarker && !(await swapHeldMarker(db, args.conversationId, args.heldMarker, summary))) {
+        return 'lost'
+      }
+      text = args.withoutPhone.text || noPhoneGiveUpTextFor(phoneState)
+    } else if (phoneState?.needsPhone) {
       const held = await askPhoneBeforeHandoff(db, {
         accountId: args.accountId,
         conversationId: args.conversationId,
@@ -348,6 +365,7 @@ async function handOffToHuman(
         userId: args.configOwnerUserId,
         summary: args.summary,
         options: args.options,
+        text: args.askText,
       })
       if (held === 'asked') return 'awaiting_phone'
       if (held === 'lost') return 'lost'
@@ -506,6 +524,49 @@ async function handOffWithoutAi(
 
 /** The contact's name when it looks like a real one (not empty, not
  *  just a phone number). Null on any failure — the prompt then omits it. */
+/** The customer's burst since the bot last wrote, for ./phone-ask, and
+ *  the bot's last text. Empty on any failure (→ a plain re-ask). */
+async function loadHeldBurst(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+): Promise<{ items: HeldBurstItem[]; lastBusinessText: string | null }> {
+  try {
+    const { data, error } = await db
+      .from('messages')
+      .select('sender_type, content_type, content_text, transcript, is_sticker, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    if (error || !Array.isArray(data)) return { items: [], lastBusinessText: null }
+    const items: HeldBurstItem[] = []
+    let lastBusinessText: string | null = null
+    for (const m of data as Array<Record<string, unknown>>) {
+      if (m.sender_type !== 'customer') {
+        lastBusinessText = typeof m.content_text === 'string' ? m.content_text : null
+        break
+      }
+      const text = typeof m.content_text === 'string' ? m.content_text : null
+      switch (m.content_type) {
+        case 'audio':
+          items.unshift({ type: 'audio', text: typeof m.transcript === 'string' ? m.transcript : null })
+          break
+        case 'image':
+          items.unshift({ type: m.is_sticker ? 'sticker' : 'image', text: null })
+          break
+        case 'video':
+        case 'document':
+          items.unshift({ type: 'media', text: null })
+          break
+        default:
+          items.unshift({ type: 'text', text })
+      }
+    }
+    return { items, lastBusinessText }
+  } catch {
+    return { items: [], lastBusinessText: null }
+  }
+}
+
 function realContactName(row: { name?: unknown } | null): string | null {
   const name = typeof row?.name === 'string' ? row.name.trim() : ''
   return name && /\p{L}/u.test(name) ? name : null
@@ -623,13 +684,17 @@ export async function runAutoReplyNow(
       return
     }
 
-    // A handoff on hold for the customer's number (./awaiting-phone): no
-    // model call — ask again ("este mismo", "a este número" don't count),
-    // hand off if the number is on file by now, or give up after
-    // MAX_PHONE_ASKS asks.
+    // A handoff on hold for the customer's number (./awaiting-phone). The
+    // number on file by now → hand off. Otherwise what the customer sent
+    // decides the turn (./phone-ask): a fix to ask for (incomplete,
+    // landline, foreign without "+"…), a re-ask, silence after an "ok",
+    // handing off without the number (refusal, insult, hard cap), or —
+    // for a question — a normal AI answer with the ask added at the end.
     const heldHandoff = parseAwaitingPhone(conv.ai_handoff_summary)
-    if (heldHandoff && !conv.ai_autoreply_disabled) {
-      await handOffToHuman(db, {
+    let heldQuestion: { marker: string; next: string } | null = null
+    if (heldHandoff && conv.ai_handoff_summary && !conv.ai_autoreply_disabled) {
+      const marker: string = conv.ai_handoff_summary
+      const base = {
         accountId,
         conversationId,
         contactId,
@@ -639,10 +704,62 @@ export async function runAutoReplyNow(
         summary: heldHandoff.summary,
         notifyCustomer: true,
         brief: !isAiKeyPaused(config.apiKey),
-        heldMarker: conv.ai_handoff_summary,
-        options: heldHandoff.options,
-      })
-      return
+        heldMarker: marker,
+      }
+      if (!(await contactNeedsPhone(db, contactId))) {
+        await handOffToHuman(db, { ...base, options: heldHandoff.options })
+        return
+      }
+      const turnsBefore = heldHandoff.options.turns ?? 0
+      const options = { ...heldHandoff.options, turns: turnsBefore + 1 }
+      const burst = await loadHeldBurst(db, conversationId)
+      const reply = classifyHeldReply(burst.items)
+      const action = decideHeldAction(reply, { turns: turnsBefore, lastBusinessText: burst.lastBusinessText })
+      console.log(`[ai auto-reply] held phone turn in ${conversationId}: ${reply.kind} -> ${action.action}`)
+      if (action.action === 'handoff_with_phone') {
+        await handOffToHuman(db, {
+          ...base,
+          options,
+          withoutPhone: {
+            text: SOCIAL_HANDOFF_CLOSING_TEXT,
+            note: `📱 Número que indicó el cliente: +${action.phone} (no se pudo vincular a este contacto; puede pertenecer a otro).`,
+          },
+        })
+        return
+      }
+      if (action.action === 'handoff_no_phone') {
+        await handOffToHuman(db, {
+          ...base,
+          options,
+          complaint: action.complaint,
+          withoutPhone: { text: action.text, note: action.note },
+        })
+        return
+      }
+      if (action.action === 'ask_counted') {
+        await handOffToHuman(db, { ...base, options, askText: action.text })
+        return
+      }
+      const next = awaitingPhoneSummary(heldHandoff.asks, heldHandoff.summary, options)
+      if (action.action === 'ask_free') {
+        if (!(await swapHeldMarker(db, conversationId, marker, next))) return
+        if (action.text) {
+          try {
+            await engineSendText({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId,
+              contactId,
+              text: action.text,
+            })
+          } catch (err) {
+            console.error('[ai auto-reply] held phone re-ask failed:', err)
+          }
+        }
+        return
+      }
+      // answer_then_ask: the question goes through the normal path below.
+      heldQuestion = { marker, next }
     }
 
     // `ai_autoreply_disabled` alone is no longer sticky forever once
@@ -788,6 +905,7 @@ export async function runAutoReplyNow(
     const noAdvisorPromise = Boolean(phoneState && (phoneState.social || phoneState.needsPhone))
     const systemPrompt = buildSystemPrompt({
       noAdvisorPromise,
+      pendingPhoneAsk: heldQuestion !== null,
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
@@ -984,7 +1102,12 @@ export async function runAutoReplyNow(
         replyText = filtered.text
       }
     }
-    const mentionsMenuAlready = /men[uú]/i.test(replyText)
+    if (heldQuestion) {
+      // Answer + the ask in one line; the turn counts toward the hard cap.
+      if (!(await swapHeldMarker(db, conversationId, heldQuestion.marker, heldQuestion.next))) return
+      replyText = withPhoneAsk(replyText)
+    }
+    const mentionsMenuAlready = heldQuestion !== null || /men[uú]/i.test(replyText)
     const outgoingText =
       conv.ai_reply_count === 0 && !mentionsMenuAlready && !(await menuAlreadySent(db, conversationId))
         ? `${replyText}${FIRST_REPLY_MENU_HINT}`

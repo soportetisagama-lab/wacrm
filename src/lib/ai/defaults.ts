@@ -113,6 +113,13 @@ export const NO_ADVISOR_PROMISE_GUIDANCE =
   'This overrides any other instruction here that tells you to say an advisor will contact them or will prepare their quotation; every other rule, including never giving prices, still applies. ' +
   'If the customer asks for an advisor or a person, or one is needed (for example for a quotation), ask for their mobile number instead, with exactly: "Para ayudarte mejor, ¿nos compartes tu número de celular?"'
 
+/** The customer's number is pending (lib/ai/phone-ask.ts) and they asked
+ *  something: answer it; the system adds the ask for the number. */
+export const PENDING_PHONE_ASK_GUIDANCE =
+  "We are waiting for the customer's mobile number before passing the chat on, and they asked something instead. Answer their question briefly and helpfully; do not ask for the number yourself and do not reply with " +
+  HANDOFF_SENTINEL +
+  ' — the request for the number is added automatically at the end of your reply.'
+
 /**
  * When the auto-reply bot should hand off. Advisors reported it
  * handing off far too often (any doubt, any sign of impatience), so it
@@ -252,6 +259,9 @@ export function buildSystemPrompt(args: {
   /** auto_reply only: Instagram/Messenger chat or WhatsApp contact
    *  without a number — never promise an advisor (./advisor-promise). */
   noAdvisorPromise?: boolean
+  /** auto_reply only: a handoff waits for the customer's number and they
+   *  asked something instead — answer it; the ask is added after. */
+  pendingPhoneAsk?: boolean
 }): string {
   const {
     userPrompt,
@@ -266,6 +276,7 @@ export function buildSystemPrompt(args: {
     learnedRules,
     businessInfo,
     noAdvisorPromise,
+    pendingPhoneAsk,
   } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
@@ -352,6 +363,7 @@ export function buildSystemPrompt(args: {
   // in its no-promise variant.
   const noPromise = mode === 'auto_reply' && noAdvisorPromise === true
   if (noPromise) parts.push(NO_ADVISOR_PROMISE_GUIDANCE)
+  if (mode === 'auto_reply' && pendingPhoneAsk) parts.push(PENDING_PHONE_ASK_GUIDANCE)
 
   // Last on purpose: overrides any price in the context or knowledge above.
   // Drafts too: the advisor sends them as-is more often than not.
