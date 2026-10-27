@@ -24,6 +24,7 @@ import {
   startFlowRunAtNode,
 } from '@/lib/flows/engine'
 import { engineSendText } from '@/lib/flows/meta-send'
+import { restartWelcomeAfterPhoneKnown } from '@/lib/flows/welcome'
 import { completeHandoffAwaitingPhone, dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { ASK_PHONE_TEXT, isAwaitingPhoneHandoff } from '@/lib/ai/awaiting-phone'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
@@ -1338,49 +1339,8 @@ async function dispatchWelcomeAfterPhoneKnown(
   contactId: string,
   conversationId: string
 ): Promise<boolean> {
-  const db = supabaseAdmin()
-  const { data: flow, error } = await db
-    .from('flows')
-    .select('id, entry_node_id')
-    .eq('account_id', accountId)
-    // Either trigger type is entry-eligible for a brand-new contact
-    // (both match on "no active flow_run" — see findEntryFlow in
-    // lib/flows/engine.ts). Accounts commonly author their welcome flow
-    // as `returning_message` (a superset that also re-shows the menu to
-    // an existing contact), not literally `first_inbound_message` —
-    // confirmed against production data, don't assume the narrower type.
-    .in('trigger_type', ['first_inbound_message', 'returning_message'])
-    .eq('status', 'active')
-    .maybeSingle()
-
-  if (error || !flow || !flow.entry_node_id) {
-    console.error(
-      `[webhook] dispatchWelcomeAfterPhoneKnown: no active first_inbound_message flow for account ${accountId} (contact ${contactId}, conversation ${conversationId})`,
-      error
-    )
-    return false
-  }
-
-  const result = await startFlowRunAtNode({
-    accountId,
-    flowId: flow.id as string,
-    nodeKey: flow.entry_node_id as string,
-    contactId,
-    conversationId,
-    startedVia: { reason: 'bsuid_phone_promoted' },
-    // The earlier run ended at the phone gate without sending anything,
-    // so this is still the first real welcome — full text, not the
-    // "Sigue explorando…" reentry_text.
-    isReentry: false,
-  })
-
-  if (!result.consumed) {
-    console.error(
-      `[webhook] dispatchWelcomeAfterPhoneKnown: startFlowRunAtNode did not start a run for account ${accountId}, contact ${contactId}, flow ${flow.id}`,
-      result
-    )
-  }
-  return result.consumed
+  // Shared with Instagram / Messenger (lib/flows/welcome.ts).
+  return restartWelcomeAfterPhoneKnown(accountId, contactId, conversationId)
 }
 
 /**
