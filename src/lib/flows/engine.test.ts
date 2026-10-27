@@ -1853,6 +1853,9 @@ function makeFakeDb(
       is() {
         return chain;
       },
+      neq() {
+        return chain;
+      },
       gte() {
         return chain;
       },
@@ -2102,6 +2105,45 @@ describe("handleCollectAiReply", () => {
     expect(
       updates.some((u) => u.table === "flow_runs" && u.payload.status === "handed_off"),
     ).toBe(true);
+  });
+
+  it("no handoff_node_key and a WhatsApp contact with no phone: asks for the number and holds the handoff", async () => {
+    const { db, updates } = makeFakeDb({ contactPhone: null });
+    const run = makeRun({ ai_turn_count: 6, vars: ONE_FIELD_COLLECTED });
+    const node = makeNode({ config: collectAiConfig({ max_turns: 6 }) });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map());
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Para ayudarte mejor, ¿nos compartes tu número de celular?" }),
+    );
+    // Bot stays on, nothing goes to the advisors' queue yet.
+    expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(false);
+    const held = updates.find(
+      (u) => u.table === "conversations" && typeof u.payload.ai_handoff_summary === "string",
+    );
+    expect(held?.payload).toMatchObject({ ai_autoreply_disabled: false });
+    expect(held?.payload.ai_handoff_summary).toMatch(/^📵 .*\(1\/3\)\n🤖 El asistente derivó/);
+    expect(
+      updates.some((u) => u.table === "flow_runs" && u.payload.status === "handed_off"),
+    ).toBe(true);
+  });
+
+  it("no handoff_node_key and a contact with a phone: the usual handoff", async () => {
+    const { db, updates } = makeFakeDb({ contactPhone: "51999999999" });
+    const run = makeRun({ ai_turn_count: 6, vars: ONE_FIELD_COLLECTED });
+    const node = makeNode({ config: collectAiConfig({ max_turns: 6 }) });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(mockSendText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Para ayudarte mejor, ¿nos compartes tu número de celular?" }),
+    );
+    expect(updates.some((u) => u.table === "conversations" && u.payload.status === "pending")).toBe(true);
   });
 
   it("model handoff:true sends the courtesy message then hands off immediately, ignoring max_turns", async () => {
