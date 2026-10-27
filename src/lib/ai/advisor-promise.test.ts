@@ -44,6 +44,24 @@ describe('sentencePromisesAdvisor', () => {
     // Handover with the case.
     'Derivaré tu consulta a un asesor.',
     'Le pasaremos tu consulta a un asesor.',
+    // Usted.
+    'Un asesor lo contactará en breve.',
+    'Un asesor la llamará.',
+    'Una asesora la va a llamar mañana.',
+    'Un asesor lo va a contactar.',
+    'Lo contactará un asesor del equipo.',
+    // Adjectives between subject and verb.
+    'Un asesor especializado te contactará.',
+    'Un asesor técnico te llamará.',
+    'Un asesor asignado le escribirá.',
+    // Compound sentence.
+    'Un asesor revisará tu caso y te contactará.',
+    'Nuestro equipo evaluará tu proyecto y lo llamará.',
+    // No subject.
+    'Le enviaremos la cotización.',
+    'Te van a contactar.',
+    'Un asesor te estará contactando.',
+    'Te estará llamando un asesor en breve.',
   ])('flags "%s"', (s) => {
     expect(sentencePromisesAdvisor(s)).toBe(true)
   })
@@ -68,6 +86,15 @@ describe('sentencePromisesAdvisor', () => {
     'Te escribimos el detalle aquí mismo: mesa de 1.20 m.',
     'Te enviamos el catálogo por aquí.',
     'Un asesor puede preparar planos a medida.',
+    // Usted forms that are naming or not a promise.
+    'Los vendedores lo llaman acero 304.',
+    'Lo llaman acero quirúrgico.',
+    'Le llaman acero 304 en el mercado.',
+    'El asesor lo contactó la semana pasada.',
+    'Nuestro equipo diseña cocinas y las fabrica a medida.',
+    'Un asesor técnico revisa cada proyecto.',
+    'Le enviaremos el catálogo por aquí.',
+    '¿Te van a contactar de otra tienda?',
   ])('keeps "%s"', (s) => {
     expect(sentencePromisesAdvisor(s)).toBe(false)
   })
