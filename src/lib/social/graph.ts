@@ -60,11 +60,14 @@ export function isThreadControlError(err: unknown): boolean {
 }
 
 const GRAPH_TIMEOUT_MS = 20_000
+/** Meta downloads the file from our URL before answering. */
+const GRAPH_ATTACHMENT_TIMEOUT_MS = 60_000
 
 async function graphFetch<T>(
   path: string,
-  init: { method?: 'GET' | 'POST' | 'DELETE'; accessToken: string; body?: unknown },
+  init: { method?: 'GET' | 'POST' | 'DELETE'; accessToken: string; body?: unknown; timeoutMs?: number },
 ): Promise<T> {
+  const timeoutMs = init.timeoutMs ?? GRAPH_TIMEOUT_MS
   const url = `${GRAPH_BASE}/${path}`
   let res: Response
   try {
@@ -77,11 +80,11 @@ async function graphFetch<T>(
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       // A hung call must not hang the send (the inbox request, the bot's
       // reply): it fails with a clear error instead.
-      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (err) {
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new GraphApiError(`Meta no respondió en ${GRAPH_TIMEOUT_MS / 1000} s`, null, null)
+      throw new GraphApiError(`Meta no respondió en ${timeoutMs / 1000} s`, null, null)
     }
     throw err
   }
@@ -131,10 +134,12 @@ export interface SocialSendTarget {
 async function sendMessagePayload(
   target: SocialSendTarget,
   message: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<string> {
   const data = await graphFetch<SendResponse>('me/messages', {
     method: 'POST',
     accessToken: target.accessToken,
+    timeoutMs,
     body: {
       recipient: { id: target.recipientId },
       messaging_type: 'RESPONSE',
@@ -161,7 +166,7 @@ export async function sendSocialAttachment(
 ): Promise<string> {
   return sendMessagePayload(args, {
     attachment: { type: args.type, payload: { url: args.url, is_reusable: false } },
-  })
+  }, GRAPH_ATTACHMENT_TIMEOUT_MS)
 }
 
 /**
