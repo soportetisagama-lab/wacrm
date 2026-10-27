@@ -135,6 +135,7 @@ const EDITABLE_ROLES: { value: AccountRole }[] = [
   { value: 'atc' },
   { value: 'agent' },
   { value: 'analista' },
+  { value: 'community_manager' },
   { value: 'viewer' },
 ];
 

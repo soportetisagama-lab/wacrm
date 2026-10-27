@@ -18,6 +18,7 @@ export type ChipVariant =
   | 'jefe_linea'
   | 'atc'
   | 'analista'
+  | 'community_manager'
   | 'ok'
   | 'warn'
   | 'muted';
@@ -35,6 +36,8 @@ const VARIANTS: Record<ChipVariant, string> = {
     'border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-300',
   atc: 'border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-300',
   analista: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-300',
+  community_manager:
+    'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300',
   ok: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
   warn: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
   muted: 'border-border bg-muted text-muted-foreground',

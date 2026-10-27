@@ -47,6 +47,7 @@
     "roleAgent": "Asesor",
     "roleViewer": "Visor",
     "roleAnalista": "Analista",
+    "roleCommunityManager": "Community Manager",
     "closeMenu": "Cerrar menú",
     "defaultUser": "Usuario",
     "defaultAvatar": "Avatar",
@@ -170,7 +171,8 @@
           "atc": "ATC",
           "agent": "Asesor",
           "viewer": "Observador",
-          "analista": "Analista"
+          "analista": "Analista",
+          "community_manager": "Community Manager"
         },
         "greeting": {
           "morning": "Buenos días, {name}",
@@ -1862,7 +1864,9 @@
       "owner": "Propietario",
       "ownerHint": "Control total sobre la cuenta y la facturación",
       "analista": "Analista",
-      "analistaHint": "Solo ve el Panel y el reporte de Mensajes; sin permisos de edición"
+      "analistaHint": "Solo ve el Panel y el reporte de Mensajes; sin permisos de edición",
+      "community_manager": "Community Manager",
+      "community_managerHint": "Atiende solo Instagram y Facebook Messenger: Panel, Bandeja y Contactos; puede asignar esas conversaciones"
     },
     "whatsapp": {
       "title": "Conexión de WhatsApp",
