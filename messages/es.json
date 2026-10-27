@@ -1995,8 +1995,17 @@
       "save": "Guardar y conectar",
       "webhookTitle": "Webhook de Meta",
       "webhookDesc": "Pega esta URL en la app de Meta, en los productos Messenger e Instagram, con el token de verificación META_SOCIAL_VERIFY_TOKEN.",
-      "webhookFields": "Campos a suscribir: messages, messaging_postbacks y messaging_referrals (Messenger), y messages, messaging_postbacks y messaging_referral (Instagram).",
-      "copied": "URL copiada"
+      "webhookFields": "Campos a suscribir: messages, messaging_postbacks, messaging_referrals y feed (Messenger / página), y messages, messaging_postbacks, messaging_referral y comments (Instagram).",
+      "copied": "URL copiada",
+      "commentsTitle": "Comentarios en publicaciones y anuncios",
+      "commentsDesc": "Cuando alguien comenta una publicación o un anuncio de la página de Facebook o de la cuenta de Instagram, se le responde en público y se le envía un mensaje privado. Si contesta, el chat entra a la bandeja como cualquier mensaje directo.",
+      "commentsEnabledLabel": "Responder comentarios automáticamente",
+      "commentsEnabledHint": "Se responde en público una vez por persona y publicación cada 24 horas, y se envía un solo mensaje privado por persona y publicación. Los textos no pueden incluir precios.",
+      "commentsPublicLabel": "Respuesta pública en el comentario",
+      "commentsPrivateLabel": "Mensaje privado a quien comentó",
+      "commentsPrivateHint": "Meta permite un solo mensaje privado por comentario, dentro de los 7 días.",
+      "commentsSave": "Guardar textos",
+      "commentsMigrationMissing": "Para usar esta opción, primero hay que ejecutar la migración 085."
     },
     "sections": {
       "overview": "Resumen",

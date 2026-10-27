@@ -46,6 +46,7 @@ import {
 } from './parse'
 import type { SocialConfigRow } from './send'
 import { noteInboundControl } from './thread-control'
+import { processSocialCommentsBody } from './comments'
 
 /** Sent when nothing answered a contact's first message (see step 6). */
 export const SOCIAL_FALLBACK_HANDOFF_TEXT =
@@ -63,6 +64,8 @@ export async function processSocialWebhookBody(body: unknown): Promise<void> {
       console.error(`[social webhook] ${event.channel} event ${event.mid} failed:`, err)
     }
   }
+  // Comments on posts/ads (entry.changes): public + private auto-reply.
+  await processSocialCommentsBody(body)
 }
 
 /** Claim a Meta mid. False when it was already processed (duplicate delivery). */

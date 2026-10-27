@@ -318,3 +318,101 @@ export function contentTypeForAttachment(type: string): 'image' | 'video' | 'aud
       return 'text'
   }
 }
+
+// ============================================================
+// Comments on the Page's posts/ads (object "page", field "feed") and on
+// the Instagram account's media (object "instagram", fields "comments" /
+// "live_comments"). They arrive in `entry[].changes[]`, not `messaging`:
+//
+//   page:      { field: 'feed', value: { item: 'comment', verb: 'add',
+//                comment_id, post_id, parent_id, from: { id, name },
+//                message, created_time } }
+//   instagram: { field: 'comments', value: { id, text, parent_id?,
+//                from: { id, username }, media: { id } } }
+// ============================================================
+
+export interface SocialCommentEvent {
+  channel: SocialChannel
+  /** entry.id — page id (Facebook) / IG account id (Instagram). */
+  externalId: string
+  commentId: string
+  /** Post / ad (Facebook post_id, Instagram media.id). */
+  postId: string | null
+  /** Who commented (app-scoped id). */
+  commenterId: string
+  /** Comment time in ms (falls back to entry.time / now). */
+  timestamp: number
+  /** Instagram Live comment: Meta only allows the private reply. */
+  live: boolean
+}
+
+function toMs(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  // Webhook `changes` use unix seconds; messaging uses ms.
+  return value < 1e12 ? value * 1000 : value
+}
+
+/**
+ * Normalize the new comments in one webhook body. Dropped: edits and
+ * deletions (only verb "add"), the page's / account's own comments
+ * (from.id === entry.id — our public replies would loop otherwise),
+ * replies to other comments, and comments without an author id (we can't
+ * tell they aren't ours).
+ */
+export function parseSocialComments(body: unknown): SocialCommentEvent[] {
+  const env = obj(body) as RawEnvelope | null
+  if (!env) return []
+  const channel = channelForObject(env.object)
+  if (!channel || !Array.isArray(env.entry)) return []
+
+  const out: SocialCommentEvent[] = []
+  for (const entry of env.entry) {
+    const externalId = str(entry?.id)
+    if (!externalId || !Array.isArray(entry.changes)) continue
+    const entryTime = toMs(entry.time)
+
+    for (const rawChange of entry.changes) {
+      const change = obj(rawChange)
+      const value = obj(change?.value)
+      if (!change || !value) continue
+      const field = str(change.field)
+      const from = obj(value.from)
+      const commenterId = str(from?.id)
+
+      if (channel === 'messenger') {
+        if (field !== 'feed' || value.item !== 'comment' || value.verb !== 'add') continue
+        const commentId = str(value.comment_id)
+        const postId = str(value.post_id)
+        if (!commentId || !commenterId || commenterId === externalId) continue
+        // A reply to another comment: parent_id is that comment, not the post.
+        const parentId = str(value.parent_id)
+        if (parentId && parentId !== postId) continue
+        out.push({
+          channel,
+          externalId,
+          commentId,
+          postId,
+          commenterId,
+          timestamp: toMs(value.created_time) ?? entryTime ?? Date.now(),
+          live: false,
+        })
+        continue
+      }
+
+      if (field !== 'comments' && field !== 'live_comments') continue
+      const commentId = str(value.id)
+      if (!commentId || !commenterId || commenterId === externalId) continue
+      if (str(value.parent_id)) continue
+      out.push({
+        channel,
+        externalId,
+        commentId,
+        postId: str(obj(value.media)?.id),
+        commenterId,
+        timestamp: entryTime ?? Date.now(),
+        live: field === 'live_comments',
+      })
+    }
+  }
+  return out
+}

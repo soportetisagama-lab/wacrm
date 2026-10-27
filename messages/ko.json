@@ -1995,8 +1995,17 @@
       "save": "저장 및 연결",
       "webhookTitle": "Meta webhook",
       "webhookDesc": "Paste this URL in the Meta app, under the Messenger and Instagram products, with the META_SOCIAL_VERIFY_TOKEN verify token.",
-      "webhookFields": "Fields to subscribe: messages, messaging_postbacks and messaging_referrals (Messenger), and messages, messaging_postbacks and messaging_referral (Instagram).",
-      "copied": "URL이 복사되었습니다"
+      "webhookFields": "Fields to subscribe: messages, messaging_postbacks, messaging_referrals and feed (Messenger / Page), and messages, messaging_postbacks, messaging_referral and comments (Instagram).",
+      "copied": "URL이 복사되었습니다",
+      "commentsTitle": "게시물 및 광고 댓글",
+      "commentsDesc": "누군가 Facebook 페이지나 Instagram 계정의 게시물 또는 광고에 댓글을 남기면 공개 답글과 비공개 메시지를 보냅니다. 상대가 답장하면 일반 DM처럼 받은편지함에 들어옵니다.",
+      "commentsEnabledLabel": "댓글에 자동으로 답장",
+      "commentsEnabledHint": "공개 답글은 사람과 게시물마다 24시간에 한 번, 비공개 메시지는 사람과 게시물마다 한 번만 보냅니다. 텍스트에 가격을 넣을 수 없습니다.",
+      "commentsPublicLabel": "댓글 공개 답글",
+      "commentsPrivateLabel": "댓글 작성자에게 보낼 비공개 메시지",
+      "commentsPrivateHint": "Meta는 댓글당 7일 이내에 비공개 메시지 한 번만 허용합니다.",
+      "commentsSave": "텍스트 저장",
+      "commentsMigrationMissing": "이 옵션을 사용하려면 먼저 마이그레이션 085를 실행해야 합니다."
     },
     "sections": {
       "overview": "개요",

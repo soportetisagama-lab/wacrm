@@ -130,6 +130,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
       if (this.table === 'social_inbound_events' && made.some((m) => this.rows().some((r) => r.channel === m.channel && r.mid === m.mid))) {
         return { data: null, error: { code: '23505', message: 'duplicate' } }
       }
+      // social_comment_replies: PRIMARY KEY (channel, comment_id)
+      if (this.table === 'social_comment_replies' && made.some((m) => this.rows().some((r) => r.channel === m.channel && r.comment_id === m.comment_id))) {
+        return { data: null, error: { code: '23505', message: 'duplicate' } }
+      }
       this.rows().push(...made)
       return this.out(made)
     }

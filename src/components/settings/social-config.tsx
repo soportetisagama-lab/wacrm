@@ -8,6 +8,7 @@ import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
@@ -29,6 +30,12 @@ interface SocialStatus {
   instagram: ChannelView | null;
   messenger: ChannelView | null;
   show_to_agents: boolean;
+  comment_replies?: {
+    available: boolean;
+    enabled: boolean;
+    public_text: string;
+    private_text: string;
+  };
   env: { verify_token_set: boolean; app_secret_set: boolean };
   webhook_path: string;
   error?: string;
@@ -50,6 +57,10 @@ export function SocialConfig() {
   const [token, setToken] = useState('');
   const [wantMessenger, setWantMessenger] = useState(true);
   const [wantInstagram, setWantInstagram] = useState(true);
+  const [togglingComments, setTogglingComments] = useState(false);
+  const [savingTexts, setSavingTexts] = useState(false);
+  const [publicText, setPublicText] = useState('');
+  const [privateText, setPrivateText] = useState('');
 
   // Fetch + apply in the promise callbacks (never synchronously inside
   // the effect), so the effect below only subscribes to the result.
@@ -58,6 +69,10 @@ export function SocialConfig() {
       const res = await fetch('/api/social/config', { cache: 'no-store' });
       const data = (await res.json()) as SocialStatus;
       setStatus(data);
+      if (data.comment_replies) {
+        setPublicText(data.comment_replies.public_text);
+        setPrivateText(data.comment_replies.private_text);
+      }
       const saved = data.messenger ?? data.instagram;
       if (saved) {
         setPageId((prev) => prev || saved.page_id);
@@ -105,6 +120,7 @@ export function SocialConfig() {
         return;
       }
       toast.success(t('saved'));
+      if (data.warning) toast.warning(data.warning);
       setToken('');
       await load();
     } catch {
@@ -129,6 +145,53 @@ export function SocialConfig() {
       setStatus((s) => (s ? { ...s, show_to_agents: checked } : s));
     } finally {
       setTogglingAgents(false);
+    }
+  };
+
+  const patchComments = async (comment_replies: Record<string, unknown>): Promise<boolean> => {
+    const res = await fetch('/api/social/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment_replies }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      toast.error(data?.error ?? t('saveFailed'));
+      return false;
+    }
+    return true;
+  };
+
+  const handleToggleComments = async (checked: boolean) => {
+    setTogglingComments(true);
+    try {
+      if (await patchComments({ enabled: checked })) {
+        setStatus((s) =>
+          s?.comment_replies ? { ...s, comment_replies: { ...s.comment_replies, enabled: checked } } : s,
+        );
+      }
+    } catch {
+      toast.error(t('saveFailed'));
+    } finally {
+      setTogglingComments(false);
+    }
+  };
+
+  const handleSaveTexts = async () => {
+    setSavingTexts(true);
+    try {
+      if (await patchComments({ public_text: publicText, private_text: privateText })) {
+        toast.success(t('saved'));
+        setStatus((s) =>
+          s?.comment_replies
+            ? { ...s, comment_replies: { ...s.comment_replies, public_text: publicText, private_text: privateText } }
+            : s,
+        );
+      }
+    } catch {
+      toast.error(t('saveFailed'));
+    } finally {
+      setSavingTexts(false);
     }
   };
 
@@ -218,6 +281,73 @@ export function SocialConfig() {
                 aria-label={t('showToAgentsLabel')}
               />
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {connected.length > 0 && status?.comment_replies && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('commentsTitle')}</CardTitle>
+            <CardDescription>{t('commentsDesc')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!status.comment_replies.available && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{t('commentsMigrationMissing')}</AlertDescription>
+              </Alert>
+            )}
+            <div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('commentsEnabledLabel')}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('commentsEnabledHint')}</p>
+              </div>
+              <Switch
+                checked={status.comment_replies.enabled}
+                onCheckedChange={(checked) => void handleToggleComments(checked)}
+                disabled={togglingComments || !status.comment_replies.available}
+                aria-label={t('commentsEnabledLabel')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="social-comment-public">{t('commentsPublicLabel')}</Label>
+              <Textarea
+                id="social-comment-public"
+                name="social-comment-public"
+                rows={2}
+                maxLength={900}
+                value={publicText}
+                onChange={(e) => setPublicText(e.target.value)}
+                disabled={!status.comment_replies.available}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="social-comment-private">{t('commentsPrivateLabel')}</Label>
+              <Textarea
+                id="social-comment-private"
+                name="social-comment-private"
+                rows={3}
+                maxLength={900}
+                value={privateText}
+                onChange={(e) => setPrivateText(e.target.value)}
+                disabled={!status.comment_replies.available}
+              />
+              <p className="text-xs text-muted-foreground">{t('commentsPrivateHint')}</p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void handleSaveTexts()}
+              disabled={
+                savingTexts ||
+                !status.comment_replies.available ||
+                !publicText.trim() ||
+                !privateText.trim()
+              }
+            >
+              {savingTexts && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('commentsSave')}
+            </Button>
           </CardContent>
         </Card>
       )}

@@ -1995,8 +1995,17 @@
       "save": "Save and connect",
       "webhookTitle": "Meta webhook",
       "webhookDesc": "Paste this URL in the Meta app, under the Messenger and Instagram products, with the META_SOCIAL_VERIFY_TOKEN verify token.",
-      "webhookFields": "Fields to subscribe: messages, messaging_postbacks and messaging_referrals (Messenger), and messages, messaging_postbacks and messaging_referral (Instagram).",
-      "copied": "URL copied"
+      "webhookFields": "Fields to subscribe: messages, messaging_postbacks, messaging_referrals and feed (Messenger / Page), and messages, messaging_postbacks, messaging_referral and comments (Instagram).",
+      "copied": "URL copied",
+      "commentsTitle": "Comments on posts and ads",
+      "commentsDesc": "When someone comments on a post or ad of the Facebook Page or the Instagram account, they get a public reply and a private message. If they answer, the chat enters the inbox like any direct message.",
+      "commentsEnabledLabel": "Reply to comments automatically",
+      "commentsEnabledHint": "The public reply goes once per person and post every 24 hours, and only one private message per person and post. Texts cannot include prices.",
+      "commentsPublicLabel": "Public reply on the comment",
+      "commentsPrivateLabel": "Private message to the commenter",
+      "commentsPrivateHint": "Meta allows one private message per comment, within 7 days.",
+      "commentsSave": "Save texts",
+      "commentsMigrationMissing": "To use this option, migration 085 must be run first."
     },
     "sections": {
       "overview": "Overview",

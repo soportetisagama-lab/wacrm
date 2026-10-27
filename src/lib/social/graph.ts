@@ -242,10 +242,85 @@ export async function fetchPageInfo(args: { pageId: string; accessToken: string 
   }
 }
 
-/** Subscribe the page to this app's webhook (covers Messenger and the linked Instagram). */
-export async function subscribePageToApp(args: { pageId: string; accessToken: string }): Promise<void> {
+/** Page field for comments on the page's posts and ads (comment auto-replies). */
+export const PAGE_COMMENTS_FIELD = 'feed'
+
+async function postSubscribedFields(pageId: string, accessToken: string, fields: string[]): Promise<void> {
   await graphFetch<{ success?: boolean }>(
-    `${encodeURIComponent(args.pageId)}/subscribed_apps?subscribed_fields=${PAGE_SUBSCRIBED_FIELDS.join(',')}`,
-    { method: 'POST', accessToken: args.accessToken },
+    `${encodeURIComponent(pageId)}/subscribed_apps?subscribed_fields=${fields.join(',')}`,
+    { method: 'POST', accessToken },
   )
+}
+
+/**
+ * Subscribe the page to this app's webhook (covers Messenger and the
+ * linked Instagram). `subscribed_fields` replaces the page's list, so
+ * with `comments` the `feed` field goes in the same call. If Meta refuses
+ * `feed` (token without the comment permissions) the DM fields are still
+ * subscribed and `feed: false` is returned; `strictFeed` throws instead.
+ */
+export async function subscribePageToApp(args: {
+  pageId: string
+  accessToken: string
+  comments?: boolean
+  strictFeed?: boolean
+}): Promise<{ feed: boolean; feedError?: string }> {
+  if (!args.comments) {
+    await postSubscribedFields(args.pageId, args.accessToken, PAGE_SUBSCRIBED_FIELDS)
+    return { feed: false }
+  }
+  try {
+    await postSubscribedFields(args.pageId, args.accessToken, [...PAGE_SUBSCRIBED_FIELDS, PAGE_COMMENTS_FIELD])
+    return { feed: true }
+  } catch (err) {
+    if (args.strictFeed) throw err
+    await postSubscribedFields(args.pageId, args.accessToken, PAGE_SUBSCRIBED_FIELDS)
+    return { feed: false, feedError: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Public reply under a comment. Facebook: `POST /{comment-id}/comments`
+ * (pages_manage_engagement). Instagram: `POST /{ig-comment-id}/replies`
+ * (instagram_manage_comments). Returns the new comment id.
+ */
+export async function replyToComment(args: {
+  channel: SocialChannel
+  commentId: string
+  message: string
+  accessToken: string
+}): Promise<string> {
+  const edge = args.channel === 'instagram' ? 'replies' : 'comments'
+  const data = await graphFetch<{ id?: string }>(`${encodeURIComponent(args.commentId)}/${edge}`, {
+    method: 'POST',
+    accessToken: args.accessToken,
+    body: { message: args.message },
+  })
+  if (!data.id) throw new GraphApiError('Graph API did not return a comment id', null, null)
+  return data.id
+}
+
+/**
+ * Private Reply: one DM to whoever wrote the comment, addressed by
+ * `recipient.comment_id` through the Page's Send API
+ * (`POST /{page-id}/messages`) — same call for Facebook comments and, via
+ * the linked Page, for Instagram comments. Meta allows one per comment,
+ * within 7 days of it (Instagram Live: only while the broadcast is on).
+ */
+export async function sendPrivateReply(args: {
+  pageId: string
+  commentId: string
+  text: string
+  accessToken: string
+}): Promise<string> {
+  const data = await graphFetch<SendResponse>(`${encodeURIComponent(args.pageId)}/messages`, {
+    method: 'POST',
+    accessToken: args.accessToken,
+    body: {
+      recipient: { comment_id: args.commentId },
+      message: { text: args.text },
+    },
+  })
+  if (!data.message_id) throw new GraphApiError('Graph API did not return a message id', null, null)
+  return data.message_id
 }

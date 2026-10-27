@@ -3,6 +3,7 @@ import {
   attachmentPreview,
   channelForObject,
   contentTypeForAttachment,
+  parseSocialComments,
   parseSocialWebhook,
   summarizeSocialWebhook,
 } from './parse'
@@ -298,5 +299,84 @@ describe('summarizeSocialWebhook', () => {
     expect(summarizeSocialWebhook(null)).toBe('invalid body')
     expect(summarizeSocialWebhook({ object: 'instagram' })).toBe('object=instagram entries=0')
     expect(summarizeSocialWebhook({ object: 'page', entry: [{ id: '1' }] })).toBe('object=page entries=1 1:empty')
+  })
+})
+
+describe('parseSocialComments', () => {
+  const fbChange = (value: Record<string, unknown>) => ({
+    object: 'page',
+    entry: [{ id: PAGE_ID, time: 1_790_000_000, changes: [{ field: 'feed', value }] }],
+  })
+  const fbComment = {
+    item: 'comment',
+    verb: 'add',
+    comment_id: `${PAGE_ID}_POST_C1`,
+    post_id: `${PAGE_ID}_POST`,
+    parent_id: `${PAGE_ID}_POST`,
+    from: { id: 'USER-1', name: 'Ana' },
+    message: 'Info por favor',
+    created_time: 1_790_000_100,
+  }
+
+  it('parses a new Facebook comment on a post or ad', () => {
+    expect(parseSocialComments(fbChange(fbComment))).toEqual([
+      {
+        channel: 'messenger',
+        externalId: PAGE_ID,
+        commentId: `${PAGE_ID}_POST_C1`,
+        postId: `${PAGE_ID}_POST`,
+        commenterId: 'USER-1',
+        timestamp: 1_790_000_100_000,
+        live: false,
+      },
+    ])
+  })
+
+  it('ignores the page own comments, edits, deletions, replies and other feed items', () => {
+    expect(parseSocialComments(fbChange({ ...fbComment, from: { id: PAGE_ID } }))).toEqual([])
+    expect(parseSocialComments(fbChange({ ...fbComment, verb: 'edited' }))).toEqual([])
+    expect(parseSocialComments(fbChange({ ...fbComment, verb: 'remove' }))).toEqual([])
+    expect(parseSocialComments(fbChange({ ...fbComment, parent_id: `${PAGE_ID}_POST_C0` }))).toEqual([])
+    expect(parseSocialComments(fbChange({ ...fbComment, item: 'reaction' }))).toEqual([])
+    expect(parseSocialComments(fbChange({ ...fbComment, from: undefined }))).toEqual([])
+  })
+
+  it('parses Instagram comments and live comments', () => {
+    const body = {
+      object: 'instagram',
+      entry: [
+        {
+          id: IG_ID,
+          time: 1_790_000_000,
+          changes: [
+            { field: 'comments', value: { id: 'IGC-1', text: 'Hola', from: { id: 'IGU-1', username: 'ana' }, media: { id: 'M-1' } } },
+            { field: 'live_comments', value: { id: 'IGC-2', text: 'Hola', from: { id: 'IGU-2' }, media: { id: 'M-2' } } },
+          ],
+        },
+      ],
+    }
+    const out = parseSocialComments(body)
+    expect(out.map((c) => [c.commentId, c.postId, c.commenterId, c.live])).toEqual([
+      ['IGC-1', 'M-1', 'IGU-1', false],
+      ['IGC-2', 'M-2', 'IGU-2', true],
+    ])
+    expect(out[0].timestamp).toBe(1_790_000_000_000)
+  })
+
+  it('ignores the Instagram account own comments and replies to comments', () => {
+    const body = (value: Record<string, unknown>) => ({
+      object: 'instagram',
+      entry: [{ id: IG_ID, changes: [{ field: 'comments', value }] }],
+    })
+    expect(parseSocialComments(body({ id: 'IGC-1', from: { id: IG_ID }, media: { id: 'M' } }))).toEqual([])
+    expect(
+      parseSocialComments(body({ id: 'IGC-1', parent_id: 'IGC-0', from: { id: 'IGU-1' }, media: { id: 'M' } })),
+    ).toEqual([])
+  })
+
+  it('messaging-only bodies and other objects carry no comments', () => {
+    expect(parseSocialComments({ object: 'page', entry: [{ id: PAGE_ID, messaging: [] }] })).toEqual([])
+    expect(parseSocialComments({ object: 'whatsapp_business_account', entry: [] })).toEqual([])
+    expect(parseSocialComments(null)).toEqual([])
   })
 })
