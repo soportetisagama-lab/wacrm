@@ -1564,7 +1564,11 @@ async function processMessage(
     requestContactInfoEnabled &&
     typedAttempt?.kind !== 'phone' &&
     message.type !== 'reaction' &&
-    message.type !== 'contacts'
+    message.type !== 'contacts' &&
+    // A handoff waiting for the number owns the ask (lib/ai/phone-ask.ts):
+    // it answers questions, stays quiet on an "ok" and words the fix —
+    // a button on every message would be one ask too many.
+    !(await isAwaitingPhoneHandoff(supabaseAdmin(), conversation.id))
   ) {
     await sendBsuidContactInfoRequest(
       conversation.id,
