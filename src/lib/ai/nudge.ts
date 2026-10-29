@@ -1,5 +1,5 @@
 import { generateReply } from './generate'
-import { NEUTRAL_SPANISH_GUIDANCE, NO_PRICES_GUIDANCE, UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
+import { NEUTRAL_SPANISH_GUIDANCE, NO_PRICES_GUIDANCE, REPLY_LANGUAGE_GUIDANCE, UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
 import { textOf, type AiConfig, type AiUsage, type ChatMessage } from './types'
 
 // ============================================================
@@ -37,6 +37,7 @@ export function buildNudgePrompt(businessContext: string | null): string {
     'Strictly forbidden: prices, discounts, offers, promotions, free items, gifts, coupons, deadlines, "only today", "last units", stock scarcity or any other commercial promise; and the phrases "¿Sigues ahí?" or "Quedé esperando tu respuesta". ' +
       'No emojis. No greeting, no signature. Output only the message text.',
     'Never claim that you (or the business) already sent, shared, attached or explained any information ("ya te compartí", "ya te envié", "como te comenté"): you only know what is in the conversation, and the customer may never have received it.',
+    REPLY_LANGUAGE_GUIDANCE,
     NEUTRAL_SPANISH_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
   ]

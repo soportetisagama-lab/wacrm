@@ -65,6 +65,8 @@ describe('transcribeAudio — happy path', () => {
     const body = opts.body as FormData
     expect(body.get('model')).toBe('whisper-1')
     expect(body.get('response_format')).toBe('verbose_json')
+    // Forced Spanish: never let Whisper guess (noise once came back as Korean).
+    expect(body.get('language')).toBe('es')
     expect(body.get('file')).toBeInstanceOf(File)
   })
 
