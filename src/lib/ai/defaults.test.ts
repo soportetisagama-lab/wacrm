@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt, HANDOFF_SENTINEL, NO_PRICES_GUIDANCE } from './defaults'
+import { buildSystemPrompt, HANDOFF_SENTINEL, NO_PRICES_GUIDANCE, REPLY_LANGUAGE_GUIDANCE } from './defaults'
 import { buildExtractionPrompt } from './schema'
 import { buildNudgePrompt } from './nudge'
 import type { AiDocument } from './types'
@@ -118,5 +118,31 @@ describe('no prices — business rule: the bot never quotes a price', () => {
 
     const nudge = buildNudgePrompt(priceyContext)
     expect(nudge.endsWith(NO_PRICES_GUIDANCE)).toBe(true)
+  })
+})
+
+describe('reply language — Spanish by default, audio never switches it', () => {
+  // Real case: a noise/spam voice note came back from Whisper as Korean
+  // and the old "reply in the same language" rule made the bot answer in Korean.
+  it('the shared rule defaults to Spanish and ignores transcriptions', () => {
+    expect(REPLY_LANGUAGE_GUIDANCE).toContain('always reply in neutral Spanish by default')
+    expect(REPLY_LANGUAGE_GUIDANCE).toContain('clearly WRITES a text message')
+    expect(REPLY_LANGUAGE_GUIDANCE).toContain('voice-note transcription never changes the reply language')
+  })
+
+  it('every customer-facing prompt carries it and none mirrors the language blindly', () => {
+    const prompts = [
+      buildSystemPrompt({ userPrompt: null, mode: 'auto_reply' }),
+      buildSystemPrompt({ userPrompt: null, mode: 'draft' }),
+      buildNudgePrompt(null),
+    ]
+    for (const p of prompts) {
+      expect(p).toContain(REPLY_LANGUAGE_GUIDANCE)
+      expect(p).not.toContain('same language the customer is writing in')
+    }
+    const extraction = buildExtractionPrompt({ fields: [], knownValues: {} })
+    expect(extraction).toContain('reply in neutral Spanish')
+    expect(extraction).toContain('never because of an audio transcription')
+    expect(extraction).not.toContain('same language the customer is writing in')
   })
 })
