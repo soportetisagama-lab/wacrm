@@ -56,6 +56,17 @@ export const UNTRUSTED_CUSTOMER_CONTENT_GUARD =
  * reads oddly to a Peruvian customer. Kept as its own constant (not
  * folded into the guard above) since it's about tone, not safety.
  */
+/**
+ * Reply-language rule — shared by every customer-facing prompt (main
+ * reply, collect_ai extraction, nudge). Spanish by default; only a
+ * clearly WRITTEN message in another language switches it. A voice-note
+ * transcription never does: noise/spam audio once came back from
+ * Whisper as Korean and the bot answered in Korean.
+ */
+export const REPLY_LANGUAGE_GUIDANCE =
+  'Language: always reply in neutral Spanish by default. Switch to another language only if the customer clearly WRITES a text message in that language; ' +
+  'a voice-note transcription never changes the reply language, and neither does a garbled, meaningless or very short message (often a noisy audio) — in doubt, keep replying in Spanish.'
+
 export const NEUTRAL_SPANISH_GUIDANCE =
   'When replying in Spanish, use neutral Latin American Spanish as spoken in Peru — "tú"/"usted", never Argentine "vos" or expressions like "che"; keep it natural and professional, not textbook-stiff.'
 
@@ -284,9 +295,10 @@ export function buildSystemPrompt(args: {
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
       'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
       'Write the next reply the business should send to the customer.',
-    'Guidelines: reply in the same language the customer is writing in; keep it concise and friendly, suitable for WhatsApp; ' +
+    'Guidelines: keep it concise and friendly, suitable for WhatsApp; ' +
       'never invent facts, prices, order numbers, availability, or promises that are not supported by the conversation or the business context below; ' +
       'output only the message text — no quotes, no "Reply:" label, no preamble; never write your reasoning, analysis or notes, since everything you output is sent verbatim to the customer.',
+    REPLY_LANGUAGE_GUIDANCE,
     NEUTRAL_SPANISH_GUIDANCE,
     HUMAN_STYLE_GUIDANCE,
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
