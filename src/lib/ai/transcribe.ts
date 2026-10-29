@@ -18,6 +18,8 @@ import { toNetworkError, providerHttpError } from './providers/shared'
 
 const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions'
 const DEFAULT_MODEL = 'whisper-1'
+/** ISO-639-1 hint so Whisper never guesses the language. */
+const WHISPER_LANGUAGE = 'es'
 
 /** Meta's reported mime type (minus any `; codecs=...` parameter) to a
  *  filename extension — Whisper infers the audio format from the
@@ -108,6 +110,9 @@ export async function transcribeAudio(
   form.append('file', new Blob([new Uint8Array(audio)], { type: mimeType }), filename)
   form.append('model', model)
   form.append('response_format', 'verbose_json')
+  // Force Spanish: left to auto-detect, Whisper once transcribed a
+  // noise/spam voice note as Korean and the bot replied in Korean.
+  form.append('language', WHISPER_LANGUAGE)
 
   let res: Response
   try {
