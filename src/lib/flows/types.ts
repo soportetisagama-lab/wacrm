@@ -718,6 +718,9 @@ export interface DispatchInboundResult {
      *  catálogo): answered with that option's own text. */
     | "stale_info_answered"
     | "stale_tap_replayed"
+    /** A stale tap while the chat waits for an advisor: acknowledged,
+     *  no flow restarted, the handoff stays in place. */
+    | "stale_tap_awaiting_advisor"
     | "menu_resent"
     | "no_match";
   /**
