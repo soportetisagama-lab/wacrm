@@ -860,7 +860,12 @@ function reentryChain(terminal: () => Promise<{ data: unknown; error: unknown; c
 }
 
 function makeReentryOverrideFakeDb(opts: {
-  conversationGate: { assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null;
+  conversationGate: {
+    assigned_agent_id: string | null;
+    ai_handoff_summary?: string | null;
+    status?: string;
+    ai_autoreply_disabled?: boolean;
+  } | null;
   flows: Partial<FlowRow>[];
   flowNodes: Partial<FlowNodeRow>[];
   priorRunCount?: number;
@@ -1254,6 +1259,84 @@ describe("dispatchInboundToFlows — orphaned interactive tap with no active run
 
     expect(result).toEqual({ consumed: false, outcome: "no_match" });
     expect(engineSendText).not.toHaveBeenCalled();
+  });
+
+  describe("chat already handed to an advisor (pending, AI off, unassigned)", () => {
+    // Real case: the assistant handed off after hours, then the customer
+    // tapped "Cotizar productos" on an OLD welcome menu.
+    const QUOTE_MENU_NODES = [
+      {
+        node_key: "topics",
+        node_type: "send_list",
+        config: {
+          text: "Menú",
+          button_label: "Ver",
+          sections: [
+            { rows: [{ reply_id: "quote", title: "📋 Cotizar productos", next_node_key: "collect_quote" }] },
+          ],
+        },
+      },
+      { node_key: "collect_quote", node_type: "collect_ai", config: {} },
+    ] as unknown as Partial<FlowNodeRow>[];
+
+    it("an old menu tap does not restart a flow nor reopen the chat: it acknowledges and leaves it for the advisor", async () => {
+      vi.mocked(engineSendText).mockClear();
+      const { db, conversationUpdates, flowRunInserts, rpcCalls } = makeReentryOverrideFakeDb({
+        conversationGate: {
+          assigned_agent_id: null,
+          status: "pending",
+          ai_autoreply_disabled: true,
+          ai_handoff_summary: "📋 Producto: —, Ciudad: Huancayo",
+        },
+        flows: [{ id: "flow-1" }],
+        flowNodes: QUOTE_MENU_NODES,
+        contactState: { selected_options: {} },
+      });
+      adminDbHolder.current = db;
+
+      const result = await dispatchInboundToFlows(tapInput("quote"));
+
+      expect(result).toEqual({ consumed: true, outcome: "stale_tap_awaiting_advisor" });
+      expect(flowRunInserts).toHaveLength(0);
+      // Nothing rewritten: still pending/AI off, advisor brief intact.
+      expect(conversationUpdates).toHaveLength(0);
+      expect(rpcCalls).toHaveLength(0);
+      expect(engineSendText).toHaveBeenCalledTimes(1);
+      expect(engineSendText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining("Un asesor va a seguir la conversación por este mismo chat"),
+          aiGenerated: false,
+        }),
+      );
+    });
+
+    it("an info-only option is still answered (it reopens nothing)", async () => {
+      vi.mocked(engineSendText).mockClear();
+      const { db, conversationUpdates, flowRunInserts } = makeReentryOverrideFakeDb({
+        conversationGate: { assigned_agent_id: null, status: "pending", ai_autoreply_disabled: true },
+        flows: [{ id: "flow-1" }],
+        flowNodes: [
+          {
+            node_key: "topics",
+            node_type: "send_list",
+            config: {
+              text: "Menú",
+              button_label: "Ver",
+              sections: [{ rows: [{ reply_id: "loc", title: "Ubicación", next_node_key: "answer" }] }],
+            },
+          },
+          { node_key: "answer", node_type: "send_message", config: { text: "Av. Ejemplo 123.", next_node_key: "end" } },
+          { node_key: "end", node_type: "end", config: {} },
+        ] as unknown as Partial<FlowNodeRow>[],
+      });
+      adminDbHolder.current = db;
+
+      const result = await dispatchInboundToFlows(tapInput("loc"));
+
+      expect(result).toEqual({ consumed: true, outcome: "stale_info_answered" });
+      expect(flowRunInserts).toHaveLength(0);
+      expect(conversationUpdates).toHaveLength(0);
+    });
   });
 });
 
@@ -2154,6 +2237,71 @@ describe("handleCollectAiReply", () => {
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({ text: "¡Listo, gracias!", aiGenerated: true }),
     );
+  });
+
+  describe("one goodbye only when a handoff node follows", () => {
+    const HANDOFF_NODE = makeNode({
+      node_key: "human",
+      node_type: "handoff",
+      config: { note: "Cotización", customer_message: "Gracias, un asesor te escribe por aquí." },
+    });
+    const MODEL_CLOSING =
+      "Gracias, ya tengo los datos. Un asesor especializado se pondrá en contacto contigo en breve.";
+
+    it("done → next_node_key is a handoff: the model's closing is NOT sent, only the handoff node's text", async () => {
+      const { db } = makeFakeDb({ contactPhone: "+51999999999" });
+      const run = makeRun({ vars: { equipos: "2 cocinas", ciudad: "Trujillo" } });
+      const node = makeNode({ config: collectAiConfig({ next_node_key: "human" }) });
+      mockExtract.mockResolvedValue(
+        extractResult({ fields: { rubro: "restaurante" }, done: true, replyText: MODEL_CLOSING }),
+      );
+
+      const outcome = await handleCollectAiReply(db, run, node, new Map([["human", HANDOFF_NODE]]));
+
+      expect(outcome).toEqual({ outcome: "handed_off" });
+      expect(mockSendText).toHaveBeenCalledTimes(1);
+      expect(mockSendText).not.toHaveBeenCalledWith(expect.objectContaining({ text: MODEL_CLOSING }));
+    });
+
+    it("done → handoff node within the duplicate cooldown (it stays silent): the model's closing still goes out", async () => {
+      const { db } = makeFakeDb({ contactPhone: "+51999999999", recentHandoffExists: true });
+      const run = makeRun({ vars: { equipos: "2 cocinas", ciudad: "Trujillo" } });
+      const node = makeNode({ config: collectAiConfig({ next_node_key: "human" }) });
+      mockExtract.mockResolvedValue(
+        extractResult({ fields: { rubro: "restaurante" }, done: true, replyText: MODEL_CLOSING }),
+      );
+
+      await handleCollectAiReply(db, run, node, new Map([["human", HANDOFF_NODE]]));
+
+      expect(mockSendText).toHaveBeenCalledTimes(1);
+      expect(mockSendText).toHaveBeenCalledWith(expect.objectContaining({ text: MODEL_CLOSING }));
+    });
+
+    it("handoff via handoff_node_key to a handoff node: collect_ai stays quiet, the node speaks once", async () => {
+      const { db, inserts } = makeFakeDb({ contactPhone: "+51999999999" });
+      const run = makeRun({ vars: { equipos: "2 cocinas" }, ai_turn_count: 5 });
+      const node = makeNode({
+        config: collectAiConfig({
+          max_turns: 6,
+          handoff_node_key: "human",
+          handoff_fallback_text: "Listo, un asesor te contactará en breve.",
+        }),
+      });
+      mockExtract.mockResolvedValue(extractResult({ replyText: "¿Y la ciudad?" }));
+
+      const outcome = await handleCollectAiReply(db, run, node, new Map([["human", HANDOFF_NODE]]));
+
+      expect(outcome).toEqual({ outcome: "handed_off" });
+      expect(mockSendText).toHaveBeenCalledTimes(1);
+      expect(mockSendText).not.toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Listo, un asesor te contactará en breve." }),
+      );
+      // Only the handoff node logs the "handoff" event (collect_ai's would
+      // have made it read as a duplicate and go silent).
+      expect(
+        inserts.filter((i) => i.table === "flow_run_events" && i.payload.event_type === "handoff"),
+      ).toHaveLength(1);
+    });
   });
 
   it("max_turns exhausted without done routes to handoff_node_key, carrying partial vars along", async () => {
