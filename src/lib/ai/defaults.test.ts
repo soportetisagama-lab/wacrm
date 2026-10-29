@@ -22,6 +22,13 @@ describe('buildSystemPrompt', () => {
     expect(draft).not.toContain(HANDOFF_SENTINEL)
   })
 
+  it('never lets the city alone trigger a quote handoff: the product comes first', () => {
+    const autoReply = buildSystemPrompt({ userPrompt: null, mode: 'auto_reply' })
+    expect(autoReply).toContain('wanting "una cotización" or "cotizar" alone is not knowing what they need')
+    expect(autoReply).toContain('ask for it first, before the city')
+    expect(autoReply).toContain('Knowing only the city is never enough to hand off for a quote')
+  })
+
   it('includes the business context only when provided', () => {
     const withCtx = buildSystemPrompt({ userPrompt: 'Somos una ferretería.', mode: 'draft' })
     expect(withCtx).toContain('Somos una ferretería.')
