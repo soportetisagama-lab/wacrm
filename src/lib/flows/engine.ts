@@ -705,19 +705,39 @@ async function claimReplyReceived(
 async function loadConversationGateInfo(
   db: AdminClient,
   conversationId: string,
-): Promise<{ assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null> {
+): Promise<ConversationGateInfo | null> {
   const { data, error } = await db
     .from("conversations")
-    .select("assigned_agent_id, ai_handoff_summary")
+    .select("assigned_agent_id, ai_handoff_summary, status, ai_autoreply_disabled")
     .eq("id", conversationId)
     .maybeSingle();
   if (error) {
     console.error("[flows] loadConversationGateInfo error:", error.message);
     return null;
   }
-  return (
-    (data as { assigned_agent_id: string | null; ai_handoff_summary?: string | null } | null) ??
-    null
+  return (data as ConversationGateInfo | null) ?? null;
+}
+
+type ConversationGateInfo = {
+  assigned_agent_id: string | null;
+  ai_handoff_summary?: string | null;
+  status?: string | null;
+  ai_autoreply_disabled?: boolean | null;
+};
+
+/**
+ * Already handed to an advisor and still waiting for one (pending, AI
+ * off, nobody assigned yet — an assigned chat never gets this far). A
+ * tap on an OLD menu here must not restart a flow: insertAndAdvanceRun
+ * would reset the chat to open/AI-on and undo the handoff the customer
+ * was just told about. Exported for tests only.
+ */
+export function isAwaitingAdvisor(conversation: ConversationGateInfo | null): boolean {
+  return Boolean(
+    conversation &&
+      conversation.assigned_agent_id === null &&
+      conversation.status === "pending" &&
+      conversation.ai_autoreply_disabled === true,
   );
 }
 
@@ -1643,7 +1663,8 @@ async function handOffFromCollectAi(
   // a customer already queued for a human, see wasHandedOffRecently's
   // doc comment. When handoff_node_key IS set this call advances to a
   // different node instead, which is never a "same outcome again" —
-  // that branch always sends its message.
+  // that branch sends its message unless the next node is a handoff
+  // that sends its own (see nodeWillSpeak below).
   const isDuplicate =
     !cfg.handoff_node_key && run.conversation_id
       ? await wasHandedOffRecently(db, run.conversation_id)
@@ -1695,8 +1716,14 @@ async function handOffFromCollectAi(
     !isDuplicate &&
     Boolean(run.contact_id) &&
     (await contactNeedsPhone(db, run.contact_id!));
+  // Advancing to a handoff node that sends its own closing (hour-aware):
+  // collect_ai stays quiet so the customer gets one goodbye, not two —
+  // and logs no "handoff" event, which would make that node read as a
+  // duplicate (wasHandedOffRecently) and go silent instead.
+  const nodeWillSpeak =
+    nodeWillAskPhone || (await handoffNodeWillSpeak(db, run, nodes, cfg.handoff_node_key));
   const closingText = noPhoneText ?? (await socialClosingOr(db, run.contact_id, outgoingText));
-  const finalText = nodeWillAskPhone ? undefined : closingText;
+  const finalText = nodeWillSpeak ? undefined : closingText;
 
   if (finalText && !isDuplicate) {
     try {
@@ -1716,7 +1743,7 @@ async function handOffFromCollectAi(
     }
   }
 
-  await logEvent(db, run.id, nodeWillAskPhone ? "message_sent" : "handoff", node.node_key, {
+  await logEvent(db, run.id, nodeWillSpeak ? "message_sent" : "handoff", node.node_key, {
     node_type: "collect_ai",
     reason,
     collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
@@ -2096,7 +2123,11 @@ async function handleCollectAiOutcome(
   }
 
   if (decision.kind === "complete") {
-    if (decision.message) {
+    // Next stop is a handoff node that will send its own closing (it
+    // knows the business hours; the model doesn't): the model's "un
+    // asesor te contactará en breve" would be a second goodbye.
+    const handoffSpeaksNext = await handoffNodeWillSpeak(db, run, nodes, cfg.next_node_key);
+    if (decision.message && !handoffSpeaksNext) {
       try {
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
@@ -2125,6 +2156,7 @@ async function handleCollectAiOutcome(
     await logEvent(db, run.id, "node_entered", node.node_key, {
       node_type: "collect_ai",
       collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+      ...(decision.message && handoffSpeaksNext ? { closing_left_to_handoff: true } : {}),
     });
     return advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
   }
@@ -2510,6 +2542,25 @@ async function wasHandedOffRecently(
     .limit(1);
   if (error) return false;
   return Boolean(data && data.length > 0);
+}
+
+/**
+ * True when advancing to `nodeKey` lands on a handoff node that will
+ * send its own customer-facing closing (executeHandoff) — i.e. it is a
+ * handoff node and not within the duplicate cooldown (where it stays
+ * silent). A collect_ai about to hand over to such a node must not send
+ * its own goodbye too, or the customer reads two in a row; the handoff
+ * node's text is the one that knows the business hours.
+ */
+async function handoffNodeWillSpeak(
+  db: AdminClient,
+  run: FlowRunRow,
+  nodes: Map<string, FlowNodeRow>,
+  nodeKey: string | null | undefined,
+): Promise<boolean> {
+  if (!nodeKey || nodes.get(nodeKey)?.node_type !== "handoff") return false;
+  if (!run.conversation_id || !run.contact_id) return false;
+  return !(await wasHandedOffRecently(db, run.conversation_id));
 }
 
 async function executeHandoff(
@@ -3373,6 +3424,29 @@ export async function dispatchInboundToFlows(
             err instanceof Error ? err.message : err,
           );
         }
+      }
+      // Already handed to an advisor who hasn't picked it up yet: an old
+      // menu's option (quote, project…) must not start a flow over it —
+      // that would reopen the chat with the AI answering and undo the
+      // handoff. Acknowledge it and leave the tap for the advisor,
+      // without rewriting the advisor brief already on the chat.
+      if (isAwaitingAdvisor(conversationGate)) {
+        try {
+          await engineSendText({
+            accountId: input.accountId,
+            userId: input.userId,
+            conversationId: input.conversationId,
+            contactId: input.contactId,
+            text: withOpeningTime(STALE_INTERACTIVE_TEXT),
+            aiGenerated: false,
+          });
+        } catch (err) {
+          console.error(
+            "[flows] stale-tap notice (awaiting advisor) send failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+        return { consumed: true, outcome: "stale_tap_awaiting_advisor" };
       }
       const alreadyHandled = Object.values(contactState.selected_options).some(
         (ids) => ids.includes(replyId),
