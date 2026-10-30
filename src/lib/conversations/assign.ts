@@ -3,7 +3,7 @@ import { attentionFields } from './attention'
 
 export type AssignResult =
   | { ok: true }
-  /** `onlyIfUnassigned` was set and someone else assigned the chat first. */
+  /** `onlyIfUnassigned` was set and the chat was assigned or closed first. */
   | { ok: false; reason: 'already_assigned' }
   | { ok: false; reason: 'error'; error: unknown }
 
@@ -17,7 +17,8 @@ export type AssignResult =
  * unassigning leaves the order alone.
  *
  * `onlyIfUnassigned` is for screens showing a snapshot that may be stale: it
- * will not overwrite an assignment made after that snapshot was read.
+ * will not overwrite an assignment made after that snapshot was read, nor
+ * touch a chat closed since then.
  */
 export async function assignConversation(
   db: SupabaseClient,
@@ -40,7 +41,7 @@ export async function assignConversation(
     .eq('id', conversationId)
 
   if (onlyIfUnassigned) {
-    const { data, error } = await update.is('assigned_agent_id', null).select('id')
+    const { data, error } = await update.is('assigned_agent_id', null).neq('status', 'closed').select('id')
     if (error) return { ok: false, reason: 'error', error }
     return data && data.length > 0 ? { ok: true } : { ok: false, reason: 'already_assigned' }
   }
