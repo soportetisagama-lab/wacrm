@@ -359,6 +359,7 @@
       "noAgentsFound": "No se encontraron asesores",
       "unassigned": "Sin asignar",
       "unassignedOpen": "Sin asignar (abiertas)",
+      "loadPartialFailed": "No se pudieron cargar todas las conversaciones. Recarga la página para verlas.",
       "clearUnassignedOpen": "Quitar el filtro Sin asignar (abiertas)",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Todavía no hay mensajes",

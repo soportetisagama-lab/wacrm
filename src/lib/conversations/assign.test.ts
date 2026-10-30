@@ -7,6 +7,7 @@ function fakeDb(result: { data?: unknown; error: unknown }) {
     update: vi.fn(() => builder),
     eq: vi.fn(() => builder),
     is: vi.fn(() => builder),
+    neq: vi.fn(() => builder),
     select: vi.fn(() => Promise.resolve(result)),
     then: (resolve: (v: unknown) => void) => resolve(result),
   }
@@ -28,6 +29,8 @@ describe('assignConversation', () => {
     const { db, builder } = fakeDb({ error: null })
     await assignConversation(db, { ...base, agentId: 'me' })
     expect(builder.update).toHaveBeenCalledWith({ assigned_agent_id: 'me' })
+    expect(builder.is).not.toHaveBeenCalled()
+    expect(builder.neq).not.toHaveBeenCalled()
   })
 
   it('reports a write error', async () => {
@@ -45,6 +48,7 @@ describe('assignConversation', () => {
       assignConversation(db, { ...base, agentId: 'other', onlyIfUnassigned: true }),
     ).resolves.toEqual({ ok: false, reason: 'already_assigned' })
     expect(builder.is).toHaveBeenCalledWith('assigned_agent_id', null)
+    expect(builder.neq).toHaveBeenCalledWith('status', 'closed')
   })
 
   it('succeeds when the guarded update touched the row', async () => {

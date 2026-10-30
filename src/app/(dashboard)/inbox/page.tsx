@@ -9,6 +9,7 @@ import {
   CONVERSATION_SELECT,
   normalizeConversation,
 } from "@/lib/inbox/conversations";
+import { mergeLoadedConversations } from "@/lib/inbox/merge-loaded-conversations";
 import type { Conversation, Message, Contact, ConversationStatus, Tag } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
@@ -527,11 +528,28 @@ function InboxPageInner() {
     setResyncToken((n) => n + 1);
   }, []);
 
+  const activeConversationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversation?.id ?? null;
+  }, [activeConversation?.id]);
+  const userIdRef = useRef(user?.id);
+  useEffect(() => {
+    userIdRef.current = user?.id;
+  }, [user?.id]);
+
   // Deep links are resolved in the `?c=` effect below, independently of the
-  // list: a refetch here only replaces the rows.
-  const handleConversationsLoaded = useCallback((loaded: Conversation[]) => {
-    setConversations(loaded);
-  }, []);
+  // list. The read takes several requests, so it's merged into what's on
+  // screen instead of replacing it: realtime kept running meanwhile.
+  const handleConversationsLoaded = useCallback(
+    (loaded: Conversation[], knownAtStart: ReadonlySet<string>) => {
+      const activeConversationId = activeConversationIdRef.current;
+      const viewerId = userIdRef.current;
+      setConversations((local) =>
+        mergeLoadedConversations({ local, loaded, knownAtStart, activeConversationId, viewerId }),
+      );
+    },
+    [],
+  );
 
   const handleSelectConversation = useCallback(
     (conv: Conversation) => {
@@ -607,18 +625,9 @@ function InboxPageInner() {
   // list refetches (focus, reconnect) don't touch the selection, so the
   // inbox can't jump to a chat by itself. A click in the list sets the ref
   // first (handleSelectConversation), so it never lands here. Reacts to
-  // `?c=` only (`t` and openDeepLinkedConversation are stable): the open
+  // `?c=` only (the other dependencies are stable): the open
   // thread is read from a ref, so the render between a click and its
   // router.replace (old `?c=`, new thread) can't reopen the old one.
-  const activeConversationIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    activeConversationIdRef.current = activeConversation?.id ?? null;
-  }, [activeConversation?.id]);
-  const userIdRef = useRef(user?.id);
-  useEffect(() => {
-    userIdRef.current = user?.id;
-  }, [user?.id]);
-
   const openDeepLinkedConversation = useCallback((conv: Conversation) => {
     setActiveConversation(conv);
     setActiveContact(conv.contact ?? null);
@@ -649,10 +658,20 @@ function InboxPageInner() {
       const row = await fetchConversationRow(deepLinkConvId);
       // The user clicked another chat or went back while this was loading.
       if (autoSelectedForDeepLinkRef.current !== deepLinkConvId) return;
-      if (row) openDeepLinkedConversation(row);
-      else toast.error(t("deepLinkFailed"));
+      // Already opened meanwhile: its messages may be loaded, don't reset them.
+      if (activeConversationIdRef.current === deepLinkConvId) return;
+      if (row) {
+        openDeepLinkedConversation(row);
+        return;
+      }
+      toast.error(t("deepLinkFailed"));
+      // Drop the bad id from the URL, so a refresh doesn't fail again. With
+      // another thread open the URL goes to that one: dropping `?c=` closes it.
+      const openId = activeConversationIdRef.current;
+      autoSelectedForDeepLinkRef.current = openId;
+      router.replace(openId ? `/inbox?c=${openId}` : "/inbox", { scroll: false });
     })();
-  }, [deepLinkConvId, openDeepLinkedConversation, t]);
+  }, [deepLinkConvId, openDeepLinkedConversation, router, t]);
 
   // Mirrors handleCloseConversation's reset, but reacts to `?c=` being
   // dropped from OUTSIDE this component instead of the in-app back
