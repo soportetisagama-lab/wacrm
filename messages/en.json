@@ -277,7 +277,12 @@
         "oldest": "Oldest: {time}",
         "empty": "Everything is assigned.",
         "since": "Waiting for an advisor for {time}",
-        "assign": "Assign"
+        "assign": "Assign",
+        "assignAria": "Assign {name} to an advisor",
+        "assigned": "Assigned to {name}",
+        "assignFailed": "Could not assign. Please try again.",
+        "alreadyAssigned": "This conversation is no longer in the queue. The panel was refreshed.",
+        "noAgents": "No advisors available"
       },
       "load": {
         "title": "Team load and status",
@@ -327,7 +332,8 @@
   "Inbox": {
     "page": {
       "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
-      "newMessageFallbackTitle": "New message"
+      "newMessageFallbackTitle": "New message",
+      "deepLinkFailed": "The conversation could not be opened. It may not exist or you may not have access."
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",
@@ -352,6 +358,8 @@
       "searchAgents": "Search agents...",
       "noAgentsFound": "No agents found",
       "unassigned": "Unassigned",
+      "unassignedOpen": "Unassigned (open)",
+      "clearUnassignedOpen": "Remove the Unassigned (open) filter",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
       "unknown": "Unknown"
