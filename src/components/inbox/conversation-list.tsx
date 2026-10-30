@@ -51,7 +51,9 @@ interface ConversationListProps {
   activeConversationId: string | null;
   onSelect: (conversation: Conversation) => void;
   conversations: Conversation[];
-  onConversationsLoaded: (conversations: Conversation[]) => void;
+  /** `knownAtStart`: ids on screen when the read started, to tell a chat
+   *  that appeared during the read from one that no longer exists. */
+  onConversationsLoaded: (conversations: Conversation[], knownAtStart: ReadonlySet<string>) => void;
   /**
    * Increment to force the fetch effect below to refire. The parent
    * bumps this on realtime reconnect / tab visibility → visible so the
@@ -258,8 +260,12 @@ export function ConversationList({
   // older value — the very next render updates the ref for any
   // subsequent async completion.
   const onConversationsLoadedRef = useRef(onConversationsLoaded);
+  const conversationsRef = useRef(conversations);
+  const tRef = useRef(t);
   useEffect(() => {
+    tRef.current = t;
     onConversationsLoadedRef.current = onConversationsLoaded;
+    conversationsRef.current = conversations;
   });
 
   // Whether a list was already handed to the parent: a refetch that fails
@@ -269,6 +275,7 @@ export function ConversationList({
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
+    const knownAtStart = new Set(conversationsRef.current.map((c) => c.id));
 
     (async () => {
       // Paged by id, not by last_message_at: a chat receiving a message
@@ -300,10 +307,11 @@ export function ConversationList({
           setLoading(false);
           return;
         }
+        toast.error(tRef.current("loadPartialFailed"));
       }
 
       hasLoadedListRef.current = true;
-      onConversationsLoadedRef.current(normalizeConversations(rows));
+      onConversationsLoadedRef.current(normalizeConversations(rows), knownAtStart);
       setLoading(false);
     })();
 
@@ -367,6 +375,17 @@ export function ConversationList({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Any change takes the filter that came from `?asesor=` off the URL too, so
+  // a refresh doesn't bring it back. History API instead of the router: no
+  // navigation, and `?c=` stays as it is.
+  const changeAgentFilter = useCallback((next: string | null) => {
+    setSelectedAgentId(next);
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("asesor")) return;
+    url.searchParams.delete("asesor");
+    window.history.replaceState(null, "", url.pathname + url.search);
   }, []);
 
   const agentsById = useMemo(() => {
@@ -695,7 +714,7 @@ export function ConversationList({
           {selectedAgentId === UNASSIGNED_OPEN_AGENT && (embedded || isAgent || asesores.length === 0) && (
             <button
               type="button"
-              onClick={() => setSelectedAgentId(null)}
+              onClick={() => changeAgentFilter(null)}
               aria-label={t("clearUnassignedOpen")}
               className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-card px-3 text-xs font-medium text-primary shadow-sm hover:bg-card/70"
             >
@@ -749,7 +768,7 @@ export function ConversationList({
                   />
                 </div>
                 <DropdownMenuItem
-                  onClick={() => setSelectedAgentId(null)}
+                  onClick={() => changeAgentFilter(null)}
                   className={cn(
                     "text-sm",
                     selectedAgentId === null
@@ -760,7 +779,7 @@ export function ConversationList({
                   {t("allAgents")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setSelectedAgentId(UNASSIGNED_AGENT)}
+                  onClick={() => changeAgentFilter(UNASSIGNED_AGENT)}
                   className={cn(
                     "text-sm",
                     selectedAgentId === UNASSIGNED_AGENT
@@ -773,7 +792,7 @@ export function ConversationList({
                 {filteredAsesores.map((a) => (
                   <DropdownMenuItem
                     key={a.user_id}
-                    onClick={() => setSelectedAgentId(a.user_id)}
+                    onClick={() => changeAgentFilter(a.user_id)}
                     className={cn(
                       "text-sm",
                       selectedAgentId === a.user_id
@@ -1010,6 +1029,9 @@ const ConversationItem = memo(function ConversationItem({
             onKeyDown={handleKeyDown}
             className={cn(
               "flex w-full min-w-0 cursor-pointer items-start gap-3 text-left transition-colors",
+              // The list isn't virtualized and can reach thousands of rows:
+              // skip the rendering work of the ones off screen.
+              "[content-visibility:auto] [contain-intrinsic-size:auto_76px]",
               embedded
                 ? cn(
                     "min-h-[68px] rounded-2xl border p-3.5 shadow-md active:shadow-sm",
