@@ -359,6 +359,7 @@
       "noAgentsFound": "No agents found",
       "unassigned": "Unassigned",
       "unassignedOpen": "Unassigned (open)",
+      "loadPartialFailed": "Not all conversations could be loaded. Reload the page to see them.",
       "clearUnassignedOpen": "Remove the Unassigned (open) filter",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
