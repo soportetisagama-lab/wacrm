@@ -114,12 +114,16 @@ export function ConversationRow({
   name,
   detail,
   end,
+  action,
 }: {
   conversationId: string | null
   seed: string
   name: string
   detail?: string | null
   end?: ReactNode
+  /** Interactive control. Goes beside the link, never inside it: a button
+   *  within a link is invalid HTML and would also open the chat. */
+  action?: ReactNode
 }) {
   const body = (
     <>
@@ -132,6 +136,19 @@ export function ConversationRow({
     </>
   )
   const cls = 'flex items-center gap-3 rounded-xl bg-muted/50 px-3 py-2.5 transition-colors'
+  if (conversationId && action) {
+    return (
+      <div className="flex items-center rounded-xl bg-muted/50 transition-colors hover:bg-primary/8">
+        <Link
+          href={`/inbox?c=${conversationId}`}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          {body}
+        </Link>
+        <span className="shrink-0 pr-3">{action}</span>
+      </div>
+    )
+  }
   return conversationId ? (
     <Link href={`/inbox?c=${conversationId}`} className={cn(cls, 'hover:bg-primary/8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none')}>
       {body}
@@ -153,11 +170,11 @@ export function EmptyLine({ text }: { text: string }) {
   )
 }
 
-export function MoreLink({ count }: { count: number }) {
+export function MoreLink({ count, href = '/inbox' }: { count: number; href?: string }) {
   const t = useTranslations('Dashboard.panel')
   if (count <= 0) return null
   return (
-    <Link href="/inbox" className="self-start text-xs font-semibold text-primary hover:underline">
+    <Link href={href} className="self-start text-xs font-semibold text-primary hover:underline">
       {t('seeMore', { count })}
     </Link>
   )

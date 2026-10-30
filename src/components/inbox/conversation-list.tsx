@@ -9,6 +9,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import { avatarTintStyle } from "@/lib/inbox/avatar-tint";
+import { fetchAllPages } from "@/lib/inbox/fetch-all-pages";
 import { TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import type { Conversation, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X, Pin, MailOpen, Mail, Tag as TagIcon } from "lucide-react";
@@ -41,6 +42,10 @@ const MAX_PINNED_CONVERSATIONS = 3;
 /** Sentinel for the "assigned agent" filter's "no agent assigned yet"
  *  option — distinct from `null`, which means "no filter, show all". */
 const UNASSIGNED_AGENT = "__unassigned__";
+/** Same, without closed chats: exactly the Panel's "Cola sin asignar". Only
+ *  reachable from that card's link (`?asesor=sin-asignar`), so the dropdown's
+ *  own "Sin asignar" keeps finding closed conversations too. */
+const UNASSIGNED_OPEN_AGENT = "__unassigned_open__";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -54,6 +59,8 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /** Start with the agent filter on the open, unassigned conversations. */
+  initialUnassignedOpen?: boolean;
 }
 
 // The list used to show a green/amber status dot (open/pending) next
@@ -121,6 +128,7 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  initialUnassignedOpen = false,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
   const { user, isAgent } = useAuth();
@@ -254,15 +262,27 @@ export function ConversationList({
     onConversationsLoadedRef.current = onConversationsLoaded;
   });
 
+  // Whether a list was already handed to the parent: a refetch that fails
+  // midway must not replace it with fewer rows.
+  const hasLoadedListRef = useRef(false);
+
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
+      // Paged by id, not by last_message_at: a chat receiving a message
+      // while this runs would jump to a page already read and be lost. The
+      // on-screen order doesn't come from here, see `sorted` below.
+      const { rows, error } = await fetchAllPages(
+        (from, to) =>
+          supabase
+            .from("conversations")
+            .select(CONVERSATION_SELECT)
+            .order("id")
+            .range(from, to),
+        { isCancelled: () => cancelled },
+      );
 
       if (cancelled) return;
 
@@ -274,11 +294,16 @@ export function ConversationList({
           hint: error.hint,
           code: error.code,
         });
-        setLoading(false);
-        return;
+        // A first load keeps whatever pages arrived, better than an empty
+        // list; a refetch keeps the list already on screen.
+        if (rows.length === 0 || hasLoadedListRef.current) {
+          setLoading(false);
+          return;
+        }
       }
 
-      onConversationsLoadedRef.current(normalizeConversations(data ?? []));
+      hasLoadedListRef.current = true;
+      onConversationsLoadedRef.current(normalizeConversations(rows));
       setLoading(false);
     })();
 
@@ -323,7 +348,9 @@ export function ConversationList({
   // dropdown — RLS bounds this to whatever the current user is allowed
   // to see.
   const [agents, setAgents] = useState<Profile[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
+    initialUnassignedOpen ? UNASSIGNED_OPEN_AGENT : null
+  );
   useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
@@ -414,6 +441,8 @@ export function ConversationList({
 
     if (selectedAgentId === UNASSIGNED_AGENT) {
       result = result.filter((c) => !c.assigned_agent_id);
+    } else if (selectedAgentId === UNASSIGNED_OPEN_AGENT) {
+      result = result.filter((c) => !c.assigned_agent_id && c.status !== "closed");
     } else if (selectedAgentId) {
       result = result.filter((c) => c.assigned_agent_id === selectedAgentId);
     }
@@ -661,6 +690,20 @@ export function ConversationList({
             </DropdownMenu>
           )}
 
+          {/* The dropdown below isn't shown here, and this filter comes
+              from a link: without this chip it couldn't be removed. */}
+          {selectedAgentId === UNASSIGNED_OPEN_AGENT && (embedded || isAgent || asesores.length === 0) && (
+            <button
+              type="button"
+              onClick={() => setSelectedAgentId(null)}
+              aria-label={t("clearUnassignedOpen")}
+              className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-card px-3 text-xs font-medium text-primary shadow-sm hover:bg-card/70"
+            >
+              <span className="truncate">{t("unassignedOpen")}</span>
+              <X className="h-3 w-3 shrink-0" />
+            </button>
+          )}
+
           {/* Web only, per product ask — the embedded app's filter row is
               already the WhatsApp-style chip strip above and doesn't have
               room for a fourth control. Hidden for Asesor (agent):
@@ -682,6 +725,8 @@ export function ConversationList({
                 <span className="truncate">
                   {selectedAgentId === UNASSIGNED_AGENT
                     ? t("unassigned")
+                    : selectedAgentId === UNASSIGNED_OPEN_AGENT
+                    ? t("unassignedOpen")
                     : (agentsById.get(selectedAgentId ?? "")?.full_name ?? t("agent"))}
                 </span>
                 <ChevronDown className="h-3 w-3 shrink-0" />
