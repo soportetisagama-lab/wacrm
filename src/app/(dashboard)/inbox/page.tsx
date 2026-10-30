@@ -30,6 +30,27 @@ const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
 /** How many chats keep their last-seen messages for an instant reopen. */
 const MESSAGES_CACHE_SIZE = 20;
 
+/** One conversation with its contact joined, or null if missing, not visible or the read failed. */
+async function fetchConversationRow(convId: string): Promise<Conversation | null> {
+  const { data, error } = await createClient()
+    .from("conversations")
+    .select(CONVERSATION_SELECT)
+    .eq("id", convId)
+    .maybeSingle();
+  if (error) {
+    // Supabase errors have non-enumerable properties — log fields
+    // explicitly so the console message isn't just `{}`.
+    console.error("Failed to fetch conversation:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    return null;
+  }
+  return data ? normalizeConversation(data) : null;
+}
+
 // `useSearchParams` (the `?c=<id>` deep link below) requires a Suspense
 // boundary or the production build bails to CSR and errors out. Thin
 // wrapper supplies it; the inner component holds all the inbox state.
@@ -187,25 +208,8 @@ function InboxPageInner() {
     if (hydratingConvIdsRef.current.has(convId)) return;
     hydratingConvIdsRef.current.add(convId);
     try {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .eq("id", convId)
-        .maybeSingle();
-      if (error) {
-        // Supabase errors have non-enumerable properties — log fields
-        // explicitly so the console message isn't just `{}`.
-        console.error("Failed to hydrate conversation:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
-        return;
-      }
-      if (!data) return;
-      const fetched = normalizeConversation(data);
+      const fetched = await fetchConversationRow(convId);
+      if (!fetched) return;
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
@@ -523,57 +527,11 @@ function InboxPageInner() {
     setResyncToken((n) => n + 1);
   }, []);
 
-  const handleConversationsLoaded = useCallback(
-    (loaded: Conversation[]) => {
-      setConversations(loaded);
-      // Resolve a pending deep-link here rather than in an effect — this
-      // is an event handler, so the setState calls below are allowed by
-      // react-hooks/set-state-in-effect. Runs once per ?c=<id> URL value
-      // via the ref, so realtime refreshes of the list can't snap the
-      // user back to the deep-linked thread after they've navigated.
-      if (
-        deepLinkConvId &&
-        autoSelectedForDeepLinkRef.current !== deepLinkConvId &&
-        loaded.length > 0
-      ) {
-        autoSelectedForDeepLinkRef.current = deepLinkConvId;
-        // If the deep-linked conversation is already the active one
-        // (e.g. because the user clicked it in the list and we
-        // router.replace()'d the URL, which made the ConversationList
-        // refetch and land us back here), do NOT re-apply it. Doing so
-        // would setMessages([]) on a thread whose messages have
-        // already been loaded by MessageThread — and because
-        // conversationId didn't change, MessageThread wouldn't
-        // refetch. The thread would read "No messages yet" until a
-        // full page reload rehydrated state from scratch.
-        if (activeConversation?.id === deepLinkConvId) return;
-        const match = loaded.find((c) => c.id === deepLinkConvId);
-        if (match) {
-          setActiveConversation(match);
-          setActiveContact(match.contact ?? null);
-          setMessages([]);
-          // Mirror the optimistic unread reset that handleSelectConversation
-          // does — the user just deep-linked into this conv, treat that the
-          // same as a click. Leaves activeConversation.unread_count alone so
-          // the MessageThread reset effect still fires the server UPDATE.
-          // Same ownership guard as that effect: only optimistically zero
-          // it here when this viewer is actually the assigned agent (or
-          // nobody is), otherwise a supervisor's own list would show a
-          // stale 0 for a value that never really changed server-side.
-          const viewerOwnsMatch =
-            !!match.assigned_agent_id && match.assigned_agent_id === user?.id;
-          if (match.unread_count > 0 && viewerOwnsMatch) {
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === match.id ? { ...c, unread_count: 0 } : c,
-              ),
-            );
-          }
-        }
-      }
-    },
-    [deepLinkConvId, activeConversation?.id, user?.id]
-  );
+  // Deep links are resolved in the `?c=` effect below, independently of the
+  // list: a refetch here only replaces the rows.
+  const handleConversationsLoaded = useCallback((loaded: Conversation[]) => {
+    setConversations(loaded);
+  }, []);
 
   const handleSelectConversation = useCallback(
     (conv: Conversation) => {
@@ -642,31 +600,59 @@ function InboxPageInner() {
     router.replace("/inbox", { scroll: false });
   }, [router]);
 
-  // `?c=` changed from outside the list (a browser / "derivación"
-  // notification click, a link from another page): open that thread
-  // NOW. Before, the URL changed but the selection waited for the next
-  // list refetch — which comes on its own when the tab regains focus or
-  // realtime reconnects after a while — so the inbox later jumped to that
-  // conversation by itself, in the middle of another chat. A click in
-  // the list sets the ref first (handleSelectConversation), so it never
-  // lands here; a conversation not loaded yet is handled by
-  // handleConversationsLoaded when it arrives. Reacts to `?c=` only: the
-  // open thread is read from a ref, so the render between a click and
-  // its router.replace (old `?c=`, new thread) can't reopen the old one.
+  // `?c=` set from outside the list (landing from the Panel, a browser /
+  // "derivación" notification click): open that thread NOW, from the list
+  // if it's there and by id if not, so it never depends on how long the
+  // list takes or whether it has that row. This is the only deep-link path:
+  // list refetches (focus, reconnect) don't touch the selection, so the
+  // inbox can't jump to a chat by itself. A click in the list sets the ref
+  // first (handleSelectConversation), so it never lands here. Reacts to
+  // `?c=` only (`t` and openDeepLinkedConversation are stable): the open
+  // thread is read from a ref, so the render between a click and its
+  // router.replace (old `?c=`, new thread) can't reopen the old one.
   const activeConversationIdRef = useRef<string | null>(null);
   useEffect(() => {
     activeConversationIdRef.current = activeConversation?.id ?? null;
   }, [activeConversation?.id]);
+  const userIdRef = useRef(user?.id);
+  useEffect(() => {
+    userIdRef.current = user?.id;
+  }, [user?.id]);
+
+  const openDeepLinkedConversation = useCallback((conv: Conversation) => {
+    setActiveConversation(conv);
+    setActiveContact(conv.contact ?? null);
+    setMessages(messagesCacheRef.current.get(conv.id) ?? []);
+    // Same optimistic unread reset as handleSelectConversation, on the list
+    // copy only: activeConversation keeps its count so MessageThread's reset
+    // effect still fires the server UPDATE. Only for the assigned agent.
+    const viewerOwnsConv =
+      !!conv.assigned_agent_id && conv.assigned_agent_id === userIdRef.current;
+    const listed = viewerOwnsConv ? { ...conv, unread_count: 0 } : conv;
+    setConversations((prev) =>
+      prev.some((c) => c.id === conv.id)
+        ? prev.map((c) => (c.id === conv.id && viewerOwnsConv ? { ...c, unread_count: 0 } : c))
+        : [listed, ...prev],
+    );
+  }, []);
+
   useEffect(() => {
     if (!deepLinkConvId || autoSelectedForDeepLinkRef.current === deepLinkConvId) return;
-    const match = conversationsByIdRef.current.get(deepLinkConvId);
-    if (!match) return;
     autoSelectedForDeepLinkRef.current = deepLinkConvId;
     if (activeConversationIdRef.current === deepLinkConvId) return;
-    setActiveConversation(match);
-    setActiveContact(match.contact ?? null);
-    setMessages(messagesCacheRef.current.get(match.id) ?? []);
-  }, [deepLinkConvId]);
+    const match = conversationsByIdRef.current.get(deepLinkConvId);
+    if (match) {
+      openDeepLinkedConversation(match);
+      return;
+    }
+    void (async () => {
+      const row = await fetchConversationRow(deepLinkConvId);
+      // The user clicked another chat or went back while this was loading.
+      if (autoSelectedForDeepLinkRef.current !== deepLinkConvId) return;
+      if (row) openDeepLinkedConversation(row);
+      else toast.error(t("deepLinkFailed"));
+    })();
+  }, [deepLinkConvId, openDeepLinkedConversation, t]);
 
   // Mirrors handleCloseConversation's reset, but reacts to `?c=` being
   // dropped from OUTSIDE this component instead of the in-app back
@@ -690,6 +676,12 @@ function InboxPageInner() {
       autoSelectedForDeepLinkRef.current = null;
     }
   }, [deepLinkConvId, activeConversation]);
+
+  // `?c=` dropped while a deep link is still loading by id (no thread open
+  // yet, so the effect above doesn't apply): cancels it.
+  useEffect(() => {
+    if (!deepLinkConvId) autoSelectedForDeepLinkRef.current = null;
+  }, [deepLinkConvId]);
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
@@ -826,6 +818,7 @@ function InboxPageInner() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            initialUnassignedOpen={searchParams.get("asesor") === "sin-asignar"}
           />
         </div>
 

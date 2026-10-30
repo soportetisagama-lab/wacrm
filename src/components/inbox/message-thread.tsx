@@ -2,7 +2,7 @@
 
 import { Fragment, memo, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { attentionFields } from '@/lib/conversations/attention';
+import { assignConversation } from '@/lib/conversations/assign';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { usePresence } from '@/hooks/use-presence';
@@ -1278,21 +1278,15 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
-      // Handing the chat to someone else surfaces it for them like a
-      // fresh WhatsApp message (top of the inbox + unread badge); taking
-      // it yourself or unassigning leaves the order alone.
-      const handedToSomeoneElse = !!agentId && agentId !== user?.id;
-      const supabase = createClient();
-      const { error } = await supabase
-        .from('conversations')
-        .update({
-          assigned_agent_id: agentId,
-          ...(handedToSomeoneElse ? attentionFields(conversation.unread_count) : {}),
-        })
-        .eq('id', conversation.id);
+      const result = await assignConversation(createClient(), {
+        conversationId: conversation.id,
+        agentId,
+        currentUserId: user?.id,
+        currentUnread: conversation.unread_count,
+      });
 
-      if (error) {
-        console.error('Failed to update assignment:', error);
+      if (!result.ok) {
+        console.error('Failed to update assignment:', result);
         toast.error(t('assignmentUpdateFailed'));
         return;
       }

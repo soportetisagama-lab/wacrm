@@ -136,7 +136,7 @@ export default function DashboardPage() {
       ) : panel.kind === 'advisor' ? (
         <AdvisorPanel data={panel.data} />
       ) : (
-        <SupervisorPanel data={panel.data} />
+        <SupervisorPanel data={panel.data} onRefresh={() => void load()} />
       )}
     </div>
   )
