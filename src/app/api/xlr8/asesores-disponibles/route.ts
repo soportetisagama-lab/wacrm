@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
 import { consultarAsesoresDisponibles, puedeVerAsesoresDisponibles } from '@/lib/asesores-disponibles'
 
-// Indicador de la cabecera del chat: asesores a quienes la derivación
+// Indicador de la barra superior (junto al número de la línea): asesores a quienes la derivación
 // automática XLR8 podría pasar un lead ahora (lib/asesores-disponibles.ts).
 // Solo Administrador (owner / admin) y ATC; cualquier otro rol recibe 403.
 export async function GET() {

@@ -61,7 +61,6 @@ import {
 import { deleteAccountMedia } from '@/lib/storage/upload-media';
 import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
-import { AsesoresDisponibles } from './asesores-disponibles';
 import { LineTransferButton } from './line-transfer-button';
 import { CallContactButton, callContact } from '@/components/calls/call-contact-button';
 import { MobileThreadTags } from './mobile-thread-tags';
@@ -1414,7 +1413,6 @@ export function MessageThread({
               <p className="overflow-hidden text-[clamp(11px,3.4vw,13px)] whitespace-nowrap text-white/85">
                 {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
               </p>
-              <AsesoresDisponibles className="block max-w-full text-[clamp(10px,3.1vw,12px)] text-white/85" />
             </div>
             <button
               type="button"
@@ -1526,17 +1524,8 @@ export function MessageThread({
             >
               {displayName}
             </h2>
-            <p
-              className={cn(
-                'text-muted-foreground flex min-w-0 items-center gap-1.5',
-                embedded ? 'text-sm' : 'text-xs'
-              )}
-            >
-              <span className="truncate">
-                {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
-              </span>
-              {/* Asesores para la derivación automática XLR8 (solo Administrador y ATC). */}
-              <AsesoresDisponibles className="before:mr-0.5 before:content-['·']" />
+            <p className={cn('text-muted-foreground truncate', embedded ? 'text-sm' : 'text-xs')}>
+              {contact.phone || contact.whatsapp_username || t('noPhoneNumber')}
             </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
