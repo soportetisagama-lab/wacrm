@@ -55,6 +55,7 @@ import { classifyFirstInboundContext } from "@/lib/ai/classify-first-inbound";
 import { buildConversationContext } from "@/lib/ai/context";
 import { transcribeInboundAudio, type InboundAudioRef } from "@/lib/ai/inbound-audio";
 import { extractWithReply, type ExtractResult } from "@/lib/ai/generate";
+import { AiError } from "@/lib/ai/types";
 import type { ExtractionField } from "@/lib/ai/schema";
 import { logAiUsage } from "@/lib/ai/usage";
 import { loadCustomerMemory } from "@/lib/ai/learning/memory";
@@ -1538,6 +1539,7 @@ async function runCollectAiTurn(
   db: AdminClient,
   run: FlowRunRow,
   cfg: CollectAiNodeConfig,
+  nodeKey?: string,
 ): Promise<ExtractResult | null> {
   let config;
   try {
@@ -1601,6 +1603,13 @@ async function runCollectAiTurn(
       err instanceof Error ? err.message : err,
     );
     if (isAiOutOfServiceError(err)) void notifyAdminsAiUnavailable(db, run.account_id);
+    // Why the AI failed, for diagnosis — only the provider's error code
+    // and HTTP status, never its message (it can echo request details).
+    await logEvent(db, run.id, "error", nodeKey ?? run.current_node_key ?? null, {
+      reason: "collect_ai_provider_error",
+      ai_error_code: err instanceof AiError ? err.code : "unknown",
+      ...(err instanceof AiError ? { ai_error_status: err.status } : {}),
+    });
     return null;
   }
 }
@@ -1711,10 +1720,13 @@ async function handOffFromCollectAi(
 
   // provider_error: neutral wording — why the AI failed is for admins
   // only (notifyAdminsAiUnavailable), not the agent's note.
-  const handoffSummary =
+  const handoffHeadline =
     reason === "provider_error"
       ? "🤖 El asistente derivó la conversación a un asesor."
       : `🤖 El asistente derivó la conversación a un asesor. Motivo: ${collectAiHandoffReasonText(reason, cfg.fields, run.vars)}`;
+  // The customer's answers, without AI — kept even if the model brief fails.
+  const fieldsBrief = buildCollectedFieldsBrief(cfg.fields, run.vars);
+  const handoffSummary = fieldsBrief ? `${handoffHeadline}\n${fieldsBrief}` : handoffHeadline;
 
   // A contact with no number (WhatsApp, or Instagram/Messenger without a typed one) is never told an advisor writes
   // back: the terminal handoff is put on hold (holdFlowHandoffForPhone).
@@ -2018,6 +2030,54 @@ function missingCollectAiFields(
   return required.length > 0 ? required : fields.filter(isMissing);
 }
 
+/** Longest single answer kept in the no-AI advisor brief. */
+const FIELDS_BRIEF_MAX_VALUE_CHARS = 160;
+
+/**
+ * Deterministic advisor brief ("📋 Espacio: …\nMedidas: …\nNegocio: …")
+ * built from the answers already saved in `run.vars`, labelled with the
+ * collect_ai fields' own labels. Goes into the handoff note up front so
+ * the advisor always sees what the customer said even when the AI is
+ * unavailable; when the model-written brief (writeFlowHandoffBrief)
+ * succeeds it replaces the whole note, so the two never pile up.
+ * Null when no field has an answer. Exported for tests only.
+ */
+export function buildCollectedFieldsBrief(
+  fields: ExtractionField[],
+  vars: Record<string, unknown>,
+): string | null {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const f of fields) {
+    if (seen.has(f.key)) continue;
+    const raw = vars[f.key];
+    if (typeof raw !== "string") continue;
+    const value = raw.replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    seen.add(f.key);
+    const label = f.label.trim() || f.key;
+    const shown =
+      value.length > FIELDS_BRIEF_MAX_VALUE_CHARS
+        ? `${value.slice(0, FIELDS_BRIEF_MAX_VALUE_CHARS - 1).trimEnd()}…`
+        : value;
+    lines.push(`${label}: ${shown}`);
+  }
+  return lines.length > 0 ? `📋 ${lines.join("\n")}` : null;
+}
+
+/** Every collect_ai field in the flow, so a handoff node can label the
+ *  answers gathered earlier in the run. */
+function flowCollectAiFields(nodes: Map<string, FlowNodeRow> | undefined): ExtractionField[] {
+  if (!nodes) return [];
+  const out: ExtractionField[] = [];
+  for (const n of nodes.values()) {
+    if (n.node_type !== "collect_ai") continue;
+    const fields = (n.config as unknown as Partial<CollectAiNodeConfig>).fields;
+    if (Array.isArray(fields)) out.push(...fields);
+  }
+  return out;
+}
+
 /** Advisor-facing, neutral-Spanish reason for a collect_ai handoff. */
 export function collectAiHandoffReasonText(
   reason: CollectAiHandoffReason,
@@ -2282,7 +2342,7 @@ export async function enterCollectAiNode(
     );
   }
 
-  const result = await runCollectAiTurn(db, run, cfg);
+  const result = await runCollectAiTurn(db, run, cfg, node.node_key);
   return handleCollectAiOutcome(db, run, node, cfg, nodes, result);
 }
 
@@ -2302,7 +2362,7 @@ export async function handleCollectAiReply(
   replyText?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
   const cfg = node.config as unknown as CollectAiNodeConfig;
-  const result = await runCollectAiTurn(db, run, cfg);
+  const result = await runCollectAiTurn(db, run, cfg, node.node_key);
   return handleCollectAiOutcome(db, run, node, cfg, nodes, result, replyText);
 }
 
@@ -2644,6 +2704,7 @@ async function executeHandoff(
   // customer-visible send below; markConversationPendingHandoff still
   // always runs.
   suppressCustomerMessage = false,
+  nodes?: Map<string, FlowNodeRow>,
 ): Promise<void> {
   const cfg = node.config as {
     assign_to?: string;
@@ -2692,9 +2753,13 @@ async function executeHandoff(
       ? `Motivo: ${collectAiReason.text}`
       : null;
   const note = [reasonText, authorNote].filter(Boolean).join(" ") || null;
-  const handoffSummary = note
+  const handoffHeadline = note
     ? `🤖 El bot derivó la conversación a un asesor: ${note}`
     : "🤖 El bot derivó la conversación a un asesor.";
+  // Answers gathered by the flow's collect_ai nodes, without AI — the
+  // advisor sees them even when the model brief can't be written.
+  const fieldsBrief = buildCollectedFieldsBrief(flowCollectAiFields(nodes), run.vars);
+  const handoffSummary = fieldsBrief ? `${handoffHeadline}\n${fieldsBrief}` : handoffHeadline;
   // No number yet: hold the handoff and ask for it (see
   // holdFlowHandoffForPhone); the author's text goes out once it arrives.
   const hold = isDuplicate
@@ -3318,6 +3383,7 @@ async function advanceFromNodeKey(
         run,
         node,
         suppressThisNode && Boolean(opts?.suppressHandoffCustomerMessage),
+        nodes,
       );
       return { outcome: "handed_off" };
     }
