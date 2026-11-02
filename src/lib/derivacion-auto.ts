@@ -18,6 +18,12 @@ import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard
 // conversación (`conversations.derivado_auto_at`, reclamado antes de
 // llamar): si el PHP falla no se reintenta, queda para derivación
 // manual como antes. Nunca lanza ni bloquea la respuesta del bot.
+//
+// Horario laboral (HORARIO_DERIVACION, hora de Lima): fuera de horario
+// la conversación no se deriva todavía; queda en cola
+// (`conversations.derivacion_pendiente_at`, migración 089) y el cron de
+// flujos (/api/flows/cron, cada minuto) la deriva en cuanto abre el
+// horario, la más antigua primero (`procesarColaDerivacion`).
 // ============================================================
 
 /**
@@ -31,7 +37,70 @@ export const NUMEROS_PRUEBA: readonly string[] = ['51926843129', '926843129']
 export const DERIVAR_TIMEOUT_MS = 8_000
 
 const LOG = '[derivacion-auto]'
-const USER_AGENT = 'wacrm-inox/1.0'
+const USER_AGENT = 'wacrm/1.0'
+
+/** Nota interna cuando el traspaso queda en cola fuera de horario. */
+export const NOTA_EN_COLA = 'Se derivará automáticamente al abrir el horario'
+
+/** Conversaciones de la cola que se procesan como máximo por pasada del cron. */
+export const COLA_LIMITE_POR_PASADA = 10
+
+/** Tramo "HH:MM"–"HH:MM", inicio incluido y fin excluido. */
+export type TramoHorario = readonly [desde: string, hasta: string]
+
+export interface HorarioDerivacion {
+  zonaHoraria: string
+  /** Jornada por día de la semana (0 = domingo … 6 = sábado); null = no se deriva. */
+  jornada: Readonly<Record<0 | 1 | 2 | 3 | 4 | 5 | 6, TramoHorario | null>>
+  /** Pausa que se excluye todos los días. */
+  almuerzo: TramoHorario | null
+}
+
+/**
+ * Horario en que se deriva automáticamente (hora de Lima):
+ * L–V 08:00–17:00, sábado 08:00–12:00, almuerzo 13:00–14:00 excluido
+ * todos los días, domingo no se deriva.
+ */
+export const HORARIO_DERIVACION: HorarioDerivacion = {
+  zonaHoraria: 'America/Lima',
+  jornada: {
+    0: null,
+    1: ['08:00', '17:00'],
+    2: ['08:00', '17:00'],
+    3: ['08:00', '17:00'],
+    4: ['08:00', '17:00'],
+    5: ['08:00', '17:00'],
+    6: ['08:00', '12:00'],
+  },
+  almuerzo: ['13:00', '14:00'],
+}
+
+const DIAS: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+
+function minutosDe(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+function enTramo(min: number, tramo: TramoHorario | null): boolean {
+  return tramo !== null && min >= minutosDe(tramo[0]) && min < minutosDe(tramo[1])
+}
+
+/** True si `date` cae dentro del horario de derivación (función pura). */
+export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO_DERIVACION): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: horario.zonaHoraria,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  const dia = DIAS[get('weekday')]
+  if (dia === undefined) return false
+  const min = Number(get('hour')) * 60 + Number(get('minute'))
+  return enTramo(min, horario.jornada[dia]) && !enTramo(min, horario.almuerzo)
+}
 
 /** Celular peruano en 9 dígitos sin el 51, o null si no lo es. */
 export function celularNueveDigitos(phone: string | null | undefined): string | null {
@@ -67,9 +136,22 @@ function envListo(env: DerivacionEnv): env is DerivacionEnv & { url: string; sec
   return Boolean(env.url?.trim() && env.secret?.trim())
 }
 
+/** Línea configurada (XLR8_LINEA), o null. Nunca se asume una por defecto. */
+function lineaDe(env: DerivacionEnv): string | null {
+  return env.linea?.trim() || null
+}
+
+export interface ConversacionDerivacion {
+  account_id: string
+  channel: string | null
+  contact_id: string
+  assigned_agent_id?: string | null
+  status?: string | null
+}
+
 /** Acceso a datos que usa la derivación (inyectable en los tests). */
 export interface DerivacionStore {
-  loadConversation(id: string): Promise<{ account_id: string; channel: string | null; contact_id: string } | null>
+  loadConversation(id: string): Promise<ConversacionDerivacion | null>
   loadContact(id: string): Promise<{ phone: string | null; name: string | null } | null>
   /** Marca la conversación como derivada; false si ya lo estaba (o falla). */
   claim(conversationId: string): Promise<boolean>
@@ -81,10 +163,19 @@ export interface DerivacionStore {
   assign(conversationId: string, userId: string): Promise<boolean>
   /** Agrega una línea a la nota interna del traspaso. */
   appendNote(conversationId: string, line: string): Promise<void>
+  /** Pone la conversación en cola (fuera de horario); false si ya estaba, ya se derivó o falla. */
+  enqueue(conversationId: string, at: Date): Promise<boolean>
+  /** IDs en cola, la más antigua primero. */
+  listQueue(limit: number): Promise<string[]>
+  /** Saca de la cola; false si otro proceso ya la sacó (idempotencia). */
+  dequeue(conversationId: string): Promise<boolean>
 }
 
 export type DerivacionResultado =
   | 'sin_env'
+  | 'sin_linea'
+  | 'en_cola'
+  | 'ya_en_cola'
   | 'sin_conversacion'
   | 'no_whatsapp'
   | 'sin_celular'
@@ -102,18 +193,31 @@ interface RespuestaPhp {
   motivo?: unknown
 }
 
+export interface DerivacionDeps {
+  store: DerivacionStore
+  env?: DerivacionEnv
+  fetchFn?: typeof fetch
+  /** Hora actual (inyectable en los tests). */
+  now?: Date
+  horario?: HorarioDerivacion
+}
+
 /**
  * Deriva la conversación al PHP si cumple todas las condiciones.
+ * Fuera de horario la deja en cola (sin llamar al PHP).
  * Nunca lanza: cualquier error se registra y la conversación queda
  * para derivación manual.
  */
-export async function derivarAuto(
-  conversationId: string,
-  deps: { store: DerivacionStore; env?: DerivacionEnv; fetchFn?: typeof fetch },
-): Promise<DerivacionResultado> {
+export async function derivarAuto(conversationId: string, deps: DerivacionDeps): Promise<DerivacionResultado> {
   const env = deps.env ?? derivacionEnv()
   if (!envListo(env)) return 'sin_env'
+  const linea = lineaDe(env)
+  if (!linea) {
+    console.error(LOG, 'falta XLR8_LINEA: no se deriva', { conversationId })
+    return 'sin_linea'
+  }
   const { store } = deps
+  const now = deps.now ?? new Date()
   const fetchFn = deps.fetchFn ?? fetch
   try {
     const conv = await store.loadConversation(conversationId)
@@ -124,6 +228,14 @@ export async function derivarAuto(
     const celular = celularNueveDigitos(contact?.phone)
     if (!celular) return 'sin_celular'
     if (!debeDerivarCelular(contact?.phone)) return 'no_es_prueba'
+
+    // Fuera de horario: a la cola, sin llamar al PHP. El cron la deriva
+    // al abrir el horario.
+    if (!dentroDeHorario(now, deps.horario)) {
+      if (!(await store.enqueue(conversationId, now))) return 'ya_en_cola'
+      await store.appendNote(conversationId, NOTA_EN_COLA)
+      return 'en_cola'
+    }
 
     // Reclamada ANTES de llamar: una sola llamada por conversación,
     // aunque el PHP falle o dos traspasos coincidan.
@@ -142,7 +254,7 @@ export async function derivarAuto(
           'X-Derivar-Secret': env.secret,
         },
         body: JSON.stringify({
-          linea: env.linea?.trim() || 'INOX',
+          linea,
           celular,
           nombre: contact?.name?.trim() ?? '',
           codigo_anuncio: codigoAnuncio,
@@ -202,11 +314,11 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
     async loadConversation(id) {
       const { data, error } = await db
         .from('conversations')
-        .select('account_id, channel, contact_id')
+        .select('account_id, channel, contact_id, assigned_agent_id, status')
         .eq('id', id)
         .maybeSingle()
       if (error) throw new Error(`conversación: ${error.message}`)
-      return (data as { account_id: string; channel: string | null; contact_id: string } | null) ?? null
+      return (data as ConversacionDerivacion | null) ?? null
     },
     async loadContact(id) {
       const { data, error } = await db.from('contacts').select('phone, name').eq('id', id).maybeSingle()
@@ -278,6 +390,116 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         .eq('id', conversationId)
       if (error) console.error(LOG, 'no se pudo guardar la nota:', error.message)
     },
+    async enqueue(conversationId, at) {
+      const { data, error } = await db
+        .from('conversations')
+        .update({ derivacion_pendiente_at: at.toISOString() })
+        .eq('id', conversationId)
+        .is('derivado_auto_at', null)
+        .is('derivacion_pendiente_at', null)
+        .select('id')
+      if (error) {
+        // Sin la migración 089 la columna no existe: no queda en cola.
+        console.error(LOG, 'no se pudo poner en cola:', error.message, { conversationId })
+        return false
+      }
+      return (data ?? []).length > 0
+    },
+    async listQueue(limit) {
+      const { data, error } = await db
+        .from('conversations')
+        .select('id')
+        .not('derivacion_pendiente_at', 'is', null)
+        .is('derivado_auto_at', null)
+        .order('derivacion_pendiente_at', { ascending: true })
+        .limit(limit)
+      if (error) {
+        console.error(LOG, 'no se pudo leer la cola:', error.message)
+        return []
+      }
+      return ((data ?? []) as { id: string }[]).map((r) => r.id)
+    },
+    async dequeue(conversationId) {
+      const { data, error } = await db
+        .from('conversations')
+        .update({ derivacion_pendiente_at: null })
+        .eq('id', conversationId)
+        .not('derivacion_pendiente_at', 'is', null)
+        .select('id')
+      if (error) {
+        console.error(LOG, 'no se pudo sacar de la cola:', error.message, { conversationId })
+        return false
+      }
+      return (data ?? []).length > 0
+    },
+  }
+}
+
+export interface ColaResultado {
+  /** Pasadas a derivarAuto. */
+  derivadas: number
+  /** Sacadas sin derivar: ya tomadas por un asesor, cerradas o inexistentes. */
+  descartadas: number
+}
+
+const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
+
+/**
+ * Procesa la cola de fuera de horario, la más antigua primero. Solo
+ * dentro de horario y con las variables completas; si no, la cola queda
+ * intacta. Cada conversación se saca de la cola al reclamarla
+ * (`dequeue`): dos pasadas simultáneas no la derivan dos veces. Si un
+ * asesor ya la tomó o ya no está pending/open, sale sin derivar.
+ * Nunca lanza.
+ */
+export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: number }): Promise<ColaResultado> {
+  const res: ColaResultado = { derivadas: 0, descartadas: 0 }
+  const env = deps.env ?? derivacionEnv()
+  const now = deps.now ?? new Date()
+  if (!envListo(env) || !dentroDeHorario(now, deps.horario)) return res
+  const { store } = deps
+  try {
+    const ids = await store.listQueue(deps.limite ?? COLA_LIMITE_POR_PASADA)
+    if (!ids.length) return res
+    if (!lineaDe(env)) {
+      console.error(LOG, `falta XLR8_LINEA: ${ids.length} conversación(es) siguen en cola sin derivar`)
+      return res
+    }
+    for (const id of ids) {
+      try {
+        if (!(await store.dequeue(id))) continue
+        const conv = await store.loadConversation(id)
+        if (!conv || conv.assigned_agent_id || !ESTADOS_DERIVABLES.includes(conv.status ?? '')) {
+          res.descartadas++
+          continue
+        }
+        await derivarAuto(id, { ...deps, env, now })
+        res.derivadas++
+      } catch (err) {
+        console.error(LOG, 'cola:', err instanceof Error ? err.message : err, { conversationId: id })
+      }
+    }
+  } catch (err) {
+    console.error(LOG, 'cola:', err instanceof Error ? err.message : err)
+  }
+  return res
+}
+
+let colaEnCurso = false
+
+/**
+ * Enganche del cron de flujos (cada minuto): procesa la cola si hay
+ * variables, es horario y no hay otra pasada en curso. Nunca lanza.
+ */
+export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = new Date()): Promise<void> {
+  if (colaEnCurso || !envListo(derivacionEnv()) || !dentroDeHorario(now)) return
+  colaEnCurso = true
+  try {
+    await procesarColaDerivacion({ store: supabaseDerivacionStore(db), now })
+  } catch (err) {
+    console.error(LOG, err)
+  } finally {
+    colaEnCurso = false
   }
 }
 
