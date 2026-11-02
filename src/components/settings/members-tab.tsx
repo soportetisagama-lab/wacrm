@@ -94,6 +94,8 @@ interface Member {
   role: AccountRole;
   status: 'active' | 'inactive';
   joined_at: string;
+  /** ID XLR8 (auto-derivation); only sent to admin+. */
+  xlr8_user_id?: number | null;
 }
 
 // Accent/case-insensitive normalize so "linea" matches "Línea" and
@@ -410,6 +412,52 @@ export function MembersTab() {
         )
       );
       console.error('[MembersTab] name change error:', err);
+      toast.error(tCommon('serverUnreachable'));
+    } finally {
+      setPendingMemberAction(null);
+    }
+  }
+
+  // ID XLR8: saved on blur / Enter. Empty clears it. A failed save puts
+  // the stored value back in the input.
+  async function handleXlr8Save(member: Member, input: HTMLInputElement) {
+    const revert = () => {
+      input.value = member.xlr8_user_id ? String(member.xlr8_user_id) : '';
+    };
+    const trimmed = input.value.trim();
+    const next = trimmed === '' ? null : Number(trimmed);
+    if (next !== null && (!Number.isInteger(next) || next <= 0)) {
+      toast.error(t('xlr8Invalid'));
+      revert();
+      return;
+    }
+    if (next === (member.xlr8_user_id ?? null)) return;
+    setPendingMemberAction(member.user_id);
+    try {
+      const res = await fetch(`/api/account/members/${member.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xlr8_user_id: next }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        toast.error(
+          res.status === 409 ? t('xlr8Duplicate') : payload.error || t('xlr8UpdateFailed')
+        );
+        revert();
+        return;
+      }
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id ? { ...m, xlr8_user_id: next } : m
+        )
+      );
+      toast.success(
+        t('xlr8UpdatedToast', { name: member.full_name || t('unnamed') })
+      );
+    } catch (err) {
+      console.error('[MembersTab] xlr8 id change error:', err);
+      revert();
       toast.error(tCommon('serverUnreachable'));
     } finally {
       setPendingMemberAction(null);
@@ -811,6 +859,39 @@ export function MembersTab() {
                       inline. Items align to the start on mobile so the
                       role dropdown lines up under the avatar. */}
                   <div className="flex items-center gap-2 sm:gap-3">
+                    {/* ID XLR8 (auto-derivation). Admin+ only; any row,
+                        owner and self included — they may attend too. */}
+                    {canManageMembers && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <label className="flex items-center gap-1.5">
+                              <span className="text-muted-foreground text-xs font-medium whitespace-nowrap">
+                                {t('xlr8Label')}
+                              </span>
+                            <Input
+                              key={`${member.user_id}-${member.xlr8_user_id ?? ''}`}
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              step={1}
+                              defaultValue={member.xlr8_user_id ?? ''}
+                              placeholder="—"
+                              aria-label={t('xlr8Label')}
+                              disabled={isBusy}
+                              onBlur={(e) => void handleXlr8Save(member, e.currentTarget)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.currentTarget.blur();
+                              }}
+                              className="h-8 w-24"
+                            />
+                            </label>
+                          }
+                        />
+                        <TooltipContent>{t('xlr8Tooltip')}</TooltipContent>
+                      </Tooltip>
+                    )}
+
                     {/* Status toggle. Admin+ only; never on the owner
                         row or your own row (you can't lock yourself
                         out). Read-only badge otherwise. */}
