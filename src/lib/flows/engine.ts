@@ -82,6 +82,7 @@ import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import { canAssignAgentToConversation } from "@/lib/conversations/assignee-guard";
+import { programarDerivacionAuto } from "@/lib/derivacion-auto";
 import {
   type CollectAiNodeConfig,
   type CollectInputNodeConfig,
@@ -2923,6 +2924,9 @@ async function markConversationPendingHandoff(
   if (current?.account_id) {
     await writeFlowHandoffBrief(db, current.account_id as string, conversationId, phoneNote);
   }
+  // Derivación automática al PHP XLR8 (lib/derivacion-auto.ts), en
+  // segundo plano y una sola vez por conversación.
+  programarDerivacionAuto(db, conversationId);
 }
 
 /** Best-effort: a missing/inactive AI config or a model failure keeps

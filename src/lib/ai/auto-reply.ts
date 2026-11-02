@@ -2,6 +2,7 @@ import { supabaseAdmin } from './admin-client'
 import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
+import { programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { AiError, type AiConfig } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
@@ -402,6 +403,9 @@ async function handOffToHuman(
       ...(phoneNote ? { appendNote: phoneNote } : {}),
     })
   }
+  // Derivación automática al PHP XLR8 (lib/derivacion-auto.ts), en
+  // segundo plano y una sola vez por conversación.
+  programarDerivacionAuto(db, args.conversationId)
   return 'handed_off'
 }
 
