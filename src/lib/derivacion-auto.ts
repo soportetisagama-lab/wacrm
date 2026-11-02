@@ -164,11 +164,14 @@ export interface DerivacionStore {
   /** Agrega una línea a la nota interna del traspaso. */
   appendNote(conversationId: string, line: string): Promise<void>
   /** Pone la conversación en cola (fuera de horario); false si ya estaba, ya se derivó o falla. */
-  enqueue(conversationId: string, at: Date): Promise<boolean>
+  enqueue(conversationId: string, at: Date, agente: string | null): Promise<boolean>
   /** IDs en cola, la más antigua primero. */
   listQueue(limit: number): Promise<string[]>
-  /** Saca de la cola; false si otro proceso ya la sacó (idempotencia). */
-  dequeue(conversationId: string): Promise<boolean>
+  /**
+   * Saca de la cola y devuelve el asesor que tenía al encolar; null si
+   * otro proceso ya la sacó (idempotencia).
+   */
+  dequeue(conversationId: string): Promise<{ agente: string | null } | null>
 }
 
 export type DerivacionResultado =
@@ -232,7 +235,7 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
     // Fuera de horario: a la cola, sin llamar al PHP. El cron la deriva
     // al abrir el horario.
     if (!dentroDeHorario(now, deps.horario)) {
-      if (!(await store.enqueue(conversationId, now))) return 'ya_en_cola'
+      if (!(await store.enqueue(conversationId, now, conv.assigned_agent_id ?? null))) return 'ya_en_cola'
       await store.appendNote(conversationId, NOTA_EN_COLA)
       return 'en_cola'
     }
@@ -390,10 +393,10 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         .eq('id', conversationId)
       if (error) console.error(LOG, 'no se pudo guardar la nota:', error.message)
     },
-    async enqueue(conversationId, at) {
+    async enqueue(conversationId, at, agente) {
       const { data, error } = await db
         .from('conversations')
-        .update({ derivacion_pendiente_at: at.toISOString() })
+        .update({ derivacion_pendiente_at: at.toISOString(), derivacion_pendiente_agente: agente })
         .eq('id', conversationId)
         .is('derivado_auto_at', null)
         .is('derivacion_pendiente_at', null)
@@ -422,15 +425,18 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
     async dequeue(conversationId) {
       const { data, error } = await db
         .from('conversations')
+        // derivacion_pendiente_agente no se borra: RETURNING devuelve el
+        // asesor que tenía al encolar (se sobrescribe al volver a encolar).
         .update({ derivacion_pendiente_at: null })
         .eq('id', conversationId)
         .not('derivacion_pendiente_at', 'is', null)
-        .select('id')
+        .select('derivacion_pendiente_agente')
       if (error) {
         console.error(LOG, 'no se pudo sacar de la cola:', error.message, { conversationId })
-        return false
+        return null
       }
-      return (data ?? []).length > 0
+      const row = ((data ?? []) as { derivacion_pendiente_agente?: string | null }[])[0]
+      return row ? { agente: row.derivacion_pendiente_agente ?? null } : null
     },
   }
 }
@@ -448,8 +454,9 @@ const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
  * Procesa la cola de fuera de horario, la más antigua primero. Solo
  * dentro de horario y con las variables completas; si no, la cola queda
  * intacta. Cada conversación se saca de la cola al reclamarla
- * (`dequeue`): dos pasadas simultáneas no la derivan dos veces. Si un
- * asesor ya la tomó o ya no está pending/open, sale sin derivar.
+ * (`dequeue`): dos pasadas simultáneas no la derivan dos veces. Si el
+ * asesor asignado cambió desde que se encoló (alguien la tomó en el
+ * CRM) o ya no está pending/open, sale sin derivar.
  * Nunca lanza.
  */
 export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: number }): Promise<ColaResultado> {
@@ -467,9 +474,13 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
     }
     for (const id of ids) {
       try {
-        if (!(await store.dequeue(id))) continue
+        const sacada = await store.dequeue(id)
+        if (!sacada) continue
         const conv = await store.loadConversation(id)
-        if (!conv || conv.assigned_agent_id || !ESTADOS_DERIVABLES.includes(conv.status ?? '')) {
+        // El traspaso puede haberla asignado ya (handoffAgentId / assignTo):
+        // solo se descarta si el asesor cambió DESPUÉS de encolar.
+        const asesorCambio = (conv?.assigned_agent_id ?? null) !== sacada.agente
+        if (!conv || asesorCambio || !ESTADOS_DERIVABLES.includes(conv.status ?? '')) {
           res.descartadas++
           continue
         }
