@@ -317,8 +317,8 @@ describe('community_manager', () => {
     expect(canViewMessageUsage('community_manager')).toBe(false);
   });
 
-  it('works only Messenger and Instagram', () => {
-    expect([...COMMUNITY_MANAGER_CHANNELS].sort()).toEqual(['instagram', 'messenger']);
+  it('works only Messenger, Instagram and TikTok', () => {
+    expect([...COMMUNITY_MANAGER_CHANNELS].sort()).toEqual(['instagram', 'messenger', 'tiktok']);
     expect(COMMUNITY_MANAGER_CHANNELS).not.toContain('whatsapp');
   });
 
@@ -350,10 +350,11 @@ describe('canCreateContacts', () => {
 });
 
 describe('canBeAssignedConversation', () => {
-  it('lets a Community Manager own only Messenger/Instagram chats', () => {
+  it('lets a Community Manager own only Messenger/Instagram/TikTok chats', () => {
     expect(canBeAssignedConversation('community_manager', 'messenger')).toBe(true);
     expect(canBeAssignedConversation('community_manager', 'instagram')).toBe(true);
-    for (const channel of ['whatsapp', 'tiktok', null, undefined]) {
+    expect(canBeAssignedConversation('community_manager', 'tiktok')).toBe(true);
+    for (const channel of ['whatsapp', null, undefined]) {
       expect(canBeAssignedConversation('community_manager', channel)).toBe(false);
     }
   });

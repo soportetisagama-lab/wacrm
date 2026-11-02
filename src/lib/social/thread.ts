@@ -10,7 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
-import { CHANNEL_LABEL, type SocialChannel } from '@/lib/channels/types'
+import { CHANNEL_LABEL, isMetaSocialChannel, type SocialChannel } from '@/lib/channels/types'
 import { fetchSocialProfile } from './graph'
 import type { SocialConfigRow } from './send'
 
@@ -35,15 +35,19 @@ export async function findOrCreateSocialContact(
   const { data: existing } = await lookup()
   if (existing) return { contact: existing, wasCreated: false }
 
+  // Graph profile lookup is Meta-only; TikTok webhooks carry no name, so
+  // a TikTok contact starts as "Usuario de TikTok" (editable by the team).
   let profile = null
-  try {
-    profile = await fetchSocialProfile({
-      channel: channel,
-      userId: senderId,
-      accessToken: decrypt(config.access_token),
-    })
-  } catch {
-    profile = null
+  if (isMetaSocialChannel(channel)) {
+    try {
+      profile = await fetchSocialProfile({
+        channel: channel,
+        userId: senderId,
+        accessToken: decrypt(config.access_token),
+      })
+    } catch {
+      profile = null
+    }
   }
   const label = CHANNEL_LABEL[channel]
   const name =

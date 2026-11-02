@@ -6,14 +6,14 @@
 // Named-object params, same convention as lib/whatsapp/meta-api.ts.
 // ============================================================
 
-import type { SocialChannel } from '@/lib/channels/types'
+import type { MetaSocialChannel } from '@/lib/channels/types'
 import type { QuickReply } from './interactive'
 
 const GRAPH_VERSION = 'v21.0'
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`
 
 /** Per-message text limits (characters). Instagram is stricter. */
-export const SOCIAL_TEXT_LIMIT: Record<SocialChannel, number> = {
+export const SOCIAL_TEXT_LIMIT: Record<MetaSocialChannel, number> = {
   instagram: 1000,
   messenger: 2000,
 }
@@ -194,7 +194,7 @@ export interface SocialProfile {
 
 /** Best-effort sender profile (name, @username, picture). Null on any error. */
 export async function fetchSocialProfile(args: {
-  channel: SocialChannel
+  channel: MetaSocialChannel
   userId: string
   accessToken: string
 }): Promise<SocialProfile | null> {
@@ -303,7 +303,7 @@ export async function subscribePageToApp(args: {
  * (instagram_manage_comments). Returns the new comment id.
  */
 export async function replyToComment(args: {
-  channel: SocialChannel
+  channel: MetaSocialChannel
   commentId: string
   message: string
   accessToken: string

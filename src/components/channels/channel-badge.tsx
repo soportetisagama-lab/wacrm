@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 import { CHANNEL_LABEL, channelOf, type Channel } from '@/lib/channels/types';
 
-// Network marks for WhatsApp / Instagram / Messenger. The colours are the
+// Network marks for WhatsApp / Instagram / Messenger / TikTok. The colours are the
 // networks' own (not the line's brand), so they read the same on every
 // line. Simplified glyphs drawn here — lucide-react ships no brand icons.
 
@@ -33,6 +33,12 @@ function Glyph({ channel }: { channel: Channel }) {
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 2.5C6.5 2.5 2.5 6.5 2.5 11.6c0 2.7 1.1 5 3 6.6v3.3l3-1.7c1.1.3 2.2.5 3.5.5 5.5 0 9.5-4 9.5-9.1S17.5 2.5 12 2.5Zm1 12.1-2.4-2.6-4.7 2.6 5.2-5.5 2.5 2.6 4.6-2.6-5.2 5.5Z" />
+        </svg>
+      );
+    case 'tiktok':
+      return (
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M16.6 3c.3 2.2 1.6 3.6 3.9 3.8v3.1c-1.4.1-2.6-.3-3.9-1.1v5.9c0 3.7-2.8 6.3-6.2 6.3-3.3 0-6-2.6-6-5.9 0-3.6 3.1-6.3 6.8-5.8v3.3c-1.7-.4-3.5.8-3.5 2.5 0 1.4 1.1 2.6 2.6 2.6 1.6 0 2.8-1.1 2.8-3.2V3h3.5Z" />
         </svg>
       );
     case 'whatsapp':

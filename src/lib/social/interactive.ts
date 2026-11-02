@@ -55,11 +55,17 @@ function joinParts(parts: Array<string | undefined>): string {
  * Build what to send for an interactive payload on a social channel.
  * Quick replies when every option fits as-is; otherwise numbered text.
  * Row descriptions only survive in the numbered form, so a list whose
- * rows carry descriptions is always sent numbered.
+ * rows carry descriptions is always sent numbered. `quickReplies: false`
+ * forces the numbered form (channels without quick replies).
  */
-export function toSocialMenu(payload: InteractiveMessagePayload): SocialMenu {
+export function toSocialMenu(
+  payload: InteractiveMessagePayload,
+  opts: { quickReplies?: boolean } = {},
+): SocialMenu {
   const options = menuOptions(payload)
+  // TikTok has no quick replies: always numbered there.
   const fitsQuickReplies =
+    opts.quickReplies !== false &&
     options.length > 0 &&
     options.length <= QUICK_REPLY_MAX &&
     options.every(

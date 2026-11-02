@@ -6,16 +6,25 @@
 // for any row read before the migration runs: the column is then simply
 // absent, so `channelOf` falls back to 'whatsapp').
 //
-// 'tiktok' is reserved in the type and in the DB CHECK constraint but has
-// no implementation yet: nothing creates such rows today.
+// 'tiktok' (DMs of the TikTok Business account, lib/tiktok) is served by
+// the same social pipeline as Instagram/Messenger. It stays inert until an
+// admin connects it in Settings (TIKTOK_APP_ID / TIKTOK_APP_SECRET set and
+// migration 087 run): nothing creates TikTok rows before that.
 // ============================================================
 
 export const CHANNELS = ['whatsapp', 'instagram', 'messenger', 'tiktok'] as const
 export type Channel = (typeof CHANNELS)[number]
 
-/** Channels reached through Meta's Messenger Platform (Graph Send API). */
-export const SOCIAL_CHANNELS = ['instagram', 'messenger'] as const
+/**
+ * Every non-WhatsApp messaging channel: no phone, contact keyed by
+ * channel_user_id, served by lib/social (inbound pipeline, send, bot).
+ */
+export const SOCIAL_CHANNELS = ['instagram', 'messenger', 'tiktok'] as const
 export type SocialChannel = (typeof SOCIAL_CHANNELS)[number]
+
+/** The social channels reached through Meta's Messenger Platform (Graph Send API). */
+export const META_SOCIAL_CHANNELS = ['instagram', 'messenger'] as const
+export type MetaSocialChannel = (typeof META_SOCIAL_CHANNELS)[number]
 
 export function isChannel(value: unknown): value is Channel {
   return typeof value === 'string' && (CHANNELS as readonly string[]).includes(value)
@@ -23,6 +32,10 @@ export function isChannel(value: unknown): value is Channel {
 
 export function isSocialChannel(value: unknown): value is SocialChannel {
   return typeof value === 'string' && (SOCIAL_CHANNELS as readonly string[]).includes(value)
+}
+
+export function isMetaSocialChannel(value: unknown): value is MetaSocialChannel {
+  return typeof value === 'string' && (META_SOCIAL_CHANNELS as readonly string[]).includes(value)
 }
 
 /** Channel of a contact/conversation row; anything unknown or missing → whatsapp. */
@@ -43,6 +56,7 @@ export const CHANNEL_LABEL: Record<Channel, string> = {
  * Meta's standard messaging window for Instagram and Messenger: a business
  * may reply freely for 24 h after the person's last message. (Outside it
  * only message tags such as HUMAN_AGENT apply, which this CRM doesn't use.)
+ * TikTok uses the same 24 h here (see lib/tiktok/api.ts).
  */
 export const SOCIAL_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000
 
@@ -60,13 +74,13 @@ export function isWithinMessagingWindow(
 }
 
 /**
- * Who can see Instagram/Messenger chats. Mirrors the SQL helper
+ * Who can see Instagram/Messenger/TikTok chats. Mirrors the SQL helper
  * can_view_social_channel() in migration 080 (which is what actually
  * enforces it, through RLS): WhatsApp is never restricted here; social
  * channels are owner/admin only unless the account switched on
  * "Mostrar estos chats también a los asesores", in which case the normal
  * per-role conversation rules apply. Community Manager always sees
- * Instagram/Messenger (migration 084).
+ * Instagram/Messenger (migration 084) and TikTok (migration 087).
  */
 export function canViewChannel(args: {
   channel: Channel
@@ -75,11 +89,9 @@ export function canViewChannel(args: {
 }): boolean {
   if (args.channel === 'whatsapp') return true
   if (args.role === 'owner' || args.role === 'admin') return true
-  // Community Manager works Instagram/Messenger whatever the toggle says
-  // (migration 084). TikTok isn't one of its channels.
-  if (args.role === 'community_manager') {
-    return args.channel === 'instagram' || args.channel === 'messenger'
-  }
+  // Community Manager works every social channel whatever the toggle says
+  // (migrations 084 and 087).
+  if (args.role === 'community_manager') return isSocialChannel(args.channel)
   return args.showToAgents
 }
 

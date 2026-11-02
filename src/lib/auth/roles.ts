@@ -196,13 +196,13 @@ export const COMMUNITY_MANAGER_ROUTES: readonly string[] = [
 ];
 
 /**
- * Channels a Community Manager works: Facebook Messenger and Instagram
- * only — never WhatsApp (nor TikTok). The database enforces it through
- * can_view_conversation() / can_view_contact() (migration 083); this list
+ * Channels a Community Manager works: Facebook Messenger, Instagram and
+ * TikTok — never WhatsApp. The database enforces it through
+ * can_view_conversation() / can_view_contact() (migrations 083 and 087); this list
  * is the TypeScript mirror, kept as plain strings so it doesn't depend on
  * the channels module.
  */
-export const COMMUNITY_MANAGER_CHANNELS: readonly string[] = ['messenger', 'instagram'];
+export const COMMUNITY_MANAGER_CHANNELS: readonly string[] = ['messenger', 'instagram', 'tiktok'];
 
 /**
  * Place, answer, reject or hang up WhatsApp calls (/api/whatsapp/calls/*).
@@ -221,7 +221,7 @@ export function isCommunityManagerChannel(channel: string | null | undefined): b
 /**
  * May a member with `role` be the assignee of a conversation on `channel`?
  * Everyone may, except a Community Manager on anything that isn't
- * Messenger/Instagram — an assignee gets pushes with the message text,
+ * Messenger/Instagram/TikTok — an assignee gets pushes with the message text,
  * call rings and pending-reply counts for that chat. The database
  * enforces it in enforce_conversation_assignment_column() (migration 083).
  */

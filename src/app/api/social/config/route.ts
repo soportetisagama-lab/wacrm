@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { decrypt, encrypt } from '@/lib/whatsapp/encryption'
 import { fetchPageInfo, resolvePageAccessToken, subscribePageToApp } from '@/lib/social/graph'
-import { isSocialChannel, type SocialChannel } from '@/lib/channels/types'
+import { META_SOCIAL_CHANNELS, isMetaSocialChannel, type MetaSocialChannel } from '@/lib/channels/types'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import {
   DEFAULT_COMMENT_PRIVATE_REPLY,
@@ -13,10 +13,11 @@ import {
 
 // Instagram / Messenger connection settings — owner/admin only (both
 // here and in the RLS of social_channel_configs, migration 080). The page
-// token is stored encrypted and never returned to the browser.
+// token is stored encrypted and never returned to the browser. TikTok has
+// its own route (/api/tiktok/config): every query here is Meta-only.
 
 interface ConfigRow {
-  channel: SocialChannel
+  channel: MetaSocialChannel
   external_id: string
   page_id: string
   access_token: string
@@ -64,6 +65,7 @@ export async function GET() {
       // '*' so the comment columns of 085 come along when they exist
       // (access_token never leaves this handler: publicView drops it).
       .select('*')
+      .in('channel', [...META_SOCIAL_CHANNELS])
       .eq('account_id', ctx.accountId)
     if (error) {
       // Most likely migration 080 hasn't been run yet.
@@ -73,7 +75,7 @@ export async function GET() {
       )
     }
     const rows = (data ?? []) as ConfigRow[]
-    const byChannel = (c: SocialChannel) => rows.find((r) => r.channel === c)
+    const byChannel = (c: MetaSocialChannel) => rows.find((r) => r.channel === c)
     return NextResponse.json({
       instagram: publicView(byChannel('instagram')),
       messenger: publicView(byChannel('messenger')),
@@ -116,6 +118,7 @@ export async function POST(request: Request) {
     const { data: existingRows } = await ctx.supabase
       .from('social_channel_configs')
       .select('*')
+      .in('channel', [...META_SOCIAL_CHANNELS])
       .eq('account_id', ctx.accountId)
     const existing = (existingRows ?? []) as ConfigRow[]
     const comments = commentRepliesView(existing)
@@ -264,11 +267,12 @@ export async function PATCH(request: Request) {
         .from('social_channel_configs')
         .update({ show_to_agents: body.show_to_agents, updated_at: new Date().toISOString() })
         .eq('account_id', ctx.accountId)
+        .in('channel', [...META_SOCIAL_CHANNELS])
       if (error) return NextResponse.json({ error: 'No se pudo guardar el cambio.' }, { status: 500 })
     }
 
     if (body.channel !== undefined || body.enabled !== undefined) {
-      if (!isSocialChannel(body.channel) || typeof body.enabled !== 'boolean') {
+      if (!isMetaSocialChannel(body.channel) || typeof body.enabled !== 'boolean') {
         return NextResponse.json({ error: 'Canal o estado inválido.' }, { status: 400 })
       }
       const { error } = await ctx.supabase
@@ -321,6 +325,7 @@ async function saveCommentReplies(
   const { data: rowsData, error: readError } = await ctx.supabase
     .from('social_channel_configs')
     .select('*')
+    .in('channel', [...META_SOCIAL_CHANNELS])
     .eq('account_id', ctx.accountId)
   const rows = (rowsData ?? []) as ConfigRow[]
   if (readError || (rows.length > 0 && !rows.some((r) => 'comment_replies_enabled' in r))) {
@@ -357,6 +362,7 @@ async function saveCommentReplies(
     .from('social_channel_configs')
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq('account_id', ctx.accountId)
+    .in('channel', [...META_SOCIAL_CHANNELS])
   if (error) return NextResponse.json({ error: 'No se pudo guardar el cambio.' }, { status: 500 })
   return null
 }
@@ -366,7 +372,7 @@ export async function DELETE(request: Request) {
   try {
     const ctx = await requireRole('admin')
     const channel = new URL(request.url).searchParams.get('channel')
-    if (!isSocialChannel(channel)) {
+    if (!isMetaSocialChannel(channel)) {
       return NextResponse.json({ error: 'Canal inválido.' }, { status: 400 })
     }
     const { error } = await ctx.supabase

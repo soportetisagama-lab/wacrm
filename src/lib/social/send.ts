@@ -1,5 +1,6 @@
 // ============================================================
-// Outbound send for Instagram / Messenger conversations.
+// Outbound send for Instagram / Messenger / TikTok conversations
+// (TikTok itself is talked to in lib/tiktok/send.ts).
 //
 // Every send path in the CRM (inbox composer, public API, Flows,
 // automations, AI auto-reply) checks the contact's channel first and,
@@ -23,6 +24,7 @@ import {
   channelOf,
   isSocialChannel,
   isWithinMessagingWindow,
+  type MetaSocialChannel,
   type SocialChannel,
 } from '@/lib/channels/types'
 import {
@@ -39,8 +41,10 @@ import {
 } from './graph'
 import { toSocialMenu } from './interactive'
 import { clearStandby, lastInboundWasStandby } from './thread-control'
+import { TikTokApiError } from '@/lib/tiktok/api'
+import { TikTokNotConfiguredError, sendTikTokOutbound } from '@/lib/tiktok/send'
 
-async function tryTakeThreadControl(channel: SocialChannel, target: SocialSendTarget, reason: string): Promise<boolean> {
+async function tryTakeThreadControl(channel: MetaSocialChannel, target: SocialSendTarget, reason: string): Promise<boolean> {
   try {
     await takeThreadControl(target)
     clearStandby(channel, target.recipientId)
@@ -61,7 +65,7 @@ async function tryTakeThreadControl(channel: SocialChannel, target: SocialSendTa
  * the thread, take thread control and retry that call once.
  */
 async function withThreadControl<T>(
-  channel: SocialChannel,
+  channel: MetaSocialChannel,
   target: SocialSendTarget,
   send: () => Promise<T>,
 ): Promise<T> {
@@ -104,6 +108,11 @@ export interface SocialConfigRow {
   username: string | null
   enabled: boolean
   show_to_agents: boolean
+  // TikTok only (migration 087): its access token expires and is renewed
+  // with the refresh token (both encrypted). Absent before 087 runs.
+  refresh_token?: string | null
+  token_expires_at?: string | null
+  refresh_token_expires_at?: string | null
 }
 
 /** The account's config for one channel (service role — the table is admin-only under RLS). */
@@ -155,13 +164,13 @@ export interface SocialContactLike {
   channel_user_id?: string | null
 }
 
-/** True when this contact must be reached through Instagram/Messenger. */
+/** True when this contact must be reached through Instagram/Messenger/TikTok. */
 export function isSocialContact(contact: SocialContactLike | null | undefined): boolean {
   return isSocialChannel(channelOf(contact))
 }
 
 function attachmentTypeFor(
-  channel: SocialChannel,
+  channel: MetaSocialChannel,
   mediaKind: 'image' | 'video' | 'audio' | 'document',
 ): SocialAttachmentType {
   if (mediaKind === 'document') {
@@ -197,7 +206,7 @@ export async function sendSocialOutbound(
 ): Promise<{ messageId: string }> {
   const channel = channelOf(args.contact)
   if (!isSocialChannel(channel)) {
-    throw new SocialSendError('unsupported', 'Este contacto no es de Instagram ni Messenger.', 400)
+    throw new SocialSendError('unsupported', 'Este contacto no es de Instagram, Messenger ni TikTok.', 400)
   }
   const label = CHANNEL_LABEL[channel]
   const recipientId = args.contact.channel_user_id
@@ -224,6 +233,8 @@ export async function sendSocialOutbound(
       )
     }
   }
+
+  if (channel === 'tiktok') return sendViaTikTok(config, recipientId, args.outbound)
 
   let accessToken: string
   try {
@@ -314,5 +325,21 @@ export async function sendSocialOutbound(
     const message = err instanceof Error ? err.message : String(err)
     const codes = graph?.code != null ? ` (código ${graph.code}${graph.subcode != null ? `/${graph.subcode}` : ''})` : ''
     throw new SocialSendError('meta_error', `${label} rechazó el envío: ${message}${codes}`, 502)
+  }
+}
+
+async function sendViaTikTok(
+  config: SocialConfigRow,
+  recipientId: string,
+  outbound: SocialOutbound,
+): Promise<{ messageId: string }> {
+  try {
+    return await sendTikTokOutbound({ config, recipientId, outbound })
+  } catch (err) {
+    if (err instanceof TikTokNotConfiguredError) throw new SocialSendError('not_configured', err.message, 400)
+    const code = err instanceof TikTokApiError && err.code != null ? ` (código ${err.code})` : ''
+    console.error(`[social] tiktok send to ${recipientId} failed${code}:`, err instanceof Error ? err.message : err)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new SocialSendError('meta_error', `TikTok rechazó el envío: ${message}${code}`, 502)
   }
 }

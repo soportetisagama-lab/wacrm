@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canViewChannel,
   channelOf,
+  isMetaSocialChannel,
   isSocialChannel,
   isWithinMessagingWindow,
   supportsWhatsAppFeatures,
@@ -17,11 +18,15 @@ describe('channelOf', () => {
     expect(channelOf({ channel: 'tiktok' })).toBe('tiktok')
   })
 
-  it('only instagram and messenger are implemented social channels', () => {
+  it('instagram, messenger and tiktok are social channels; only the first two go through Meta', () => {
     expect(isSocialChannel('instagram')).toBe(true)
     expect(isSocialChannel('messenger')).toBe(true)
-    expect(isSocialChannel('tiktok')).toBe(false)
+    expect(isSocialChannel('tiktok')).toBe(true)
     expect(isSocialChannel('whatsapp')).toBe(false)
+    expect(isMetaSocialChannel('instagram')).toBe(true)
+    expect(isMetaSocialChannel('messenger')).toBe(true)
+    expect(isMetaSocialChannel('tiktok')).toBe(false)
+    expect(isMetaSocialChannel('whatsapp')).toBe(false)
   })
 })
 
@@ -45,8 +50,8 @@ describe('canViewChannel (mirror of can_view_social_channel, migration 080)', ()
     }
   })
 
-  it('shows Instagram/Messenger only to owner/admin by default', () => {
-    for (const channel of ['instagram', 'messenger'] as const) {
+  it('shows Instagram/Messenger/TikTok only to owner/admin by default', () => {
+    for (const channel of ['instagram', 'messenger', 'tiktok'] as const) {
       expect(canViewChannel({ channel, role: 'owner', showToAgents: false })).toBe(true)
       expect(canViewChannel({ channel, role: 'admin', showToAgents: false })).toBe(true)
       for (const role of ['gerencia', 'jefe_linea', 'atc', 'agent', 'viewer', 'analista']) {
@@ -55,11 +60,11 @@ describe('canViewChannel (mirror of can_view_social_channel, migration 080)', ()
     }
   })
 
-  it('always shows Instagram/Messenger to community_manager, never TikTok', () => {
+  it('always shows Instagram/Messenger/TikTok to community_manager (migrations 084, 087)', () => {
     for (const showToAgents of [false, true]) {
       expect(canViewChannel({ channel: 'instagram', role: 'community_manager', showToAgents })).toBe(true)
       expect(canViewChannel({ channel: 'messenger', role: 'community_manager', showToAgents })).toBe(true)
-      expect(canViewChannel({ channel: 'tiktok', role: 'community_manager', showToAgents })).toBe(false)
+      expect(canViewChannel({ channel: 'tiktok', role: 'community_manager', showToAgents })).toBe(true)
     }
   })
 

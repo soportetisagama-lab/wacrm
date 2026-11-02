@@ -15,7 +15,7 @@
 // everything else becomes `null` and is skipped.
 // ============================================================
 
-import type { SocialChannel } from '@/lib/channels/types'
+import type { MetaSocialChannel, SocialChannel } from '@/lib/channels/types'
 
 export interface SocialAttachment {
   /** 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'share' | 'story_mention' | … */
@@ -74,7 +74,7 @@ interface RawEnvelope {
 }
 
 /** Webhook `object` → our channel. Unknown objects return null (ignored). */
-export function channelForObject(object: unknown): SocialChannel | null {
+export function channelForObject(object: unknown): MetaSocialChannel | null {
   if (object === 'page') return 'messenger'
   if (object === 'instagram') return 'instagram'
   return null
@@ -332,7 +332,7 @@ export function contentTypeForAttachment(type: string): 'image' | 'video' | 'aud
 // ============================================================
 
 export interface SocialCommentEvent {
-  channel: SocialChannel
+  channel: MetaSocialChannel
   /** entry.id — page id (Facebook) / IG account id (Instagram). */
   externalId: string
   commentId: string
