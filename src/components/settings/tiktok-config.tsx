@@ -116,6 +116,8 @@ export function TikTokConfig() {
       }
       toast.success(t('disconnected'));
       await load();
+    } catch {
+      toast.error(t('saveFailed'));
     } finally {
       setBusy(false);
     }
