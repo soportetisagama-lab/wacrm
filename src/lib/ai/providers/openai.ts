@@ -143,7 +143,7 @@ interface OpenAiToolResponse {
 export async function generateOpenAiStructured(
   args: StructuredProviderArgs,
 ): Promise<StructuredProviderResult> {
-  const { apiKey, model, systemPrompt, messages, timeoutMs, schema, toolName } = args
+  const { apiKey, model, systemPrompt, messages, timeoutMs, schema, toolName, temperature } = args
 
   assertAiKeyAvailable(apiKey)
 
@@ -166,6 +166,7 @@ export async function generateOpenAiStructured(
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
         ...structuredReasoningParams(model),
+        ...(temperature !== undefined && !/^(gpt-5|o\d)/i.test(model) ? { temperature } : {}),
         tools: [
           {
             type: 'function',

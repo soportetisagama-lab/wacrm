@@ -7,8 +7,10 @@ import {
   dentroDeHorario,
   procesarColaDerivacion,
   NOTA_EN_COLA,
+  esNumeroExtranjero,
   type DerivacionStore,
 } from './derivacion-auto'
+import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
 
 const ENV = { url: 'https://xlr8.test/derivar.php', secret: 's3cr3t', linea: 'LINEA_TEST' }
 
@@ -153,6 +155,8 @@ describe('llamada y mapeo de asesor', () => {
       nombre: 'Ana',
       codigo_anuncio: '120210000000001',
       conversation_id: 'conv-1',
+      destino: 'ASESOR',
+      motivo_atc: '',
     })
     expect(store.findAgentByXlr8).toHaveBeenCalledWith('acc-1', 42)
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
@@ -397,5 +401,71 @@ describe('cola de derivación', () => {
     expect(await store.listQueue(10)).toEqual(['conv-1'])
     expect(err).toHaveBeenCalled()
     err.mockRestore()
+  })
+})
+
+describe('clasificación lead / ATC', () => {
+  function bodyDe(fetchFn: ReturnType<typeof okFetch>) {
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    return JSON.parse(init.body as string) as Record<string, unknown>
+  }
+  const fijo = (c: Clasificacion) => vi.fn<ClasificadorDerivacion>(async () => c)
+
+  it('lead → destino ASESOR y la nota de siempre', async () => {
+    const store = makeStore()
+    const clasificar = fijo({ tipo: 'lead', motivo: '' })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, clasificar })).toBe('asignada')
+    expect(clasificar).toHaveBeenCalledWith({ accountId: 'acc-1', conversationId: 'conv-1', numeroExtranjero: false })
+    expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ASESOR', motivo_atc: '' })
+    expect(store.appendNote).toHaveBeenCalledWith('conv-1', 'Derivado automáticamente a Luis (XLR8)')
+  })
+
+  it('busca trabajo → destino ATC con el motivo legible', async () => {
+    const store = makeStore()
+    const clasificar = fijo({ tipo: 'atc', motivo: 'trabajo' })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Atención al cliente' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, clasificar })).toBe('asignada')
+    expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ATC', motivo_atc: 'Busca trabajo' })
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+    expect(store.appendNote).toHaveBeenCalledWith('conv-1', 'Derivado automáticamente a ATC (Busca trabajo)')
+  })
+
+  it('número extranjero pidiendo para Perú → lead (lo decide la IA)', async () => {
+    const store = makeStore()
+    // La IA recibe numeroExtranjero=true como contexto y responde lead.
+    const clasificar = fijo({ tipo: 'lead', motivo: '' })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, clasificar })
+    expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ASESOR', motivo_atc: '' })
+    expect(esNumeroExtranjero('+1 202 555 0100')).toBe(true)
+    expect(esNumeroExtranjero('+51 926 843 129')).toBe(false)
+    expect(esNumeroExtranjero('926843129')).toBe(false)
+  })
+
+  it('IA caída → lead, se registra y se llama al PHP igual', async () => {
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const clasificar = vi.fn<ClasificadorDerivacion>(async () => {
+      throw new Error('insufficient_quota')
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, clasificar })).toBe('asignada')
+    expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ASESOR', motivo_atc: '' })
+    expect(err).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('clasificación'), 'insufficient_quota', expect.anything())
+    err.mockRestore()
+  })
+
+  it('fuera de horario no clasifica (lo hace la cola al derivar)', async () => {
+    const store = makeStore()
+    const clasificar = fijo({ tipo: 'atc', motivo: 'spam' })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: lima('2026-11-02T20:00'), clasificar })).toBe('en_cola')
+    expect(clasificar).not.toHaveBeenCalled()
+    expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-03T08:00'), clasificar })).toEqual({
+      derivadas: 1,
+      descartadas: 0,
+    })
+    expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ATC', motivo_atc: 'Spam' })
   })
 })
