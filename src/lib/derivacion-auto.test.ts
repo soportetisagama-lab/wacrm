@@ -8,6 +8,7 @@ import {
   procesarColaDerivacion,
   NOTA_EN_COLA,
   esNumeroExtranjero,
+  celularDerivacion,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -467,5 +468,40 @@ describe('clasificación lead / ATC', () => {
       descartadas: 0,
     })
     expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ATC', motivo_atc: 'Spam' })
+  })
+})
+
+describe('número extranjero', () => {
+  it('se envía al PHP con todos sus dígitos internacionales, sin el +', () => {
+    expect(celularDerivacion('+51 926 843 129')).toBe('926843129')
+    expect(celularDerivacion('+1 202 555 0100')).toBe('12025550100')
+    expect(celularDerivacion('+34 612 345 678')).toBe('34612345678')
+    expect(celularDerivacion('12345678')).toBeNull()
+    expect(celularDerivacion('1234567890123456')).toBeNull()
+  })
+
+  it('se deriva: la IA recibe extranjero=sí y, si pide para Perú, va como lead', async () => {
+    const store = makeStore({}, '+1 202 555 0100')
+    const clasificar = vi.fn<ClasificadorDerivacion>(async () => ({ tipo: 'lead', motivo: '' }))
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    const deps = { store, env: ENV, fetchFn, now: DENTRO, clasificar, numerosPrueba: ['12025550100'] }
+    expect(await derivarAuto('conv-1', deps)).toBe('asignada')
+    expect(clasificar).toHaveBeenCalledWith({ accountId: 'acc-1', conversationId: 'conv-1', numeroExtranjero: true })
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toMatchObject({ celular: '12025550100', destino: 'ASESOR', motivo_atc: '' })
+  })
+
+  it('con menos de 9 dígitos queda sin_celular', async () => {
+    const store = makeStore({}, '+1 555 0100')
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['15550100'] })).toBe('sin_celular')
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('el modo prueba sigue cerrado a otros números extranjeros', async () => {
+    const store = makeStore({}, '+1 202 555 0100')
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('no_es_prueba')
+    expect(fetchFn).not.toHaveBeenCalled()
   })
 })
