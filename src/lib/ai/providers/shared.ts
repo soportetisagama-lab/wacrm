@@ -21,6 +21,9 @@ export interface ProviderArgs {
 export interface StructuredProviderArgs extends ProviderArgs {
   schema: Record<string, unknown>
   toolName: string
+  /** Opcional (solo OpenAI, modelos sin razonamiento): temperatura baja
+   *  para clasificaciones deterministas. Los gpt-5* / o* la rechazan. */
+  temperature?: number
 }
 
 /** Parsed tool-call arguments + usage, before any field-level validation. */
