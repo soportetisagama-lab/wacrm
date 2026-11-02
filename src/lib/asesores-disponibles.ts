@@ -3,8 +3,10 @@ import type { AccountRole } from '@/lib/auth/roles'
 // ============================================================
 // Asesores disponibles para la derivación automática XLR8.
 //
-// Indicador de la cabecera del chat: cuántos asesores (y quiénes)
-// podrían recibir ahora un lead derivado por el bot. Lo calcula el PHP
+// Indicador junto a la píldora del número de la línea (barra superior):
+// cuántos asesores podrían recibir ahora un lead derivado por el bot y,
+// al tocarlo, la fila en el orden en que el PHP los reparte (el primero
+// recibe el próximo chat). Lo calcula el PHP
 // de solo lectura `asesores_disponibles.php` (servidor XLR8), con la
 // misma condición que `derivar_auto.php`. Solo lo ven Administrador
 // (owner / admin) y ATC: la ruta /api/xlr8/asesores-disponibles
@@ -81,13 +83,10 @@ export function urlAsesoresDisponibles(env: AsesoresEnv): string | null {
   }
 }
 
-/** Texto del indicador: "Sin asesor disponible", "1 asesor: Alexia", "2 asesores: Alexia, Juan". */
-export function textoAsesoresDisponibles(asesores: readonly AsesorDisponible[]): string {
-  const nombres = asesores.map((a) => a.nombre.trim()).filter(Boolean)
-  const n = asesores.length
-  if (n === 0) return 'Sin asesor disponible'
-  const cuenta = n === 1 ? '1 asesor' : `${n} asesores`
-  return nombres.length > 0 ? `${cuenta}: ${nombres.join(', ')}` : cuenta
+/** Contador de la barra superior: "Sin asesor", "1 asesor", "3 asesores". */
+export function textoContadorAsesores(cantidad: number): string {
+  if (cantidad <= 0) return 'Sin asesor'
+  return cantidad === 1 ? '1 asesor' : `${cantidad} asesores`
 }
 
 /** Valida la respuesta del PHP; null si no tiene la forma esperada. */
