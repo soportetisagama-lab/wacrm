@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Phone } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { formatLinePhone } from "@/lib/whatsapp/format-line-phone";
+import { AsesoresDisponiblesBadge } from "@/components/layout/asesores-disponibles-badge";
 
 const STORAGE_KEY = "wacrm:line-phone";
 
@@ -11,6 +12,8 @@ const STORAGE_KEY = "wacrm:line-phone";
  * Discreet "Número de celular: 933 862 062" pill for the header.
  * Reads the connected line's number once per session (cached in
  * sessionStorage) and renders nothing when the account has no line.
+ * Next to it, the available-advisors counter (owner / admin / atc only;
+ * it renders and fetches nothing for other roles).
  */
 export function LinePhoneBadge() {
   const t = useTranslations("Header");
@@ -51,16 +54,19 @@ export function LinePhoneBadge() {
     };
   }, []);
 
-  if (!phone) return null;
-
   return (
-    <div
-      title={`${t("linePhone")}: ${phone}`}
-      className="hidden h-8 shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-2.5 text-xs font-medium whitespace-nowrap text-white/90 min-[420px]:flex sm:h-9 sm:px-3 sm:text-sm"
-    >
-      <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span className="hidden md:inline">{t("linePhone")}:</span>
-      <span className="tabular-nums">{phone}</span>
-    </div>
+    <>
+      {phone && (
+        <div
+          title={`${t("linePhone")}: ${phone}`}
+          className="hidden h-8 shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-2.5 text-xs font-medium whitespace-nowrap text-white/90 min-[420px]:flex sm:h-9 sm:px-3 sm:text-sm"
+        >
+          <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="hidden md:inline">{t("linePhone")}:</span>
+          <span className="tabular-nums">{phone}</span>
+        </div>
+      )}
+      <AsesoresDisponiblesBadge />
+    </>
   );
 }
