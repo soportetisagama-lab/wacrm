@@ -128,12 +128,27 @@ export function celularNueveDigitos(phone: string | null | undefined): string | 
   return null
 }
 
+/**
+ * Celular que se envía al PHP: el peruano en 9 dígitos sin el 51; el
+ * extranjero con todos sus dígitos internacionales, sin el + (9 a 15
+ * dígitos; el PHP acepta 9 o más). null si tiene menos de 9 o más de 15.
+ */
+export function celularDerivacion(phone: string | null | undefined): string | null {
+  const peruano = celularNueveDigitos(phone)
+  if (peruano) return peruano
+  const digits = (phone ?? '').replace(/\D/g, '')
+  return digits.length >= 9 && digits.length <= 15 ? digits : null
+}
+
 /** True cuando el celular está permitido por el MODO PRUEBA. */
-export function debeDerivarCelular(phone: string | null | undefined): boolean {
+export function debeDerivarCelular(
+  phone: string | null | undefined,
+  numerosPrueba: readonly string[] = NUMEROS_PRUEBA,
+): boolean {
   const digits = (phone ?? '').replace(/\D/g, '')
   if (!digits) return false
   const nueve = celularNueveDigitos(digits)
-  return NUMEROS_PRUEBA.includes(digits) || (nueve !== null && NUMEROS_PRUEBA.includes(nueve))
+  return numerosPrueba.includes(digits) || (nueve !== null && numerosPrueba.includes(nueve))
 }
 
 export interface DerivacionEnv {
@@ -223,6 +238,8 @@ export interface DerivacionDeps {
   horario?: HorarioDerivacion
   /** Clasificador lead/ATC; sin él, todo va como lead. */
   clasificar?: ClasificadorDerivacion
+  /** Solo para los tests: reemplaza NUMEROS_PRUEBA. */
+  numerosPrueba?: readonly string[]
 }
 
 async function clasificarSeguro(
@@ -263,9 +280,9 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
     if ((conv.channel ?? 'whatsapp') !== 'whatsapp') return 'no_whatsapp'
 
     const contact = await store.loadContact(conv.contact_id)
-    const celular = celularNueveDigitos(contact?.phone)
+    const celular = celularDerivacion(contact?.phone)
     if (!celular) return 'sin_celular'
-    if (!debeDerivarCelular(contact?.phone)) return 'no_es_prueba'
+    if (!debeDerivarCelular(contact?.phone, deps.numerosPrueba)) return 'no_es_prueba'
 
     // Fuera de horario: a la cola, sin llamar al PHP. El cron la deriva
     // al abrir el horario.
