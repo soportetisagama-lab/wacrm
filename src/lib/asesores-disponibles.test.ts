@@ -7,7 +7,7 @@ import {
   limpiarCacheAsesores,
   parsearRespuesta,
   puedeVerAsesoresDisponibles,
-  textoAsesoresDisponibles,
+  textoContadorAsesores,
   urlAsesoresDisponibles,
 } from './asesores-disponibles'
 import { ACCOUNT_ROLES } from './auth/roles'
@@ -60,19 +60,14 @@ describe('urlAsesoresDisponibles', () => {
   })
 })
 
-describe('textoAsesoresDisponibles', () => {
+describe('textoContadorAsesores', () => {
   it('sin asesores', () => {
-    expect(textoAsesoresDisponibles([])).toBe('Sin asesor disponible')
+    expect(textoContadorAsesores(0)).toBe('Sin asesor')
   })
 
   it('uno y varios', () => {
-    expect(textoAsesoresDisponibles([{ id: 1, nombre: 'Alexia' }])).toBe('1 asesor: Alexia')
-    expect(
-      textoAsesoresDisponibles([
-        { id: 1, nombre: 'Alexia' },
-        { id: 2, nombre: 'Juan' },
-      ])
-    ).toBe('2 asesores: Alexia, Juan')
+    expect(textoContadorAsesores(1)).toBe('1 asesor')
+    expect(textoContadorAsesores(3)).toBe('3 asesores')
   })
 })
 
