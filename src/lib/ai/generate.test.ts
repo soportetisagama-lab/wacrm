@@ -45,6 +45,35 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('parseGeneration', () => {
+  it('strips [[NO_LEAD]] and flags notLead, keeping the courtesy line', () => {
+    expect(parseGeneration('Gracias por escribirnos, este canal es para clientes. [[NO_LEAD]]')).toEqual({
+      text: 'Gracias por escribirnos, este canal es para clientes.',
+      handoff: false,
+      notLead: true,
+      sendDocument: null,
+      usage: null,
+    })
+  })
+
+  it('flags notLead when the reply itself turns away a job seeker (marker forgotten)', () => {
+    const res = parseGeneration(
+      'Gracias por escribirnos. Este WhatsApp es solo para consultas comerciales; las vacantes se publican en nuestras redes oficiales.',
+    )
+    expect(res.notLead).toBe(true)
+    expect(res.handoff).toBe(false)
+  })
+
+  it('a real handoff wins over the not-lead marker', () => {
+    const res = parseGeneration('[[NO_LEAD]][[HANDOFF]]')
+    expect(res.handoff).toBe(true)
+    expect(res.notLead).toBeUndefined()
+    expect(res.text).toBe('')
+  })
+
+  it('a normal sales reply is not flagged', () => {
+    expect(parseGeneration('¿En qué ciudad necesitas la mesa de trabajo?').notLead).toBeUndefined()
+  })
+
   it('strips transcript annotations the model copied into its reply', () => {
     expect(parseGeneration('[Asesor] Claro, te ayudo.').text).toBe('Claro, te ayudo.')
     expect(parseGeneration('[vie 23/10 15:30] Hola').text).toBe('Hola')
@@ -256,6 +285,25 @@ const FIELDS: ExtractionField[] = [
 ]
 
 describe('parseExtraction', () => {
+  it('flags notLead from not_lead:true', () => {
+    const res = parseExtraction(
+      { extracted: {}, reply_text: 'Gracias por escribirnos.', done: false, handoff: false, not_lead: true },
+      FIELDS,
+    )
+    expect(res.notLead).toBe(true)
+    expect(res.handoff).toBe(false)
+  })
+
+  it('not_lead is ignored when the model also hands off or finishes', () => {
+    expect(
+      parseExtraction({ extracted: {}, reply_text: 'Te paso con un asesor.', done: false, handoff: true, not_lead: true }, FIELDS)
+        .notLead,
+    ).toBeUndefined()
+    expect(
+      parseExtraction({ extracted: {}, reply_text: 'Listo.', done: true, handoff: false, not_lead: true }, FIELDS).notLead,
+    ).toBeUndefined()
+  })
+
   it('keeps only non-empty string values for known fields', () => {
     const res = parseExtraction(
       { extracted: { equipos: '2 cocinas', ciudad: null, rubro: '' }, reply_text: '¿En qué ciudad?', done: false, handoff: false },

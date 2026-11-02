@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { buildSystemPrompt, HANDOFF_SENTINEL, SEND_DOCUMENT_SENTINEL_RE } from '../defaults'
+import { buildSystemPrompt, HANDOFF_SENTINEL, NOT_LEAD_SENTINEL, SEND_DOCUMENT_SENTINEL_RE } from '../defaults'
 import { retrieveKnowledge } from '../knowledge'
 import type { AiConfig } from '../types'
 import { hasAmount } from './guards'
@@ -86,6 +86,7 @@ export function shuffledOrder(n: number, rand: () => number = Math.random): numb
 /** Pure: what the judge sees of a bot reply (control markers made readable). */
 export function readableReply(text: string): string {
   let out = text.replace(SEND_DOCUMENT_SENTINEL_RE, '[envía un documento]')
+  if (out.includes(NOT_LEAD_SENTINEL)) out = `${out.split(NOT_LEAD_SENTINEL).join('').trim()} [deriva: no es cliente]`.trim()
   if (out.includes(HANDOFF_SENTINEL)) out = out.replace(HANDOFF_SENTINEL, '').trim() || '[deriva a un asesor]'
   return out.trim()
 }

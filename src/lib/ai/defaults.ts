@@ -24,6 +24,32 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
 export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 
 /**
+ * Sentinel the model appends (auto-reply mode) after its courtesy line
+ * when the customer is not a potential buyer: job or internship
+ * seeker, supplier offering something, spam, a joke or an unrelated
+ * topic. The line is sent and the chat is handed off so the automatic
+ * derivation (lib/derivacion-auto.ts) routes it — its own classifier
+ * decides lead vs ATC. Parsed and stripped by `parseGeneration`.
+ */
+export const NOT_LEAD_SENTINEL = '[[NO_LEAD]]'
+
+/**
+ * Backstop for the sentinel: the bot's own reply already says this
+ * chat is not for buying (the account prompt or a learned rule taught
+ * it a canned line, e.g. "las vacantes se publican en nuestras
+ * redes") but the model forgot the marker. Only the bot's reply is
+ * checked, never the customer's text ("busco trabajo de soldadura" can
+ * be a real quote). A false positive only hands off early: the
+ * derivation classifier still sends real leads to an advisor.
+ */
+const NOT_LEAD_REPLY_RE =
+  /\bvacantes?\b|\bpostula(?:r|ci[oó]n|ciones|ntes?)\b|curr[ií]cul|\bhoja de vida\b|\bbolsa de trabajo\b|\brecursos humanos\b|\bsolo (?:es )?para (?:consultas|clientes|ventas|atenci[oó]n) comercial(?:es)?\b|\bno (?:trabajamos con|buscamos|requerimos|necesitamos) (?:nuevos )?proveedores\b/i
+
+export function looksLikeNotLeadReply(text: string): boolean {
+  return NOT_LEAD_REPLY_RE.test(text)
+}
+
+/**
  * Sentinel the model is instructed to emit (in auto-reply mode, only
  * when the account has a document catalog configured) when the
  * customer explicitly asks for one of `AiConfig.documents`. Carries
@@ -147,6 +173,19 @@ const AUTO_REPLY_HANDOFF_GUIDANCE =
   'If the customer seems lost or does not understand the menu (e.g. "¿cuál?", "no entiendo"), do not repeat the menu: explain in one plain sentence what you can do (cotizar, proyecto a medida, ubicación y horarios, catálogo, hablar con un asesor) and let them answer in their own words. ' +
   'When you do not know something (stock, a delivery date, a technical detail that is not in the business context, the business information from the menu or the knowledge base), say so honestly in one short sentence and offer to pass them to an advisor — never invent it. ' +
   'Sending one of the documents listed below is never a reason to hand off.'
+
+/**
+ * Auto-reply only: a chat that is clearly not a potential customer gets
+ * one courtesy line plus NOT_LEAD_SENTINEL, so it is routed to the
+ * right team (lib/derivacion-auto.ts) instead of staying with the bot.
+ */
+const AUTO_REPLY_NOT_LEAD_GUIDANCE =
+  'If the customer is clearly NOT a potential customer — they are looking for a job, an internship or want to send their CV; they are a supplier offering products or services to the business; it is spam, advertising, a chain message, a joke or nonsense; or they write about a topic unrelated to buying from the business — reply with one short, polite line in neutral Spanish (no questions, no product offers, never promise that an advisor or anyone will contact them) and append the exact marker ' +
+  NOT_LEAD_SENTINEL +
+  ' at the end of that line. It is stripped and the chat is routed to the right team automatically. ' +
+  'If there is any chance they want to buy, quote or ask about the products or services, treat them as a customer and do not add the marker. Never use it together with ' +
+  HANDOFF_SENTINEL +
+  '.'
 
 /** Hard cap on the memory block, whatever the caller passes. */
 export const CUSTOMER_MEMORY_PROMPT_MAX_CHARS = 800
@@ -316,6 +355,7 @@ export function buildSystemPrompt(args: {
 
   if (mode === 'auto_reply') {
     parts.push(AUTO_REPLY_HANDOFF_GUIDANCE)
+    parts.push(AUTO_REPLY_NOT_LEAD_GUIDANCE)
 
     if (documents && documents.length > 0) {
       parts.push(

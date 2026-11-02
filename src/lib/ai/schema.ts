@@ -91,8 +91,13 @@ export function buildExtractionSchema(
       description:
         'True if the customer should be handed off to a human instead of continuing this collection (explicitly asked for a person, upset, or stuck off-topic).',
     },
+    not_lead: {
+      type: 'boolean',
+      description:
+        'True only if the customer is clearly not a potential buyer: looking for a job, an internship or to send a CV; a supplier offering something to the business; spam, a joke or nonsense; or an unrelated topic. Then reply_text is one short courtesy line.',
+    },
   }
-  const required = ['extracted', 'reply_text', 'done', 'handoff']
+  const required = ['extracted', 'reply_text', 'done', 'handoff', 'not_lead']
 
   // Only present in the schema at all when the node actually offers
   // documents — an empty list means the model is never even given the
@@ -176,7 +181,8 @@ export function buildExtractionPrompt(args: {
       'Set `done: true` only once every required field has a real value; in that case `reply_text` should be a short closing confirmation, not another question. ' +
       "Set `handoff: true` only if the customer asks for a human (or accepts your offer to pass them to one), raises a serious complaint or is clearly angry, or the conversation keeps getting stuck on the same point after you already tried. " +
         'Mild impatience ("ya te dije", "otra vez") is not a reason: apologize briefly and continue from what they already gave, without asking for it again. ' +
-        'If they ask something you do not know, say so honestly in `reply_text` and offer to pass them to an advisor — never invent it.',
+        'If they ask something you do not know, say so honestly in `reply_text` and offer to pass them to an advisor — never invent it. ' +
+        'Set `not_lead: true` (and `handoff: false`, `done: false`) only when the customer is clearly NOT a potential buyer — looking for a job, an internship or to send their CV; a supplier offering products or services to the business; spam, advertising, a joke or nonsense; or a topic unrelated to buying — and then make `reply_text` one short, polite line (no questions, never promise that an advisor or anyone will contact them); the chat is routed to the right team automatically. If there is any chance they want to buy or quote, keep `not_lead: false`.',
   )
 
   if (documents && documents.length > 0) {

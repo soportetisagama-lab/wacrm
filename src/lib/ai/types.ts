@@ -131,6 +131,11 @@ export interface GenerateResult {
   text: string
   /** True when the model asked to hand off to a human (auto-reply mode). */
   handoff: boolean
+  /** True when the customer is not a potential buyer (job seeker,
+   *  supplier, spam, other topic): `[[NO_LEAD]]` or a reply that says
+   *  so (`looksLikeNotLeadReply`). The caller sends `text` and hands
+   *  off so the derivation routes it. Absent = false. */
+  notLead?: boolean
   /** The document key the model asked to send (`[[SEND_DOCUMENT:key]]`),
    *  or null. Always null when no `documents` were passed to
    *  `parseGeneration` — there's nothing to validate the key against.
