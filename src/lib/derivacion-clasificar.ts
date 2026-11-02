@@ -85,7 +85,7 @@ export function buildClasificarPrompt(businessContext?: string | null): string {
       '- "lead": el cliente quiere comprar, cotizar o consulta por productos o servicios de la empresa para Perú.\n' +
       '- "atc" con motivo:\n' +
       '  - "trabajo": busca empleo, prácticas o quiere dejar su CV.\n' +
-      '  - "spam": spam, publicidad, cadenas o mensajes sin sentido.\n' +
+      '  - "spam": spam, publicidad, cadenas, bromas, niños jugando con el celular o mensajes y audios sin sentido.\n' +
       '  - "proveedor": ofrece productos o servicios a la empresa (vende, no compra).\n' +
       '  - "otro_tema": habla de otro tema y no quiere comprar ni cotizar.\n' +
       '  - "extranjero": el número es extranjero Y el pedido no es para Perú (entrega o uso fuera de Perú).\n' +
@@ -142,7 +142,8 @@ async function cargarLineas(db: SupabaseClient, conversationId: string, limit: n
   return rows
     .reverse()
     .map((r): LineaConversacion | null => {
-      const texto = (r.content_text ?? r.transcript ?? '').trim()
+      // Audios: el texto está en `transcript` (content_text puede venir vacío).
+      const texto = (r.content_text?.trim() || r.transcript?.trim() || '').trim()
       if (!texto) return null
       const de = r.sender_type === 'customer' ? 'Cliente' : r.sender_type === 'agent' ? 'Asesor' : 'Bot'
       return { de, texto }
