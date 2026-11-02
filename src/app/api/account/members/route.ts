@@ -26,6 +26,8 @@ interface ProfileRow {
   account_role: string;
   status: string | null;
   created_at: string;
+  /** Migration 088; absent before it runs. */
+  xlr8_user_id?: number | null;
 }
 
 export async function GET() {
@@ -36,7 +38,9 @@ export async function GET() {
     // the caller's, so this query is naturally account-scoped.
     const { data, error } = await ctx.supabase
       .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, status, created_at")
+      // `*` so the roster keeps loading before migration 088 adds
+      // xlr8_user_id (naming a missing column would fail the query).
+      .select("*")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -66,6 +70,8 @@ export async function GET() {
           // defensively in case a row predates the backfill.
           status: row.status === "inactive" ? "inactive" : "active",
           joined_at: row.created_at,
+          // Admin+ only, like the email.
+          xlr8_user_id: canSeeEmails ? (row.xlr8_user_id ?? null) : null,
         },
       ];
     });

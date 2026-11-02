@@ -1689,6 +1689,12 @@
       "roleUpdateFailed": "Failed to update role",
       "nameUpdateFailed": "Failed to update name",
       "statusUpdateFailed": "Failed to update status",
+      "xlr8Label": "XLR8 ID",
+      "xlr8Tooltip": "User ID in XLR8 (optional). Used to assign automatically derived leads.",
+      "xlr8Invalid": "The XLR8 ID must be a positive whole number",
+      "xlr8Duplicate": "That XLR8 ID is already assigned to another member",
+      "xlr8UpdateFailed": "Failed to save the XLR8 ID",
+      "xlr8UpdatedToast": "XLR8 ID saved for {name}",
       "passwordUpdateFailed": "Failed to change password",
       "removeFailed": "Failed to remove member",
       "revokeFailed": "Failed to revoke invitation"

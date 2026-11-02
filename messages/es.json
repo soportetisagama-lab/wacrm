@@ -1689,6 +1689,12 @@
       "roleUpdateFailed": "Error al actualizar el rol",
       "nameUpdateFailed": "Error al actualizar el nombre",
       "statusUpdateFailed": "Error al actualizar el estado",
+      "xlr8Label": "ID XLR8",
+      "xlr8Tooltip": "ID del usuario en XLR8 (opcional). Se usa para asignar los leads derivados automáticamente.",
+      "xlr8Invalid": "El ID XLR8 debe ser un número entero positivo",
+      "xlr8Duplicate": "Ese ID XLR8 ya está asignado a otro miembro",
+      "xlr8UpdateFailed": "Error al guardar el ID XLR8",
+      "xlr8UpdatedToast": "ID XLR8 de {name} guardado",
       "passwordUpdateFailed": "Error al cambiar la contraseña",
       "removeFailed": "Error al quitar al miembro",
       "revokeFailed": "Error al revocar la invitación"
