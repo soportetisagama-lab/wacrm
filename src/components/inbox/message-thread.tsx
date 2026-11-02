@@ -63,7 +63,6 @@ import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
 import { ChannelIcon, socialIdentity } from '@/components/channels/channel-badge';
 import { CHANNEL_LABEL, channelOf } from '@/lib/channels/types';
-import { AsesoresDisponibles } from './asesores-disponibles';
 import { LineTransferButton } from './line-transfer-button';
 import { CallContactButton, callContact } from '@/components/calls/call-contact-button';
 import { MobileThreadTags } from './mobile-thread-tags';
@@ -1394,9 +1393,6 @@ export function MessageThread({
               <p className="overflow-hidden text-[clamp(11px,3.4vw,13px)] whitespace-nowrap text-white/85">
                 {contactSubtitle ?? (contact.phone || contact.whatsapp_username || t('noPhoneNumber'))}
               </p>
-              {!isSocial && (
-                <AsesoresDisponibles className="block max-w-full text-[clamp(10px,3.1vw,12px)] text-white/85" />
-              )}
             </div>
             {!isSocial && (
             <button
@@ -1511,17 +1507,8 @@ export function MessageThread({
               <ChannelIcon channel={channel} size={16} />
               <span className="truncate">{displayName}</span>
             </h2>
-            <p
-              className={cn(
-                'text-muted-foreground flex min-w-0 items-center gap-1.5',
-                embedded ? 'text-sm' : 'text-xs'
-              )}
-            >
-              <span className="truncate">
-                {contactSubtitle ?? (contact.phone || contact.whatsapp_username || t('noPhoneNumber'))}
-              </span>
-              {/* Asesores para la derivación automática XLR8 (solo Administrador y ATC). */}
-              {!isSocial && <AsesoresDisponibles className="before:mr-0.5 before:content-['·']" />}
+            <p className={cn('text-muted-foreground truncate', embedded ? 'text-sm' : 'text-xs')}>
+              {contactSubtitle ?? (contact.phone || contact.whatsapp_username || t('noPhoneNumber'))}
             </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
