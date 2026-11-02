@@ -49,7 +49,7 @@ describe('buildExtractionSchema', () => {
 
   it('carries the control fields (reply_text, done, handoff) as top-level required', () => {
     const schema = buildExtractionSchema(FIELDS) as { required: string[] }
-    expect(schema.required).toEqual(['extracted', 'reply_text', 'done', 'handoff'])
+    expect(schema.required).toEqual(['extracted', 'reply_text', 'done', 'handoff', 'not_lead'])
   })
 
   it('is additionalProperties:false at every level (required for OpenAI strict mode)', () => {

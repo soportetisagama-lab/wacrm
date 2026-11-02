@@ -446,7 +446,11 @@ export type CollectAiHandoffReason =
   | "empty_reply"
   /** The model kept asking the very same question (see
    *  COLLECT_AI_LAST_QUESTION_VAR) — the customer isn't answering it. */
-  | "repeated_question";
+  | "repeated_question"
+  /** The customer is not a potential buyer (job seeker, supplier, spam,
+   *  other topic): courtesy line + handoff, so the derivation
+   *  (lib/derivacion-auto.ts) classifies it and routes it to ATC. */
+  | "not_lead";
 
 export type CollectAiOutcome =
   | { kind: "handoff"; reason: CollectAiHandoffReason; message?: string }
@@ -507,6 +511,13 @@ export function decideCollectAiOutcome(args: {
     return {
       kind: "handoff",
       reason: "model_handoff",
+      message: result.replyText.trim() || undefined,
+    };
+  }
+  if (result.notLead) {
+    return {
+      kind: "handoff",
+      reason: "not_lead",
       message: result.replyText.trim() || undefined,
     };
   }
@@ -1659,6 +1670,7 @@ async function handOffFromCollectAi(
   reason: CollectAiHandoffReason,
   message?: string,
 ): Promise<{ outcome: "advanced" | "handed_off" | "completed" }> {
+  if (reason === "not_lead") return handOffNotLeadFromCollectAi(db, run, node, cfg, message);
   // A handoff that gathered NOTHING (the customer tapped "asesor" and
   // the model gave up on the opening call, or they insisted before
   // answering) must not claim "ya tengo tu información". On the opening
@@ -1842,6 +1854,59 @@ async function handOffFromCollectAi(
     "handed_off",
     isDuplicate ? `collect_ai_${reason}_duplicate` : `collect_ai_${reason}`,
   );
+  return { outcome: "handed_off" };
+}
+
+/** Courtesy line when the model flagged `not_lead` without a reply. */
+export const COLLECT_AI_NOT_LEAD_TEXT = "Gracias por escribirnos. Este WhatsApp es solo para consultas comerciales.";
+
+/**
+ * collect_ai exit for a customer who is not a potential buyer: only the
+ * model's courtesy line (never the advisor closing, the phone ask or a
+ * handoff node, which would promise a callback), then the conversation
+ * is marked pending — markConversationPendingHandoff schedules the
+ * derivation once per conversation, and its classifier decides lead vs
+ * ATC. A repeat within the duplicate window sends nothing again.
+ */
+async function handOffNotLeadFromCollectAi(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  cfg: CollectAiNodeConfig,
+  message?: string,
+): Promise<{ outcome: "handed_off" }> {
+  const isDuplicate = run.conversation_id ? await wasHandedOffRecently(db, run.conversation_id) : false;
+  if (run.conversation_id && run.contact_id && !isDuplicate) {
+    try {
+      await engineSendText({
+        accountId: run.account_id,
+        userId: run.user_id,
+        conversationId: run.conversation_id,
+        contactId: run.contact_id,
+        text: message?.trim() || COLLECT_AI_NOT_LEAD_TEXT,
+        aiGenerated: Boolean(message?.trim()),
+      });
+    } catch (err) {
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "collect_ai_handoff_message_send_failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  await logEvent(db, run.id, "handoff", node.node_key, {
+    node_type: "collect_ai",
+    reason: "not_lead",
+    collected_keys: collectAiCollectedKeys(cfg.fields, run.vars),
+    ...(isDuplicate ? { duplicate: true } : {}),
+  });
+  if (run.conversation_id) {
+    await markConversationPendingHandoff(
+      db,
+      run.conversation_id,
+      `🤖 El asistente derivó la conversación. Motivo: ${collectAiHandoffReasonText("not_lead", cfg.fields, run.vars)}`,
+    );
+  }
+  await endRun(db, run.id, "handed_off", isDuplicate ? "collect_ai_not_lead_duplicate" : "collect_ai_not_lead");
   return { outcome: "handed_off" };
 }
 
@@ -2107,6 +2172,8 @@ export function collectAiHandoffReasonText(
       return `El asistente no generó una respuesta${which}.`;
     case "provider_error":
       return "El asistente IA no estuvo disponible.";
+    case "not_lead":
+      return "No parece un cliente (busca trabajo, proveedor, spam u otro tema).";
   }
 }
 

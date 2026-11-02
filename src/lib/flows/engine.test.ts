@@ -1701,6 +1701,7 @@ function extractResult(overrides: Partial<{
   replyText: string;
   done: boolean;
   handoff: boolean;
+  notLead: boolean;
   sendDocument: string | null;
 }> = {}) {
   return {
@@ -1715,6 +1716,28 @@ function extractResult(overrides: Partial<{
 }
 
 describe("decideCollectAiOutcome", () => {
+  it("handoff/not_lead when the customer is not a potential buyer, forwarding the courtesy line", () => {
+    expect(
+      decideCollectAiOutcome({
+        result: extractResult({ notLead: true, replyText: "Gracias por escribirnos. Las vacantes se publican en nuestras redes." }),
+        fields: FIELDS,
+        vars: {},
+        turnCount: 1,
+        maxTurns: 6,
+      }),
+    ).toEqual({
+      kind: "handoff",
+      reason: "not_lead",
+      message: "Gracias por escribirnos. Las vacantes se publican en nuestras redes.",
+    });
+  });
+
+  it("not_lead reason text is neutral Spanish for the advisor note", () => {
+    expect(collectAiHandoffReasonText("not_lead", FIELDS, {})).toBe(
+      "No parece un cliente (busca trabajo, proveedor, spam u otro tema).",
+    );
+  });
+
   it("handoff/provider_error when result is null (network/timeout/invalid key/malformed extraction)", () => {
     expect(
       decideCollectAiOutcome({ result: null, fields: FIELDS, vars: {}, turnCount: 1, maxTurns: 6 }),
