@@ -21,6 +21,7 @@ import { internalCronState, isAuthorizedCronSecret } from '@/lib/cron/internal'
 import { runXlr8SyncIfDue } from '@/lib/xlr8/sync'
 import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/memory'
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
+import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
 const XLR8_SYNC_EVERY_MS = 5 * 60_000
@@ -121,6 +122,11 @@ async function runFlowsCron(): Promise<Response> {
   // Nightly learning (self-review, exam, learning from advisors, daily
   // report) at 03:00 Lima, once per day; cheap no-op otherwise.
   void runNightlyLearningIfDue(admin, now)
+
+  // Derivación automática (lib/derivacion-auto.ts): traspasos que
+  // quedaron en cola fuera de horario se derivan al abrir el horario,
+  // el más antiguo primero. Fire-and-forget; never throws.
+  void runColaDerivacionSiToca(admin, now)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
