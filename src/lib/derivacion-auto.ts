@@ -2,6 +2,13 @@ import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
+import {
+  CLASIFICACION_LEAD,
+  MOTIVO_ATC_TEXTO,
+  clasificadorOpenAi,
+  type Clasificacion,
+  type ClasificadorDerivacion,
+} from '@/lib/derivacion-clasificar'
 
 // ============================================================
 // Derivación automática de leads de WhatsApp al sistema PHP XLR8.
@@ -24,6 +31,11 @@ import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard
 // (`conversations.derivacion_pendiente_at`, migración 089) y el cron de
 // flujos (/api/flows/cron, cada minuto) la deriva en cuanto abre el
 // horario, la más antigua primero (`procesarColaDerivacion`).
+//
+// Clasificación (lib/derivacion-clasificar.ts): justo antes de llamar al
+// PHP, la IA (solo OpenAI) decide si es un lead real (destino ASESOR) o
+// un caso para ATC (trabajo, spam, proveedor, otro tema, extranjero con
+// pedido fuera de Perú). Si la IA falla, va como lead.
 // ============================================================
 
 /**
@@ -100,6 +112,12 @@ export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO
   if (dia === undefined) return false
   const min = Number(get('hour')) * 60 + Number(get('minute'))
   return enTramo(min, horario.jornada[dia]) && !enTramo(min, horario.almuerzo)
+}
+
+/** True si el número no es peruano (ni 9 dígitos ni 51 + 9 dígitos). Solo contexto para la IA. */
+export function esNumeroExtranjero(phone: string | null | undefined): boolean {
+  const digits = (phone ?? '').replace(/\D/g, '')
+  return digits.length > 0 && celularNueveDigitos(digits) === null
 }
 
 /** Celular peruano en 9 dígitos sin el 51, o null si no lo es. */
@@ -203,6 +221,23 @@ export interface DerivacionDeps {
   /** Hora actual (inyectable en los tests). */
   now?: Date
   horario?: HorarioDerivacion
+  /** Clasificador lead/ATC; sin él, todo va como lead. */
+  clasificar?: ClasificadorDerivacion
+}
+
+async function clasificarSeguro(
+  deps: DerivacionDeps,
+  input: Parameters<ClasificadorDerivacion>[0],
+): Promise<Clasificacion> {
+  if (!deps.clasificar) return CLASIFICACION_LEAD
+  try {
+    return await deps.clasificar(input)
+  } catch (err) {
+    console.error(LOG, 'clasificación falló; va como lead:', err instanceof Error ? err.message : err, {
+      conversationId: input.conversationId,
+    })
+    return CLASIFICACION_LEAD
+  }
 }
 
 /**
@@ -245,6 +280,12 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
     if (!(await store.claim(conversationId))) return 'ya_derivada'
 
     const codigoAnuncio = await store.loadAdId(conversationId).catch(() => '')
+    const clasificacion = await clasificarSeguro(deps, {
+      accountId: conv.account_id,
+      conversationId,
+      numeroExtranjero: esNumeroExtranjero(contact?.phone),
+    })
+    const motivoAtc = clasificacion.tipo === 'atc' ? MOTIVO_ATC_TEXTO[clasificacion.motivo] : ''
     let body: RespuestaPhp
     try {
       const res = await fetchFn(env.url, {
@@ -262,6 +303,8 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
           nombre: contact?.name?.trim() ?? '',
           codigo_anuncio: codigoAnuncio,
           conversation_id: conversationId,
+          destino: clasificacion.tipo === 'atc' ? 'ATC' : 'ASESOR',
+          motivo_atc: motivoAtc,
         }),
         signal: AbortSignal.timeout(DERIVAR_TIMEOUT_MS),
         cache: 'no-store',
@@ -293,8 +336,11 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
       ? await store.findAgentByXlr8(conv.account_id, asesorId)
       : null
 
+    const nota = motivoAtc
+      ? `Derivado automáticamente a ATC (${motivoAtc})`
+      : `Derivado automáticamente a ${nombre} (XLR8)`
     if (userId && (await store.assign(conversationId, userId))) {
-      await store.appendNote(conversationId, `Derivado automáticamente a ${nombre} (XLR8)`)
+      await store.appendNote(conversationId, nota)
       return 'asignada'
     }
     console.error(LOG, `sin usuario del CRM con ID XLR8 ${String(body.asesor_id)}; queda sin asignar`, {
@@ -302,7 +348,7 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
     })
     await store.appendNote(
       conversationId,
-      `Derivado automáticamente a ${nombre} (XLR8). Sin usuario del CRM con ese ID XLR8: queda sin asignar.`,
+      `${nota}. Sin usuario del CRM con ese ID XLR8: queda sin asignar.`,
     )
     return 'sin_usuario'
   } catch (err) {
@@ -506,7 +552,7 @@ export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = ne
   if (colaEnCurso || !envListo(derivacionEnv()) || !dentroDeHorario(now)) return
   colaEnCurso = true
   try {
-    await procesarColaDerivacion({ store: supabaseDerivacionStore(db), now })
+    await procesarColaDerivacion({ store: supabaseDerivacionStore(db), now, clasificar: clasificadorOpenAi(db) })
   } catch (err) {
     console.error(LOG, err)
   } finally {
@@ -523,7 +569,7 @@ export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = ne
 export function programarDerivacionAuto(db: SupabaseClient, conversationId: string): void {
   if (!envListo(derivacionEnv())) return
   const task = () =>
-    derivarAuto(conversationId, { store: supabaseDerivacionStore(db) }).then(
+    derivarAuto(conversationId, { store: supabaseDerivacionStore(db), clasificar: clasificadorOpenAi(db) }).then(
       () => undefined,
       (err: unknown) => console.error(LOG, err),
     )
