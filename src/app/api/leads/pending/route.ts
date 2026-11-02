@@ -55,6 +55,9 @@ export async function GET(request: Request) {
     .from('conversations')
     .select('id, unread_count, last_message_at, contacts ( phone, name )')
     .eq('account_id', accountId)
+    // Only WhatsApp: Instagram/Messenger/TikTok contacts have no phone,
+    // so the PHP lead form can't register them.
+    .eq('channel', 'whatsapp')
     .in('status', ['open', 'pending'])
     .gt('unread_count', 0)
     .is('assigned_agent_id', null)
