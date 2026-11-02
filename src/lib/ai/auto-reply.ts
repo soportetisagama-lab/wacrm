@@ -3,7 +3,7 @@ import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
 import { programarDerivacionAuto } from '@/lib/derivacion-auto'
-import { AiError, type AiConfig } from './types'
+import { AiError, type AiConfig, type GenerateResult } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
@@ -996,7 +996,7 @@ export async function runAutoReplyNow(
       systemPrompt,
       messages,
       documents: config.documents,
-    }).catch((err: unknown) => {
+    }).catch((err: unknown): GenerateResult | null => {
       if (err instanceof AiError && err.code === 'empty_response') {
         console.error('[ai auto-reply] empty model response, handing off:', err.message)
         return { text: '', handoff: true, sendDocument: null, usage: null }
@@ -1021,6 +1021,11 @@ export async function runAutoReplyNow(
       return
     }
     const { text, handoff, sendDocument, usage } = generation
+    // Not a potential buyer (job seeker, supplier, spam, other topic):
+    // the courtesy line goes out and the chat is handed off right after,
+    // so the derivation classifier routes it (ATC). Not while a handoff
+    // waits for the number (heldQuestion) — that one is already going.
+    const notLead = generation.notLead === true && !heldQuestion
 
     // The model took a few seconds: if the conversation moved on meanwhile
     // (a menu tap, a flow message or handoff), this answer is stale and
@@ -1077,7 +1082,7 @@ export async function runAutoReplyNow(
     // file already went out — that's the whole answer, not a handoff.
     if (!handoff && !text && documentSent) return
 
-    if (handoff || !text) {
+    if (handoff || (!text && !notLead)) {
       // The model can't (or shouldn't) answer — stop auto-replying on
       // this thread and hand it to a human. The prompt instructs the
       // model to reply with EXACTLY the [[HANDOFF]] sentinel and
@@ -1157,7 +1162,7 @@ export async function runAutoReplyNow(
     // the customer never sees the hint said twice in one message.
     // Nor when the menu was already sent in this chat — the customer has
     // seen it and answered in their own words.
-    let replyText = text
+    let replyText = text || NOT_LEAD_FALLBACK_TEXT
     if (noAdvisorPromise && phoneState) {
       const filtered = filterAdvisorPromises(text, {
         hasPhone: false,
@@ -1176,7 +1181,7 @@ export async function runAutoReplyNow(
     }
     const mentionsMenuAlready = heldQuestion !== null || /men[uú]/i.test(replyText)
     const outgoingText =
-      conv.ai_reply_count === 0 && !mentionsMenuAlready && !(await menuAlreadySent(db, conversationId))
+      conv.ai_reply_count === 0 && !notLead && !mentionsMenuAlready && !(await menuAlreadySent(db, conversationId))
         ? `${replyText}${FIRST_REPLY_MENU_HINT}`
         : replyText
 
@@ -1188,10 +1193,35 @@ export async function runAutoReplyNow(
       text: outgoingText,
       aiGenerated: true,
     })
+
+    // Once per conversation: a thread already handed off was already
+    // derived (programarDerivacionAuto is also idempotent on its own).
+    if (notLead && !conv.ai_autoreply_disabled) {
+      await handOffToHuman(db, {
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        assignedAgentId: conv.assigned_agent_id,
+        summary: NOT_LEAD_SUMMARY,
+        // The courtesy line above is the only message: no advisor promise, no phone ask.
+        notifyCustomer: false,
+        brief: true,
+      })
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
 }
+
+/** Handoff note when the assistant saw that the chat is not a potential
+ *  buyer; the derivation (lib/derivacion-auto.ts) confirms lead vs ATC. */
+export const NOT_LEAD_SUMMARY =
+  '🤖 El asistente respondió y derivó: no parece un cliente (busca trabajo, proveedor, spam u otro tema).'
+
+/** Courtesy line when the model only sent the not-lead marker. */
+export const NOT_LEAD_FALLBACK_TEXT = 'Gracias por escribirnos. Este WhatsApp es solo para consultas comerciales.'
 
 /** The same automatic reply this many times in a row means the customer
  *  is not writing anything the assistant can act on. */

@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   getMediaUrl: vi.fn(),
   downloadMedia: vi.fn(),
   decrypt: vi.fn(),
+  programarDerivacionAuto: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -58,6 +59,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
+vi.mock('@/lib/derivacion-auto', () => ({ programarDerivacionAuto: h.programarDerivacionAuto }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./business-info', () => ({ loadBusinessInfo: async () => null }))
@@ -604,6 +606,32 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
       expect.objectContaining({ text: expect.stringMatching(/asesor del equipo/) }),
     )
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('dispatchInboundToAiReply — not a lead (job seeker, supplier, spam)', () => {
+  it('sends the courtesy line, then hands off and schedules the derivation once', async () => {
+    h.generateReply.mockResolvedValue({
+      text: 'Gracias por escribirnos. Las vacantes se publican en nuestras redes oficiales.',
+      handoff: false,
+      notLead: true,
+      sendDocument: null,
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    const sent = h.engineSendText.mock.calls[0][0] as { text: string }
+    // Only the courtesy line: no menu hint, no advisor closing.
+    expect(sent.text).toBe('Gracias por escribirnos. Las vacantes se publican en nuestras redes oficiales.')
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true, status: 'pending' })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain('no parece un cliente')
+    expect(h.programarDerivacionAuto).toHaveBeenCalledTimes(1)
+    expect(h.programarDerivacionAuto).toHaveBeenCalledWith(expect.anything(), 'conv-1')
+  })
+
+  it('a normal reply neither hands off nor derives', async () => {
+    h.generateReply.mockResolvedValue({ text: '¿En qué ciudad?', handoff: false, sendDocument: null })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.programarDerivacionAuto).not.toHaveBeenCalled()
   })
 })
 
