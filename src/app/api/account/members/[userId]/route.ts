@@ -1,7 +1,7 @@
 // ============================================================
 // /api/account/members/[userId]
 //
-//   PATCH  — change a member's role.   Admin+.
+//   PATCH  — change a member's role, name, status or ID XLR8.  Admin+.
 //   DELETE — remove a member.          Admin+.
 //
 // Both delegate to SECURITY DEFINER RPCs from migration 018:
@@ -32,6 +32,12 @@ function rpcErrorToResponse(err: PostgrestError): NextResponse {
   if (err.code === '42501') {
     return NextResponse.json({ error: err.message }, { status: 403 });
   }
+  if (err.code === '23505') {
+    return NextResponse.json(
+      { error: 'Ese ID XLR8 ya está asignado a otro miembro', code: 'xlr8_duplicate' },
+      { status: 409 }
+    );
+  }
   if (err.code === '22023') {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }
@@ -61,13 +67,15 @@ export async function PATCH(
       role?: unknown;
       full_name?: unknown;
       status?: unknown;
+      xlr8_user_id?: unknown;
     } | null;
 
     if (
       !body ||
       (body.role === undefined &&
         body.full_name === undefined &&
-        body.status === undefined)
+        body.status === undefined &&
+        body.xlr8_user_id === undefined)
     ) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
@@ -136,6 +144,24 @@ export async function PATCH(
       const { error } = await ctx.supabase.rpc('set_member_status', {
         p_user_id: userId,
         p_status: status,
+      });
+      if (error) return rpcErrorToResponse(error);
+    }
+
+    // ID XLR8 (lib/derivacion-auto.ts): positive integer or null to clear.
+    if (body.xlr8_user_id !== undefined) {
+      const raw = body.xlr8_user_id;
+      const xlr8 = raw === null || raw === '' ? null : Number(raw);
+      if (xlr8 !== null && (!Number.isInteger(xlr8) || xlr8 <= 0 || xlr8 > 2147483647)) {
+        return NextResponse.json(
+          { error: "'xlr8_user_id' must be a positive integer or null" },
+          { status: 400 }
+        );
+      }
+
+      const { error } = await ctx.supabase.rpc('set_member_xlr8_user_id', {
+        p_user_id: userId,
+        p_xlr8_user_id: xlr8,
       });
       if (error) return rpcErrorToResponse(error);
     }

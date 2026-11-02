@@ -78,6 +78,8 @@ export interface AccountMember {
    *  (see the login page's post-sign-in status check). */
   status: 'active' | 'inactive';
   joined_at: string;
+  /** ID of the user in XLR8 (auto-derivation). Only sent to admin+. */
+  xlr8_user_id: number | null;
 }
 
 /**

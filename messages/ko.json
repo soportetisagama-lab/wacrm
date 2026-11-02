@@ -1693,6 +1693,12 @@
       "roleUpdateFailed": "역할을 변경하지 못했습니다",
       "nameUpdateFailed": "이름을 변경하지 못했습니다",
       "statusUpdateFailed": "상태를 변경하지 못했습니다",
+      "xlr8Label": "XLR8 ID",
+      "xlr8Tooltip": "XLR8 사용자 ID(선택). 자동 배정 리드에 사용됩니다.",
+      "xlr8Invalid": "XLR8 ID는 양의 정수여야 합니다",
+      "xlr8Duplicate": "이미 다른 멤버에게 배정된 XLR8 ID입니다",
+      "xlr8UpdateFailed": "XLR8 ID를 저장하지 못했습니다",
+      "xlr8UpdatedToast": "{name}의 XLR8 ID를 저장했습니다",
       "passwordUpdateFailed": "비밀번호를 변경하지 못했습니다",
       "removeFailed": "멤버를 제거하지 못했습니다",
       "revokeFailed": "초대를 취소하지 못했습니다"
