@@ -6,7 +6,13 @@ import {
   type ChatMessage,
   type GenerateResult,
 } from './types'
-import { HANDOFF_SENTINEL, SEND_DOCUMENT_SENTINEL_RE, aiRequestTimeoutMs } from './defaults'
+import {
+  HANDOFF_SENTINEL,
+  NOT_LEAD_SENTINEL,
+  SEND_DOCUMENT_SENTINEL_RE,
+  aiRequestTimeoutMs,
+  looksLikeNotLeadReply,
+} from './defaults'
 import { stripContextAnnotations } from './annotations'
 import {
   buildExtractionPrompt,
@@ -92,7 +98,13 @@ export function parseGeneration(
   // Transcript notes ("[Asesor]", "[Se envió: …]") the model copied are
   // stripped too — they're for the model, never for the customer.
   const text = stripContextAnnotations(
-    raw.split(HANDOFF_SENTINEL).join('').replace(SEND_DOCUMENT_SENTINEL_RE, '').trim(),
+    raw
+      .split(HANDOFF_SENTINEL)
+      .join('')
+      .split(NOT_LEAD_SENTINEL)
+      .join('')
+      .replace(SEND_DOCUMENT_SENTINEL_RE, '')
+      .trim(),
   ).trim()
   // The model "thought out loud" instead of replying (observed: an
   // English monologue ending in "Handoff." without the sentinel) —
@@ -100,7 +112,9 @@ export function parseGeneration(
   if (looksLikeLeakedReasoning(text)) {
     return { text: '', handoff: true, sendDocument, usage }
   }
-  return { text, handoff, sendDocument, usage }
+  // A real handoff wins: the advisor closing line goes out instead.
+  const notLead = !handoff && (raw.includes(NOT_LEAD_SENTINEL) || looksLikeNotLeadReply(text))
+  return { text, handoff, ...(notLead ? { notLead: true } : {}), sendDocument, usage }
 }
 
 /**
@@ -153,6 +167,10 @@ export interface ExtractResult {
   done: boolean
   /** True when the model asked to hand off to a human. */
   handoff: boolean
+  /** True when the customer is not a potential buyer (job seeker,
+   *  supplier, spam, other topic): `replyText` is a courtesy line and
+   *  the engine hands off so the derivation routes it. Absent = false. */
+  notLead?: boolean
   /** The document key the model asked to send, or null. Always null
    *  when `documents` was empty/omitted — there's no schema slot for
    *  the model to have set in the first place. Validated against the
@@ -255,12 +273,19 @@ export function parseExtraction(
   // Same guard as parseGeneration: deliberation in `reply_text` is
   // dropped and turned into a handoff instead of reaching the customer.
   const leaked = looksLikeLeakedReasoning(replyText)
+  // A real handoff or a completed collection wins over the not-lead exit.
+  const notLead =
+    !leaked &&
+    obj.handoff !== true &&
+    obj.done !== true &&
+    (obj.not_lead === true || looksLikeNotLeadReply(replyText))
 
   return {
     fields: extracted,
     replyText: leaked ? '' : replyText,
     done: leaked ? false : obj.done === true,
     handoff: leaked || obj.handoff === true,
+    ...(notLead ? { notLead: true } : {}),
     sendDocument,
     usage,
   }

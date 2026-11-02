@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt, HANDOFF_SENTINEL, NO_PRICES_GUIDANCE, REPLY_LANGUAGE_GUIDANCE } from './defaults'
+import {
+  buildSystemPrompt,
+  HANDOFF_SENTINEL,
+  looksLikeNotLeadReply,
+  NO_PRICES_GUIDANCE,
+  NOT_LEAD_SENTINEL,
+  REPLY_LANGUAGE_GUIDANCE,
+} from './defaults'
 import { buildExtractionPrompt } from './schema'
 import { buildNudgePrompt } from './nudge'
 import type { AiDocument } from './types'
@@ -144,5 +151,29 @@ describe('reply language — Spanish by default, audio never switches it', () =>
     expect(extraction).toContain('reply in neutral Spanish')
     expect(extraction).toContain('never because of an audio transcription')
     expect(extraction).not.toContain('same language the customer is writing in')
+  })
+})
+
+describe('not a lead — job seekers, suppliers, spam are routed, not kept by the bot', () => {
+  it('auto-reply teaches the [[NO_LEAD]] marker; drafts do not', () => {
+    expect(buildSystemPrompt({ userPrompt: null, mode: 'auto_reply' })).toContain(NOT_LEAD_SENTINEL)
+    expect(buildSystemPrompt({ userPrompt: null, mode: 'draft' })).not.toContain(NOT_LEAD_SENTINEL)
+  })
+
+  it('collect_ai teaches not_lead', () => {
+    expect(buildExtractionPrompt({ fields: [], knownValues: {} })).toContain('not_lead')
+  })
+
+  it('detects replies that turn the customer away from sales', () => {
+    expect(looksLikeNotLeadReply('Las vacantes se publican en nuestras redes oficiales.')).toBe(true)
+    expect(looksLikeNotLeadReply('Puedes enviar tu currículum a nuestras redes.')).toBe(true)
+    expect(looksLikeNotLeadReply('Este WhatsApp es solo para consultas comerciales.')).toBe(true)
+    expect(looksLikeNotLeadReply('Por ahora no trabajamos con nuevos proveedores.')).toBe(true)
+  })
+
+  it('does not flag normal sales replies', () => {
+    expect(looksLikeNotLeadReply('¿En qué ciudad necesitas la mesa de trabajo?')).toBe(false)
+    expect(looksLikeNotLeadReply('Claro, fabricamos campanas extractoras a medida.')).toBe(false)
+    expect(looksLikeNotLeadReply('Un asesor te enviará la cotización.')).toBe(false)
   })
 })
