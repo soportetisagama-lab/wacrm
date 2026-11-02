@@ -61,6 +61,7 @@ import {
   findEntryFlowWithContext,
   normalizeQuestionText,
   collectAiHandoffReasonText,
+  buildCollectedFieldsBrief,
   dispatchInboundToFlows,
   startFlowRunAtNode,
 } from "./engine";
@@ -4653,5 +4654,106 @@ describe("photos on a menu and debounced collect_ai", () => {
 
     expect(result.consumed).toBe(true);
     expect(mockExtract).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildCollectedFieldsBrief (advisor brief without AI)", () => {
+  const BRIEF_FIELDS: CollectAiNodeConfig["fields"] = [
+    { key: "espacio", label: "Espacio", required: true },
+    { key: "medidas", label: "Medidas", required: true },
+    { key: "negocio", label: "Negocio", required: false },
+  ];
+
+  it("lists the saved answers with the fields' labels, in field order", () => {
+    expect(
+      buildCollectedFieldsBrief(BRIEF_FIELDS, {
+        negocio: "pollería",
+        espacio: "cocina",
+        medidas: " 4x6 m ",
+      }),
+    ).toBe("📋 Espacio: cocina\nMedidas: 4x6 m\nNegocio: pollería");
+  });
+
+  it("skips unanswered/blank/non-string values and returns null when nothing was answered", () => {
+    expect(buildCollectedFieldsBrief(BRIEF_FIELDS, { espacio: "  ", medidas: 3 })).toBeNull();
+    expect(buildCollectedFieldsBrief(BRIEF_FIELDS, { medidas: "2 m\n x 3 m" })).toBe(
+      "📋 Medidas: 2 m x 3 m",
+    );
+  });
+
+  it("does not repeat a field shared by two collect_ai nodes", () => {
+    expect(
+      buildCollectedFieldsBrief([...BRIEF_FIELDS, BRIEF_FIELDS[0]], { espacio: "barra" }),
+    ).toBe("📋 Espacio: barra");
+  });
+});
+
+describe("handoff note keeps the customer's answers when the AI is unavailable", () => {
+  const pendingSummary = (updates: { table: string; payload: Record<string, unknown> }[]) =>
+    updates.find((u) => u.table === "conversations" && u.payload.status === "pending")?.payload
+      .ai_handoff_summary as string | undefined;
+
+  it("collect_ai terminal handoff (provider failure): the note carries the 📋 brief and the error code is logged", async () => {
+    const { db, updates, inserts } = makeFakeDb({ contactPhone: "+51999999999" });
+    const run = makeRun({ vars: { equipos: "góndolas", ciudad: "Lima", ...NO_AI_FORM_ANSWERED } });
+    const node = makeNode({ config: collectAiConfig() });
+    mockExtract.mockRejectedValue(
+      new AiError("OpenAI API error (429): secret detail", { code: "rate_limited", status: 429 }),
+    );
+
+    const outcome = await handleCollectAiReply(db, run, node, new Map());
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    expect(pendingSummary(updates)).toContain("📋 Equipos: góndolas\nCiudad: Lima");
+    const errorEvent = inserts.find(
+      (i) =>
+        i.table === "flow_run_events" &&
+        i.payload.event_type === "error" &&
+        (i.payload.payload as { reason?: string }).reason === "collect_ai_provider_error",
+    );
+    expect(errorEvent?.payload.payload).toEqual({
+      reason: "collect_ai_provider_error",
+      ai_error_code: "rate_limited",
+      ai_error_status: 429,
+    });
+    expect(JSON.stringify(errorEvent?.payload)).not.toContain("secret detail");
+  });
+
+  it("collect_ai → handoff node: the handoff node's note carries the 📋 brief", async () => {
+    const { db, updates } = makeFakeDb({ contactPhone: "+51999999999" });
+    const node = makeNode({ config: collectAiConfig({ max_turns: 6, handoff_node_key: "human" }) });
+    const handoffNode = makeNode({
+      node_key: "human",
+      node_type: "handoff",
+      config: { note: "Cotización" },
+    });
+    const run = makeRun({ ai_turn_count: 6, vars: ONE_FIELD_COLLECTED });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Y la ciudad?" }));
+
+    const outcome = await handleCollectAiReply(
+      db,
+      run,
+      node,
+      new Map([
+        ["collect", node],
+        ["human", handoffNode],
+      ]),
+    );
+
+    expect(outcome).toEqual({ outcome: "handed_off" });
+    const summary = pendingSummary(updates);
+    expect(summary).toMatch(/^🤖 El bot derivó la conversación a un asesor: /);
+    expect(summary).toContain("\n📋 Equipos: góndolas");
+  });
+
+  it("no answers saved: no empty brief is added", async () => {
+    const { db, updates } = makeFakeDb({ contactPhone: "+51999999999" });
+    const run = makeRun({ ai_turn_count: 6, vars: { [NO_AI_FORM_VAR]: NO_AI_FORM_ANSWERED[NO_AI_FORM_VAR] } });
+    const node = makeNode({ config: collectAiConfig({ max_turns: 6 }) });
+    mockExtract.mockResolvedValue(extractResult({ replyText: "¿Algo más?" }));
+
+    await handleCollectAiReply(db, run, node, new Map());
+
+    expect(pendingSummary(updates) ?? "").not.toContain("📋");
   });
 });
