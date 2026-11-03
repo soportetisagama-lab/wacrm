@@ -1035,7 +1035,9 @@
         "toastDone": "Envío reanudado: {sent} enviados.",
         "toastDoneWithFailures": "Envío reanudado: {sent} enviados y {failed} fallidos. Revisa los errores en la tabla.",
         "toastNothing": "No quedaban destinatarios pendientes.",
-        "toastError": "No se pudo reanudar el envío: {error}"
+        "toastError": "No se pudo reanudar el envío: {error}",
+        "checkingMedia": "Revisando la cabecera de la plantilla…",
+        "mediaNeeded": "Esta plantilla lleva imagen, video o documento en la cabecera y no hay una URL guardada. Ingresa la misma que usaste en el envío original."
       }
     },
     "new": {
@@ -1106,6 +1108,9 @@
         "headerImageDesc": "Esta plantilla requiere una imagen de encabezado.",
         "imageUrl": "URL de la imagen",
         "imageUrlPlaceholder": "https://ejemplo.com/imagen.jpg",
+        "mediaMissing": "Esta plantilla necesita una URL de imagen para enviarse.",
+        "mediaInvalid": "Ingresa una URL http(s) válida.",
+        "headerPreviewAlt": "Vista previa del encabezado",
         "variables": "Variables",
         "varDesc": "Define valores para {{name}}",
         "type": "Tipo",
