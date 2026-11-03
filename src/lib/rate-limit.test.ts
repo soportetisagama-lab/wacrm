@@ -98,7 +98,8 @@ describe("RATE_LIMITS presets", () => {
     __resetRateLimitForTests();
     // Importing here so the presets stay close to their assertions.
     const { RATE_LIMITS } = await import("./rate-limit");
-    expect(RATE_LIMITS.send.limit).toBeGreaterThan(RATE_LIMITS.broadcast.limit);
+    // The broadcast wizard sends ~1 call/s (batches of 10): it must fit.
+    expect(RATE_LIMITS.broadcast.limit).toBeGreaterThanOrEqual(60);
     expect(RATE_LIMITS.send.windowMs).toBe(60_000);
     expect(RATE_LIMITS.broadcast.windowMs).toBe(60_000);
   });
