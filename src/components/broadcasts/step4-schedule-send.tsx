@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/dialog';
 import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import type { BroadcastSendStats } from '@/hooks/use-broadcast-sending';
 import { SendProgressPanel } from '@/components/broadcasts/send-progress-panel';
 
 interface AudienceConfig {
@@ -38,7 +37,6 @@ interface Step4Props {
   onBack: () => void;
   isProcessing: boolean;
   progress: number;
-  stats?: BroadcastSendStats;
 }
 
 export function Step4ScheduleSend({
@@ -51,7 +49,6 @@ export function Step4ScheduleSend({
   onBack,
   isProcessing,
   progress,
-  stats,
 }: Step4Props) {
   const t = useTranslations('Broadcasts.wizard');
   const [showConfirm, setShowConfirm] = useState(false);
@@ -143,7 +140,7 @@ export function Step4ScheduleSend({
       </div>
 
       {/* Processing overlay */}
-      <SendProgressPanel isProcessing={isProcessing} progress={progress} stats={stats} />
+      <SendProgressPanel isProcessing={isProcessing} progress={progress} />
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-5">
         <Button
