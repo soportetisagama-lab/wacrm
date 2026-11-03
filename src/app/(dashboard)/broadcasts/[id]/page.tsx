@@ -16,7 +16,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SendProgressPanel } from '@/components/broadcasts/send-progress-panel';
-import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
+import { HeaderMediaInput } from '@/components/broadcasts/header-media-input';
+import {
+  fetchResumeMediaInfo,
+  useBroadcastSending,
+  type ResumeMediaInfo,
+} from '@/hooks/use-broadcast-sending';
+import { headerMediaProblem } from '@/lib/broadcasts/send-loop';
 import { useCan } from '@/hooks/use-can';
 import {
   Table,
@@ -178,6 +184,9 @@ export default function BroadcastDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
+  // Header media for the resume dialog: loaded when it opens.
+  const [resumeMedia, setResumeMedia] = useState<ResumeMediaInfo | null>(null);
+  const [resumeMediaUrl, setResumeMediaUrl] = useState('');
   // The broadcast API requires admin; hide the action for other roles.
   const isAdmin = useCan('manage-members');
   const { resumeBroadcast, isProcessing, progress, stats } = useBroadcastSending();
@@ -226,10 +235,32 @@ export default function BroadcastDetailPage() {
     [recipients],
   );
 
+  async function openResumeDialog() {
+    if (!broadcast) return;
+    setResumeMedia(null);
+    setResumeMediaUrl('');
+    setConfirmResume(true);
+    try {
+      setResumeMedia(await fetchResumeMediaInfo(broadcast));
+    } catch {
+      // Unknown header: assume nothing to ask; resume validates again.
+      setResumeMedia({ mediaHeaderType: null, knownUrl: null });
+    }
+  }
+
+  // Ask for the media only when the header needs it and no URL is known
+  // (neither saved with the broadcast nor on the template).
+  const resumeNeedsMedia = Boolean(resumeMedia?.mediaHeaderType && !resumeMedia.knownUrl);
+  const resumeBlocked =
+    resumeMedia === null || (resumeNeedsMedia && headerMediaProblem(true, resumeMediaUrl) !== null);
+
   async function handleResume() {
     setConfirmResume(false);
     try {
-      const res = await resumeBroadcast(broadcastId);
+      const res = await resumeBroadcast(
+        broadcastId,
+        resumeNeedsMedia ? { headerMediaUrl: resumeMediaUrl.trim() } : {},
+      );
       if (res.attempted === 0) {
         toast.info(t('resume.toastNothing'));
       } else if (res.failed > 0) {
@@ -368,7 +399,7 @@ export default function BroadcastDetailPage() {
         {isAdmin && pendingCount > 0 && !isProcessing && (
           <Button
             size="sm"
-            onClick={() => setConfirmResume(true)}
+            onClick={openResumeDialog}
             className="bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
           >
             <RotateCw className="h-3.5 w-3.5" />
@@ -431,6 +462,21 @@ export default function BroadcastDetailPage() {
               {t('resume.confirmBody', { count: pendingCount })}
             </DialogDescription>
           </DialogHeader>
+          {resumeMedia === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              {t('resume.checkingMedia')}
+            </div>
+          ) : resumeNeedsMedia && resumeMedia.mediaHeaderType ? (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">{t('resume.mediaNeeded')}</p>
+              <HeaderMediaInput
+                mediaHeaderType={resumeMedia.mediaHeaderType}
+                value={resumeMediaUrl}
+                onChange={setResumeMediaUrl}
+              />
+            </div>
+          ) : null}
           <DialogFooter>
             <Button
               variant="outline"
@@ -441,6 +487,7 @@ export default function BroadcastDetailPage() {
             </Button>
             <Button
               onClick={handleResume}
+              disabled={resumeBlocked}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Send className="h-4 w-4" />

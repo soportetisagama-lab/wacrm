@@ -43,3 +43,46 @@ export function resumeFinalStatus(deliveredLikeCount: number): Extract<Broadcast
 
 /** Recipient statuses that mean the message left WhatsApp's side OK. */
 export const DELIVERED_LIKE_STATUSES: readonly RecipientStatus[] = ['sent', 'delivered', 'read', 'replied']
+
+/** http(s) URL check used for header media. */
+export function isValidHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/** Why a media header URL can't be used yet (null when it is fine). */
+export function headerMediaProblem(isMediaHeader: boolean, url: string): 'missing' | 'invalid' | null {
+  if (!isMediaHeader) return null
+  const value = url.trim()
+  if (!value) return 'missing'
+  if (!isValidHttpUrl(value)) return 'invalid'
+  return null
+}
+
+/** URL saved with the broadcast (audience_filter.headerMediaUrl), if any. */
+export function storedHeaderMediaUrl(audienceFilter: unknown): string | null {
+  if (!audienceFilter || typeof audienceFilter !== 'object') return null
+  const v = (audienceFilter as Record<string, unknown>).headerMediaUrl
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
+/**
+ * Header media for a resume, in priority order: what the user typed in
+ * the resume dialog, the URL saved with the broadcast, the template's
+ * stored URL. Null when none exists (the dialog must ask for it).
+ */
+export function pickResumeHeaderMediaUrl(
+  override: string | null | undefined,
+  stored: string | null | undefined,
+  templateUrl: string | null | undefined,
+): string | null {
+  for (const v of [override, stored, templateUrl]) {
+    const t = v?.trim()
+    if (t) return t
+  }
+  return null
+}

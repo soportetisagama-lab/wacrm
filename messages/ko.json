@@ -1031,7 +1031,9 @@
         "toastDone": "Sending resumed: {sent} sent.",
         "toastDoneWithFailures": "Sending resumed: {sent} sent and {failed} failed. Check the errors in the table.",
         "toastNothing": "There were no pending recipients left.",
-        "toastError": "Could not resume sending: {error}"
+        "toastError": "Could not resume sending: {error}",
+        "checkingMedia": "Checking the template header…",
+        "mediaNeeded": "This template has an image, video or document header and no URL is saved. Enter the same one you used in the original send."
       }
     },
     "new": {
@@ -1102,6 +1104,9 @@
         "headerImageDesc": "이 템플릿에는 헤더 이미지가 필요합니다.",
         "imageUrl": "이미지 URL",
         "imageUrlPlaceholder": "https://example.com/image.jpg",
+        "mediaMissing": "This template needs a media URL to be sent.",
+        "mediaInvalid": "Enter a valid http(s) URL.",
+        "headerPreviewAlt": "Header preview",
         "variables": "변수",
         "varDesc": "{{name}}의 값을 설정하세요",
         "type": "유형",
