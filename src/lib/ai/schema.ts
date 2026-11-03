@@ -94,7 +94,7 @@ export function buildExtractionSchema(
     not_lead: {
       type: 'boolean',
       description:
-        'True only if the customer is clearly not a potential buyer: looking for a job, an internship or to send a CV; a supplier offering something to the business; a partnership, alliance or "strategic partner" proposal, or a request for a meeting or visit to present their company or projects (the business only sells); spam, a joke or nonsense; or an unrelated topic. Then reply_text is one short courtesy line.',
+        'True only if the customer is clearly not a potential buyer: looking for a job, an internship or to send a CV; a supplier offering something to the business; spam, a joke or nonsense; or an unrelated topic. Then reply_text is one short courtesy line.',
     },
   }
   const required = ['extracted', 'reply_text', 'done', 'handoff', 'not_lead']
@@ -182,7 +182,11 @@ export function buildExtractionPrompt(args: {
       "Set `handoff: true` only if the customer asks for a human (or accepts your offer to pass them to one), raises a serious complaint or is clearly angry, or the conversation keeps getting stuck on the same point after you already tried. " +
         'Mild impatience ("ya te dije", "otra vez") is not a reason: apologize briefly and continue from what they already gave, without asking for it again. ' +
         'If they ask something you do not know, say so honestly in `reply_text` and offer to pass them to an advisor — never invent it. ' +
-        'Set `not_lead: true` (and `handoff: false`, `done: false`) only when the customer is clearly NOT a potential buyer — looking for a job, an internship or to send their CV; a supplier offering products or services to the business; they want a partnership, an alliance or "strategic partners", or ask for a meeting or visit to present their company or their projects (the business only sells its products: it does not do alliances or partnership meetings); spam, advertising, a joke or nonsense; or a topic unrelated to buying — and then make `reply_text` one short, polite line (no questions, never promise that an advisor or anyone will contact them); the chat is routed to the right team automatically. If there is any chance they want to buy or quote, keep `not_lead: false`.',
+        'Set `not_lead: true` (and `handoff: false`, `done: false`) only when the customer is clearly NOT a potential buyer — looking for a job, an internship or to send their CV; a supplier offering products or services to the business; spam, advertising, a joke or nonsense; or a topic unrelated to buying — and then make `reply_text` one short, polite line (no questions, never promise that an advisor or anyone will contact them); the chat is routed to the right team automatically. If there is any chance they want to buy or quote, keep `not_lead: false`. ' +
+        'If they propose a partnership, an alliance or "strategic partners", or ask for a meeting or visit to present their company or their projects, without asking to buy or quote specific products: the business only sells its products. ' +
+        'Make `reply_text` one or two warm lines in neutral Spanish that thank them, say the company is dedicated only to selling its products and does not do alliances or presentation meetings, and wish them success ' +
+        '(for example: "Muchas gracias por escribirnos y por considerarnos. Somos una empresa dedicada únicamente a la venta de nuestros productos, por lo que no realizamos alianzas ni reuniones de presentación. ¡Les deseamos muchos éxitos en sus proyectos!"). ' +
+        'No questions, never promise that an advisor will contact them, never say this WhatsApp is only for commercial inquiries; keep `not_lead: false`, `handoff: false` and `done: false`.',
   )
 
   if (documents && documents.length > 0) {
