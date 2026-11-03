@@ -1131,7 +1131,15 @@
         "sending": "전송 중...",
         "preparing": "준비 중...",
         "progressDesc": "수신자 {total}명 중 {current}명 처리 중...",
-        "toastFailedPreview": "미리보기 데이터를 불러오지 못했습니다"
+        "toastFailedPreview": "미리보기 데이터를 불러오지 못했습니다",
+        "statsProcessed": "{done} of {total} processed ({pct}%)",
+        "statsSent": "✓ {count} sent",
+        "statsFailed": "✗ {count} failed",
+        "eta": "~{min} min left",
+        "etaUnderMinute": "Less than 1 min left",
+        "allGood": "All good: messages are going out.",
+        "manyFailed": "Warning: most messages are failing. Check the errors in the broadcast details.",
+        "keepTabOpen": "Do not close or reload this tab until it finishes: the send runs from here."
       }
     }
   },
