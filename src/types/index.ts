@@ -493,7 +493,10 @@ export type AutomationTriggerType =
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
-  | 'interactive_reply';
+  | 'interactive_reply'
+  /** Customer tapped a quick-reply button on a TEMPLATE message (Meta
+   *  `type: 'button'`). Never fires on typed text. */
+  | 'template_button_reply';
 
 export type AutomationStepType =
   | 'send_message'
@@ -541,12 +544,20 @@ export interface InteractiveReplyTriggerConfig {
   reply_ids: string[];
 }
 
+export interface TemplateButtonReplyTriggerConfig {
+  /** Button texts or payloads to match (accent/case-insensitive, exact). */
+  buttons: string[];
+  /** Optional: only taps on these templates (Meta template names). */
+  template_names?: string[];
+}
+
 export type AutomationTriggerConfig =
   | Record<string, never>
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
   | InteractiveReplyTriggerConfig
+  | TemplateButtonReplyTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {

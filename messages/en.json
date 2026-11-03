@@ -1222,6 +1222,7 @@
           "label": "Button / List Reply",
           "hint": "Customer taps a button or list row whose id matches — chain menus across automations"
         },
+        "template_button_reply": {"label": "Template Button Reply", "hint": "Customer taps a quick-reply button on a template (never fires on typed text)"},
         "new_contact_created": {
           "label": "New Contact Created",
           "hint": "When a contact is auto-created from an incoming message"
@@ -1246,6 +1247,12 @@
       "replyIds": "Reply IDs",
       "replyIdsHint": "yes, no, more_info",
       "replyIdsHelp": "Comma-separated button/list-row ids to match, exact. Use the same ids you set on a Send Buttons / Send List step.",
+      "templateButtons": "Buttons",
+      "templateButtonsHint": "Yes, I'm interested",
+      "templateButtonsHelp": "Button text or payload, comma-separated. Case- and accent-insensitive.",
+      "templateNames": "Templates (optional)",
+      "templateNamesHint": "template_name",
+      "templateNamesHelp": "Meta template names, comma-separated. Empty = any template. Only works when the template was sent from the CRM.",
       "schedule": "Schedule",
       "scheduleHint": "Cron expression (e.g. 0 9 * * 1-5)",
       "active": "Active",
