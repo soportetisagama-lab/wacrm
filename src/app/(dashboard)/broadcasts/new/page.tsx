@@ -32,7 +32,7 @@ export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
-  const { createAndSendBroadcast, isProcessing, progress, stats } = useBroadcastSending();
+  const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -57,7 +57,7 @@ export default function NewBroadcastPage() {
     if (!template) return;
 
     try {
-      const broadcastId = await createAndSendBroadcast({
+      const { broadcastId, startError } = await createAndSendBroadcast({
         name,
         template,
         audience: {
@@ -70,6 +70,8 @@ export default function NewBroadcastPage() {
         variables,
         headerMediaUrl,
       });
+      // The server sends it now; the detail page shows the live progress.
+      if (startError) toast.error(t('toastStartFailed', { error: startError }));
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
       // Previously swallowed with console.error — the wizard would
@@ -264,7 +266,6 @@ export default function NewBroadcastPage() {
               onBack={() => setCurrentStep(2)}
               isProcessing={isProcessing}
               progress={progress}
-              stats={stats}
             />
           )}
         </div>

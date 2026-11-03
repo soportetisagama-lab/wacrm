@@ -1032,8 +1032,8 @@
         "confirmTitle": "Resume sending",
         "confirmBody": "Only the {count} pending contacts will be messaged. Those who already received it are not messaged again.",
         "confirmAction": "Resume sending",
-        "toastDone": "Sending resumed: {sent} sent.",
-        "toastDoneWithFailures": "Sending resumed: {sent} sent and {failed} failed. Check the errors in the table.",
+        "toastStarted": "Sending resumed on the server: {count} pending. You can close this tab.",
+        "toastAlreadyRunning": "This broadcast is already being sent on the server.",
         "toastNothing": "There were no pending recipients left.",
         "toastError": "Could not resume sending: {error}",
         "checkingMedia": "Checking the template header…",
@@ -1053,7 +1053,8 @@
       "toastNotSignedIn": "로그인되어 있지 않습니다.",
       "toastNotLinked": "프로필이 계정에 연결되어 있지 않습니다.",
       "toastFailedDraft": "초안 저장 실패: {error}",
-      "toastDraftSaved": "초안이 저장되었습니다"
+      "toastDraftSaved": "초안이 저장되었습니다",
+      "toastStartFailed": "The broadcast was created, but sending could not start: {error}. Use “Resume sending” on the detail page."
     },
     "wizard": {
       "next": "다음",
@@ -1158,7 +1159,7 @@
         "etaUnderMinute": "Less than 1 min left",
         "allGood": "All good: messages are going out.",
         "manyFailed": "Warning: most messages are failing. Check the errors in the broadcast details.",
-        "keepTabOpen": "Do not close or reload this tab until it finishes: the send runs from here."
+        "serverSending": "이 탭을 닫아도 됩니다. 전송은 서버에서 계속됩니다."
       }
     }
   },

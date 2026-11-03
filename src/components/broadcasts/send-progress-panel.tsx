@@ -13,10 +13,10 @@ interface SendProgressPanelProps {
 }
 
 /**
- * Live progress of a broadcast send running in this tab: bar, X of Y,
- * sent / failed, time left, failure alert. While active it also warns
- * before closing the tab (the send runs here; closing it stops it).
- * Used by the wizard (step 4) and by "Resume sending" on the detail page.
+ * Live progress of a broadcast send: bar, X of Y, sent / failed, time
+ * left, failure alert. The send runs on the server, so the tab can be
+ * closed. Used by the wizard (step 4, while it prepares the recipients)
+ * and by the detail page (server progress read from the database).
  */
 export function SendProgressPanel({ isProcessing, progress, stats }: SendProgressPanelProps) {
   const t = useTranslations('Broadcasts.wizard');
@@ -25,14 +25,7 @@ export function SendProgressPanel({ isProcessing, progress, stats }: SendProgres
   useEffect(() => {
     if (!isProcessing) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('beforeunload', onBeforeUnload);
-    };
+    return () => clearInterval(timer);
   }, [isProcessing]);
 
   if (!isProcessing) return null;
@@ -44,7 +37,7 @@ export function SendProgressPanel({ isProcessing, progress, stats }: SendProgres
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          <p className="text-sm font-medium text-foreground">{t('scheduleSend.sending')}</p>
+          <p className="text-sm font-medium text-foreground">{stats ? t('scheduleSend.sending') : t('scheduleSend.preparing')}</p>
         </div>
         <span className="text-xs font-medium text-primary">{progress}%</span>
       </div>
@@ -79,7 +72,7 @@ export function SendProgressPanel({ isProcessing, progress, stats }: SendProgres
           ) : (
             <p className="text-muted-foreground">{t('scheduleSend.allGood')}</p>
           )}
-          <p className="font-medium text-foreground">{t('scheduleSend.keepTabOpen')}</p>
+          <p className="font-medium text-foreground">{t('scheduleSend.serverSending')}</p>
         </div>
       )}
     </div>
