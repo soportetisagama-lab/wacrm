@@ -70,12 +70,20 @@ export async function resolveReplyParent(
   },
 ): Promise<ReplyParent | null> {
   try {
-    const { data: existing } = await db
+    // limit(1), not maybeSingle(): a repeated webhook may already have
+    // left more than one row, and a lookup error must never fall through
+    // to an insert (that is how duplicates would pile up).
+    const { data: found, error: findErr } = await db
       .from('messages')
       .select('id, template_name')
       .eq('message_id', args.contextId)
       .eq('conversation_id', args.conversationId)
-      .maybeSingle()
+      .limit(1)
+    if (findErr) {
+      console.error('[template-reply-parent] lookup failed:', findErr.message)
+      return null
+    }
+    const existing = found?.[0]
     if (existing) {
       return { id: existing.id as string, templateName: (existing.template_name as string) ?? null }
     }
@@ -84,12 +92,17 @@ export async function resolveReplyParent(
     let templateLanguage: string | null = null
     let sentAt: string | null = null
 
-    const { data: rec } = await db
+    const { data: recs, error: recErr } = await db
       .from('broadcast_recipients')
       .select('sent_at, created_at, broadcasts!inner(account_id, template_name, template_language)')
       .eq('whatsapp_message_id', args.contextId)
       .eq('broadcasts.account_id', args.accountId)
-      .maybeSingle()
+      .limit(1)
+    if (recErr) {
+      console.error('[template-reply-parent] broadcast lookup failed:', recErr.message)
+      return null
+    }
+    const rec = recs?.[0]
     if (rec) {
       const b = (Array.isArray(rec.broadcasts) ? rec.broadcasts[0] : rec.broadcasts) as
         | { template_name?: string; template_language?: string }
@@ -130,7 +143,10 @@ export async function resolveReplyParent(
       .from('messages')
       .insert({
         conversation_id: args.conversationId,
-        sender_type: 'agent',
+        // 'bot', never 'agent': an 'agent' row reads as a human reply
+        // (hasRecentHumanReply would mute the AI/menu for 24 h) and is
+        // counted as agent activity on the dashboard. Still outbound.
+        sender_type: 'bot',
         content_type: 'template',
         content_text: template?.body_text ?? null,
         template_name: templateName,

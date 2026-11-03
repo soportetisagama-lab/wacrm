@@ -115,7 +115,8 @@ export function TemplateMessage({
               </>
             );
             const cls = "flex items-center justify-center gap-1.5 py-1.5 text-sm font-medium";
-            return b.type === "URL" ? (
+            // Only https links become clickable (no javascript:/http: from a template row).
+            return b.type === "URL" && /^https:\/\//i.test(b.url) ? (
               <a key={i} href={b.url} target="_blank" rel="noopener noreferrer" className={cls}>
                 {content}
               </a>
