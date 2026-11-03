@@ -12,16 +12,14 @@ import {
   fetchTaggedContactIds,
 } from '@/lib/broadcasts/audience';
 import {
-  DELIVERED_LIKE_STATUSES,
-  filterStillPending,
-  headerMediaProblem,
   isMediaHeaderType,
-  loopCounters,
   pickResumeHeaderMediaUrl,
-  resumeFinalStatus,
   sendPhaseProgress,
   storedHeaderMediaUrl,
 } from '@/lib/broadcasts/send-loop';
+import type { VariableMapping } from '@/lib/broadcasts/variables';
+
+export type { VariableMapping } from '@/lib/broadcasts/variables';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -40,18 +38,6 @@ export interface AudienceConfig {
   excludeTagIds?: string[];
 }
 
-/**
- * Variable mapping — each template placeholder (by key, usually "1",
- * "2", …) is resolved at send time. `field` maps to a built-in contact
- * field (name/phone/email/company); `custom_field` maps to a
- * contact_custom_values.value row keyed by the custom_fields.id stored
- * in `value`.
- */
-export type VariableMapping =
-  | { type: 'static'; value: string }
-  | { type: 'field'; value: string }
-  | { type: 'custom_field'; value: string };
-
 interface BroadcastPayload {
   name: string;
   template: MessageTemplate;
@@ -66,13 +52,15 @@ interface BroadcastPayload {
   headerMediaUrl?: string;
 }
 
-/** Live counters of the send loop, for the progress panel. */
+/** Live counters of a send, for the progress panel. */
 export interface BroadcastSendStats {
   total: number;
   sent: number;
   failed: number;
-  /** Epoch ms when the send loop started (null before it starts). */
+  /** Epoch ms when the pace measurement started (null before). */
   startedAt: number | null;
+  /** sent + failed already done at `startedAt` (pace counts only what came after). */
+  baseline?: number;
 }
 
 export const EMPTY_SEND_STATS: BroadcastSendStats = { total: 0, sent: 0, failed: 0, startedAt: null };
@@ -133,123 +121,53 @@ export async function fetchResumeMediaInfo(broadcast: {
   };
 }
 
-export interface ResumeResult {
-  attempted: number;
-  sent: number;
-  failed: number;
-  /** Recipients another tab handled meanwhile. */
-  skipped: number;
+/** Outcome of POST /api/broadcasts/[id]/start. */
+export type StartResult =
+  | { kind: 'started'; pending: number }
+  | { kind: 'already_running' }
+  | { kind: 'nothing_pending' };
+
+export interface CreateResult {
+  broadcastId: string;
+  /** Set when the broadcast was created but the server send could not start. */
+  startError?: string;
 }
 
 interface UseBroadcastSendingReturn {
-  createAndSendBroadcast: (payload: BroadcastPayload) => Promise<string>;
-  /**
-   * Sends only the recipients still 'pending' of an existing broadcast
-   * (e.g. the original tab was closed mid-send).
-   */
-  resumeBroadcast: (broadcastId: string, options?: ResumeOptions) => Promise<ResumeResult>;
+  /** Creates the broadcast + 'pending' recipients, then starts the server send. */
+  createAndSendBroadcast: (payload: BroadcastPayload) => Promise<CreateResult>;
+  /** Asks the server to send the recipients still 'pending'. */
+  resumeBroadcast: (broadcastId: string, options?: ResumeOptions) => Promise<StartResult>;
   isProcessing: boolean;
+  /** Progress of the preparation (audience + recipient rows) in this tab. */
   progress: number;
-  stats: BroadcastSendStats;
 }
 
-/**
- * Meta rate-limit buffer. 10 per batch + 1 s pause matches the spec
- * and keeps us comfortably under Meta's per-phone-number messaging
- * rate so a large broadcast never trips the upstream limiter.
- */
-const SEND_BATCH_SIZE = 10;
-const SEND_BATCH_DELAY_MS = 1000;
-
-/** Retries of a batch the server rejected with 429 (rate limit). */
-const RATE_LIMIT_RETRIES = 5;
-
-/** `broadcast_recipients` inserts are independent of the send rate. */
+/** `broadcast_recipients` inserts per request. */
 const INSERT_BATCH_SIZE = 200;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-interface BroadcastApiResult {
-  phone: string;
-  status: 'sent' | 'failed';
-  whatsapp_message_id?: string;
-  error?: string;
-}
-
-/** contactId → (customFieldId → value). */
-type CustomValueIndex = Map<string, Map<string, string>>;
-
 /**
- * Per-contact resolution of custom-field placeholders. Static and
- * built-in-field mappings resolve synchronously; custom fields read
- * from a pre-built index to avoid N+1 queries during the send loop.
+ * Starts (or resumes) the send on the server. It keeps going even if
+ * this tab is closed; progress is read back from the database.
  */
-export function resolveVariables(
-  variables: Record<string, VariableMapping>,
-  contact: Contact,
-  customValues?: Map<string, string>,
-): string[] {
-  // Keys are typically "1","2",... — numeric-aware sort keeps
-  // {{1}} before {{10}}.
-  const keys = Object.keys(variables).sort((a, b) => {
-    const an = Number(a);
-    const bn = Number(b);
-    if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
-    return a.localeCompare(b);
+export async function startBroadcastOnServer(
+  broadcastId: string,
+  options: ResumeOptions = {},
+): Promise<StartResult> {
+  const res = await fetch(`/api/broadcasts/${encodeURIComponent(broadcastId)}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options.headerMediaUrl ? { headerMediaUrl: options.headerMediaUrl } : {}),
   });
-
-  return keys.map((key) => {
-    const v = variables[key];
-    if (v.type === 'static') return v.value;
-
-    if (v.type === 'field') {
-      const fieldMap: Record<string, string | null | undefined> = {
-        name: contact.name,
-        phone: contact.phone,
-        email: contact.email,
-        company: contact.company,
-      };
-      return fieldMap[v.value] ?? '';
-    }
-
-    // custom_field
-    return customValues?.get(v.value) ?? '';
-  });
-}
-
-/**
- * Bulk-fetch contact_custom_values for a set of contacts. Returns an
- * index keyed by contact_id → field_id → value.
- */
-async function fetchCustomValueIndex(
-  supabase: ReturnType<typeof createClient>,
-  contactIds: string[],
-): Promise<CustomValueIndex> {
-  const index: CustomValueIndex = new Map();
-  if (contactIds.length === 0) return index;
-
-  // Chunk the id list (URL length) and page each chunk (1000-row cap:
-  // a contact can have several custom values).
-  for (const slice of chunk(contactIds, ID_CHUNK)) {
-    const rows = await fetchAllPages<{ contact_id: string; custom_field_id: string; value: string | null }>(
-      (from, to) =>
-        supabase
-          .from('contact_custom_values')
-          .select('contact_id, custom_field_id, value')
-          .in('contact_id', slice)
-          .order('id', { ascending: true })
-          .range(from, to),
-    );
-
-    for (const row of rows) {
-      const bucket = index.get(row.contact_id) ?? new Map<string, string>();
-      bucket.set(row.custom_field_id, row.value ?? '');
-      index.set(row.contact_id, bucket);
-    }
-  }
-  return index;
+  const data = (await res.json().catch(() => ({}))) as {
+    started?: boolean;
+    pending?: number;
+    code?: string;
+    error?: string;
+  };
+  if (res.status === 409 && data.code === 'already_running') return { kind: 'already_running' };
+  if (!res.ok) throw new Error(data.error || `Error ${res.status} al iniciar el envío`);
+  return data.started ? { kind: 'started', pending: data.pending ?? 0 } : { kind: 'nothing_pending' };
 }
 
 function errText(err: unknown): string {
@@ -270,195 +188,10 @@ async function fetchContactsByIds(
   return out;
 }
 
-type SupabaseBrowser = ReturnType<typeof createClient>;
-
-/** A broadcast_recipients row with its joined contact. */
-type SendRecipient = { id: string; contact: Contact | null };
-
-interface SendLoopOptions {
-  templateName: string;
-  templateLanguage: string;
-  variables: Record<string, VariableMapping>;
-  customValueIndex: CustomValueIndex;
-  messageParams?: { headerMediaUrl: string };
-  /**
-   * How to react when the pre-batch status re-check fails. `true`
-   * (resume) aborts the loop so nobody gets the message twice; `false`
-   * (fresh broadcast) sends the batch unfiltered, as before.
-   */
-  strictPendingCheck: boolean;
-  /** Cumulative counters after each batch (processed includes skipped). */
-  onBatchDone: (c: { processed: number; failed: number; skipped: number }) => void;
-}
-
-/**
- * Current status of `ids`. Throws on a query error so the caller
- * decides between fail-open and fail-closed.
- */
-async function fetchRecipientStatuses(
-  supabase: SupabaseBrowser,
-  ids: string[],
-): Promise<Map<string, string>> {
-  const { data, error } = await supabase
-    .from('broadcast_recipients')
-    .select('id, status')
-    .in('id', ids);
-  if (error) throw new Error(`No se pudo verificar el estado de los destinatarios: ${error.message}`);
-  return new Map(((data ?? []) as { id: string; status: string }[]).map((r) => [r.id, r.status]));
-}
-
-/**
- * Sends `recipients` in batches of SEND_BATCH_SIZE with a pause between
- * batches, retrying 429s, and writes each recipient's outcome. Right
- * before each batch it re-reads the rows and skips those no longer
- * 'pending' (another tab already sent them), so two tabs working on
- * the same broadcast do not message a contact twice.
- */
-async function runSendLoop(
-  supabase: SupabaseBrowser,
-  recipients: SendRecipient[],
-  opts: SendLoopOptions,
-): Promise<{ failedCount: number; skippedCount: number }> {
-  let failedCount = 0;
-  let skippedCount = 0;
-  const { messageParams } = opts;
-
-  for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
-    const fullBatch = recipients.slice(i, i + SEND_BATCH_SIZE);
-
-    let batch = fullBatch;
-    try {
-      const statuses = await fetchRecipientStatuses(
-        supabase,
-        fullBatch.map((r) => r.id),
-      );
-      batch = filterStillPending(fullBatch, statuses);
-    } catch (err) {
-      if (opts.strictPendingCheck) throw err;
-      console.warn('[broadcasts] pending re-check failed, sending batch as is:', err);
-    }
-    skippedCount += fullBatch.length - batch.length;
-
-    const apiRecipients = batch
-      .filter((r) => r.contact?.phone)
-      .map((r) => ({
-        phone: r.contact!.phone as string,
-        params: r.contact
-          ? resolveVariables(
-              opts.variables,
-              r.contact,
-              opts.customValueIndex.get(r.contact.id),
-            )
-          : [],
-        ...(messageParams ? { messageParams } : {}),
-      }));
-
-    try {
-      // A batch with no phone numbers skips the API call; the loop
-      // below marks each of those recipients failed (no result).
-      let apiResults: BroadcastApiResult[] = [];
-      if (apiRecipients.length > 0) {
-        const body = JSON.stringify({
-          recipients: apiRecipients,
-          template_name: opts.templateName,
-          template_language: opts.templateLanguage,
-        });
-        let res: Response;
-        let data: { error?: string; results?: unknown; retry_after_seconds?: number };
-        // A 429 means "too fast", not a bad batch: wait what the
-        // server asks and resend the same batch instead of failing it.
-        for (let attempt = 0; ; attempt++) {
-          res = await fetch('/api/whatsapp/broadcast', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body,
-          });
-          data = await res.json();
-          if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
-          const waitSec = Math.min(Math.max(Number(data.retry_after_seconds) || 5, 1), 60);
-          await sleep(waitSec * 1000 + 250);
-        }
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Falló el envío de la difusión');
-        }
-        apiResults = (data.results ?? []) as BroadcastApiResult[];
-      }
-
-      const resultsByPhone = new Map<string, BroadcastApiResult>();
-      for (const r of apiResults) {
-        resultsByPhone.set(r.phone, r);
-      }
-
-      for (const recipient of batch) {
-        const phone = recipient.contact?.phone;
-        const result = phone ? resultsByPhone.get(phone) : undefined;
-
-        if (!result) {
-          failedCount++;
-          await supabase
-            .from('broadcast_recipients')
-            .update({
-              status: 'failed',
-              error_message: 'El contacto no tiene número de teléfono',
-            })
-            .eq('id', recipient.id);
-          continue;
-        }
-
-        if (result.status === 'sent') {
-          await supabase
-            .from('broadcast_recipients')
-            .update({
-              status: 'sent',
-              sent_at: new Date().toISOString(),
-              whatsapp_message_id: result.whatsapp_message_id ?? null,
-              error_message: null,
-            })
-            .eq('id', recipient.id);
-        } else {
-          failedCount++;
-          await supabase
-            .from('broadcast_recipients')
-            .update({
-              status: 'failed',
-              error_message: result.error ?? 'Error desconocido',
-            })
-            .eq('id', recipient.id);
-        }
-      }
-    } catch (err) {
-      for (const recipient of batch) {
-        failedCount++;
-        await supabase
-          .from('broadcast_recipients')
-          .update({
-            status: 'failed',
-            error_message: err instanceof Error ? err.message : 'Error desconocido',
-          })
-          .eq('id', recipient.id);
-      }
-    }
-
-    opts.onBatchDone({
-      processed: Math.min(i + fullBatch.length, recipients.length),
-      failed: failedCount,
-      skipped: skippedCount,
-    });
-
-    if (i + SEND_BATCH_SIZE < recipients.length) {
-      await sleep(SEND_BATCH_DELAY_MS);
-    }
-  }
-
-  return { failedCount, skippedCount };
-}
-
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [stats, setStats] = useState<BroadcastSendStats>(EMPTY_SEND_STATS);
 
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     const supabase = createClient();
@@ -606,10 +339,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     return fetchContactsByIds(supabase, [...contactIds]);
   }
 
-  async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
+  async function createAndSendBroadcast(payload: BroadcastPayload): Promise<CreateResult> {
     setIsProcessing(true);
     setProgress(0);
-    setStats(EMPTY_SEND_STATS);
 
     const supabase = createClient();
 
@@ -654,8 +386,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             tagIds: payload.audience.tagIds,
             customField: payload.audience.customField,
             excludeTagIds: payload.audience.excludeTagIds,
-            // No dedicated column: keep the header media used, so a
-            // later "Resume sending" can reuse it (see resumeBroadcast).
+            // No dedicated column: the server worker reads the header
+            // media from here (also on "Resume sending").
             ...(isMediaHeaderType(payload.template.header_type) &&
             payload.headerMediaUrl?.trim()
               ? { headerMediaUrl: payload.headerMediaUrl.trim() }
@@ -708,80 +440,22 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             `No se pudo guardar el lote de destinatarios ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
+        setProgress(sendPhaseProgress(20, 70, i + batch.length, recipientRows.length));
       }
 
-      // ── Step 4: Fetch recipients (joined contact) + preload custom values
-      setProgress(30);
-      type RecipientRow = { id: string; contact: Contact | null };
-      let recipients: RecipientRow[];
+      // ── Step 4: Hand the send to the server ───────────────────────
+      // Template, language, variables and header media are on the row;
+      // the server worker sends from there, even if this tab closes.
+      setProgress(90);
+      let startError: string | undefined;
       try {
-        recipients = await fetchAllPages<RecipientRow>((from, to) =>
-          supabase
-            .from('broadcast_recipients')
-            .select('*, contact:contacts(*)')
-            .eq('broadcast_id', broadcast.id)
-            .order('id', { ascending: true })
-            .range(from, to),
-        );
-      } catch {
-        throw new Error('No se pudieron cargar los destinatarios de la difusión.');
+        await startBroadcastOnServer(broadcast.id);
+      } catch (err) {
+        startError = errText(err);
       }
-
-      // One bulk fetch of custom values for every contact in this
-      // broadcast, avoiding N+1 during the send loop.
-      const contactIds = recipients
-        .map((r) => r.contact?.id)
-        .filter((id): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contactIds,
-      );
-
-      // Media-header templates (image/video/document) require a media
-      // URL on every send. Collected in the personalize step and applied
-      // to all recipients; falls back to the template's stored URL on the
-      // server when omitted.
-      const headerMediaUrl = payload.headerMediaUrl?.trim();
-      const messageParams =
-        isMediaHeaderType(payload.template.header_type) && headerMediaUrl
-          ? { headerMediaUrl }
-          : undefined;
-
-      const totalRecipients = recipients.length;
-      setStats({ total: totalRecipients, sent: 0, failed: 0, startedAt: Date.now() });
-
-      const { failedCount, skippedCount } = await runSendLoop(supabase, recipients, {
-        templateName: payload.template.name,
-        templateLanguage: payload.template.language ?? 'en_US',
-        variables: payload.variables,
-        customValueIndex,
-        messageParams,
-        // Fail-open: a failed re-check must not stop a fresh broadcast.
-        strictPendingCheck: false,
-        onBatchDone: ({ processed, failed, skipped }) => {
-          setProgress(sendPhaseProgress(30, 60, processed, totalRecipients));
-          setStats((s) => ({ ...s, ...loopCounters(totalRecipients, processed, failed, skipped) }));
-        },
-      });
-
-      // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
-      setProgress(95);
-      // Same rule as before (all failed -> 'failed'); recipients skipped
-      // because another tab sent them do not count as failures.
-      const finalStatus =
-        failedCount === totalRecipients - skippedCount &&
-        (skippedCount === 0 || failedCount > 0)
-          ? 'failed'
-          : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus })
-        .eq('id', broadcast.id);
 
       setProgress(100);
-      return broadcast.id;
+      return { broadcastId: broadcast.id, startError };
     } finally {
       setIsProcessing(false);
     }
@@ -790,129 +464,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   async function resumeBroadcast(
     broadcastId: string,
     options: ResumeOptions = {},
-  ): Promise<ResumeResult> {
+  ): Promise<StartResult> {
     setIsProcessing(true);
-    setProgress(0);
-    setStats(EMPTY_SEND_STATS);
-
-    const supabase = createClient();
-    let markedSending = false;
-
     try {
-      // ── Step 1: Broadcast row + template ──────────────────────────
-      const { data: bc, error: bcErr } = await supabase
-        .from('broadcasts')
-        .select('id, template_name, template_language, template_variables, audience_filter')
-        .eq('id', broadcastId)
-        .single();
-      if (bcErr || !bc) {
-        throw new Error(`No se pudo cargar la difusión: ${bcErr?.message ?? 'no encontrada'}`);
-      }
-      const templateName = bc.template_name as string;
-      const templateLanguage = (bc.template_language as string | null) ?? 'en_US';
-      const variables = (bc.template_variables ?? {}) as Record<string, VariableMapping>;
-
-      // Media header: URL from the dialog, else the one saved with the
-      // broadcast, else the template's. Meta rejects the send without it.
-      const template = await fetchTemplateHeader(supabase, templateName, templateLanguage);
-      let messageParams: { headerMediaUrl: string } | undefined;
-      if (isMediaHeaderType(template?.header_type)) {
-        const headerMediaUrl = pickResumeHeaderMediaUrl(
-          options.headerMediaUrl,
-          storedHeaderMediaUrl(bc.audience_filter),
-          template?.header_media_url,
-        );
-        if (!headerMediaUrl || headerMediaProblem(true, headerMediaUrl)) {
-          throw new Error(
-            'La plantilla tiene una cabecera con imagen, video o documento y falta una URL válida. Ingrésala en el diálogo de reanudar.',
-          );
-        }
-        messageParams = { headerMediaUrl };
-      }
-
-      // ── Step 2: Pending recipients + custom values ────────────────
-      setProgress(5);
-      let recipients: SendRecipient[];
-      try {
-        recipients = await fetchAllPages<SendRecipient>((from, to) =>
-          supabase
-            .from('broadcast_recipients')
-            .select('*, contact:contacts(*)')
-            .eq('broadcast_id', broadcastId)
-            .eq('status', 'pending')
-            .order('id', { ascending: true })
-            .range(from, to),
-        );
-      } catch {
-        throw new Error('No se pudieron cargar los destinatarios pendientes.');
-      }
-      if (recipients.length === 0) {
-        setProgress(100);
-        return { attempted: 0, sent: 0, failed: 0, skipped: 0 };
-      }
-
-      const contactIds = recipients
-        .map((r) => r.contact?.id)
-        .filter((id): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(supabase, contactIds);
-
-      // ── Step 3: Send ──────────────────────────────────────────────
-      setProgress(10);
-      const { error: upErr } = await supabase
-        .from('broadcasts')
-        .update({ status: 'sending' })
-        .eq('id', broadcastId);
-      if (upErr) throw new Error(`No se pudo marcar la difusión como en envío: ${upErr.message}`);
-      markedSending = true;
-
-      const totalRecipients = recipients.length;
-      setStats({ total: totalRecipients, sent: 0, failed: 0, startedAt: Date.now() });
-
-      const { failedCount, skippedCount } = await runSendLoop(supabase, recipients, {
-        templateName,
-        templateLanguage,
-        variables,
-        customValueIndex,
-        messageParams,
-        // Fail-closed: if we cannot confirm a row is still pending, stop
-        // rather than risk messaging the contact twice.
-        strictPendingCheck: true,
-        onBatchDone: ({ processed, failed, skipped }) => {
-          setProgress(sendPhaseProgress(10, 85, processed, totalRecipients));
-          setStats((s) => ({ ...s, ...loopCounters(totalRecipients, processed, failed, skipped) }));
-        },
-      });
-
-      const attempted = totalRecipients - skippedCount;
-      return {
-        attempted,
-        sent: attempted - failedCount,
-        failed: failedCount,
-        skipped: skippedCount,
-      };
+      return await startBroadcastOnServer(broadcastId, options);
     } finally {
-      // ── Step 4: Finalize status ───────────────────────────────────
-      // Judged on the whole broadcast: 'failed' only if nobody got it.
-      // Runs on abort too, so the row does not stay stuck in 'sending'
-      // (still-pending recipients can be resumed again).
-      if (markedSending) {
-        setProgress(95);
-        const { count, error: countErr } = await supabase
-          .from('broadcast_recipients')
-          .select('id', { count: 'exact', head: true })
-          .eq('broadcast_id', broadcastId)
-          .in('status', [...DELIVERED_LIKE_STATUSES]);
-        if (!countErr) {
-          await supabase
-            .from('broadcasts')
-            .update({ status: resumeFinalStatus(count ?? 0) })
-            .eq('id', broadcastId);
-        }
-        setProgress(100);
-      }
       setIsProcessing(false);
     }
   }
 
-  return { createAndSendBroadcast, resumeBroadcast, isProcessing, progress, stats };
+  return { createAndSendBroadcast, resumeBroadcast, isProcessing, progress };
 }
