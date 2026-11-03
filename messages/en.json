@@ -1155,10 +1155,10 @@
       "retry": "Retry",
       "templatesTitle": "Quick-start templates",
       "emptyTitle": "No automations yet",
-      "emptyDesc": "Pick a template above or create one from scratch.",
+      "emptyDesc": "Start from a quick-start template or build one from scratch. You can keep it inactive until it is ready.",
       "runs": "{count} run",
       "runsPlural": "{count} runs",
-      "lastRun": "last {time}",
+      "lastRun": "Last: {time}",
       "activate": "Activate",
       "deactivate": "Deactivate",
       "edit": "Edit",
@@ -1177,7 +1177,17 @@
         "duplicateError": "Failed to duplicate",
         "deleteError": "Failed to delete"
       },
-      "openMenu": "Open menu"
+      "openMenu": "Open menu",
+      "never": "never",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "loadError": "Failed to load automations",
+      "untitled": "Untitled automation",
+      "templatesHint": "Tap one to start from a ready-to-edit example.",
+      "count": "{count, plural, one {# automation} other {# automations}}",
+      "activeCount": "{count} active",
+      "myAutomations": "Your automations",
+      "readOnly": "Read-only: your role cannot create automations"
     },
     "edit": {
       "loading": "Loading...",
@@ -1234,7 +1244,10 @@
           "label": "Button / List Reply",
           "hint": "Customer taps a button or list row whose id matches — chain menus across automations"
         },
-        "template_button_reply": {"label": "Template Button Reply", "hint": "Customer taps a quick-reply button on a template (never fires on typed text)"},
+        "template_button_reply": {
+          "label": "Template Button Reply",
+          "hint": "Customer taps a quick-reply button on a template (never fires on typed text)"
+        },
         "new_contact_created": {
           "label": "New Contact Created",
           "hint": "When a contact is auto-created from an incoming message"
@@ -1368,7 +1381,75 @@
       "kindAction": "Action",
       "moveUp": "Move up",
       "moveDown": "Move down",
-      "schedulePlaceholder": "Cron expression or HH:mm"
+      "schedulePlaceholder": "Cron expression or HH:mm",
+      "delete": "Delete",
+      "headerLabel": "Automation",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "canvasHint": "Tap + to add steps. They run from top to bottom.",
+      "endOfFlow": "End of flow",
+      "preview": {
+        "noText": "No text yet",
+        "noBody": "No body yet",
+        "pickTemplate": "Pick a template",
+        "noUrl": "No URL",
+        "when": "When: {subject}"
+      },
+      "issues": {
+        "title": "Cannot activate: {message}",
+        "atStep": "Step {n}",
+        "atTrigger": "Trigger",
+        "noSteps": "add at least one step",
+        "text": "message text is required",
+        "interactive": "check the buttons or list of this step",
+        "template": "pick a template",
+        "tag": "pick a tag",
+        "agent": "pick an agent for \"Specific agent\" mode",
+        "field": "pick the field to update",
+        "fieldValue": "field value is required",
+        "pipeline": "pick a pipeline",
+        "stage": "pick a stage",
+        "dealTitle": "deal title is required",
+        "waitAmount": "wait amount must be greater than 0",
+        "waitUnit": "pick minutes, hours or days",
+        "conditionSubject": "pick what the condition checks",
+        "conditionOperand": "condition operand is required",
+        "url": "webhook URL is required",
+        "urlProtocol": "webhook URL must use http or https",
+        "urlInvalid": "webhook URL is not a valid URL",
+        "keywords": "add at least one keyword",
+        "keywordsEmpty": "keywords cannot be empty",
+        "matchType": "pick a match type",
+        "schedule": "schedule is required",
+        "replyIds": "add at least one reply id",
+        "replyIdsEmpty": "reply ids cannot be empty",
+        "buttons": "add at least one button",
+        "buttonsEmpty": "buttons cannot be empty",
+        "generic": "check the configuration"
+      }
+    },
+    "templates": {
+      "welcome_message": {
+        "name": "Welcome message",
+        "description": "Auto-reply to first-time contacts with a greeting.",
+        "message": "Hi! 👋 Thanks for reaching out. We will get back to you shortly."
+      },
+      "out_of_office": {
+        "name": "Out of office",
+        "description": "Auto-reply during off-hours so nobody is left waiting.",
+        "message": "Thanks for your message! We are outside business hours right now and will reply first thing next business day."
+      },
+      "lead_qualifier": {
+        "name": "Lead qualifier",
+        "description": "Ask a first question to people requesting a quote and assign them to an agent.",
+        "message": "Happy to help! Tell us which product you are interested in and the quantity, and an agent will be with you shortly.",
+        "keywords": "quote, buy, order"
+      },
+      "follow_up_reminder": {
+        "name": "Follow-up reminder",
+        "description": "Send a nudge if a contact has not replied within 24 hours.",
+        "message": "Just checking in: do you have any other questions? Happy to help!"
+      }
     }
   },
   "Flows": {

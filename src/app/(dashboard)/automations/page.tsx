@@ -16,11 +16,14 @@ import {
   Users,
   PhoneCall,
   Loader2,
+  Activity,
+  History,
+  ChevronRight,
 } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
 import { useCan } from "@/hooks/use-can"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import type { Automation } from "@/types"
 import { Button } from "@/components/ui/button"
 import { GatedButton } from "@/components/ui/gated-button"
@@ -40,8 +43,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
-import { triggerMeta, formatRelative } from "@/lib/automations/trigger-meta"
+import type { TemplateSlug } from "@/lib/automations/templates"
+import {
+  TRIGGER_PILL_CLASS,
+  formatRelative,
+  isKnownTrigger,
+} from "@/lib/automations/trigger-meta"
 import { cn } from "@/lib/utils"
 
 const TEMPLATE_ORDER: TemplateSlug[] = [
@@ -57,6 +64,9 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
   lead_qualifier: Users,
   follow_up_reminder: PhoneCall,
 }
+
+/** Legacy default name saved by older builds; shown localized. */
+const LEGACY_UNTITLED = "Untitled automation"
 
 export default function AutomationsPage() {
   const router = useRouter()
@@ -76,13 +86,16 @@ export default function AutomationsPage() {
         .order("created_at", { ascending: false })
       if (fetchErr) throw fetchErr
       setAutomations((data ?? []) as Automation[])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load automations")
+    } catch {
+      setError(t("loadError"))
     }
   }
 
   useEffect(() => {
-    load()
+    // Deferred to a microtask so the state updates land outside the
+    // effect body (react-hooks/set-state-in-effect).
+    void Promise.resolve().then(load)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, [])
 
   async function toggleActive(a: Automation, next: boolean) {
@@ -100,8 +113,7 @@ export default function AutomationsPage() {
       setAutomations((prev) =>
         prev?.map((x) => (x.id === a.id ? { ...x, is_active: !next } : x)) ?? prev,
       )
-      const body = await res.json().catch(() => ({}))
-      toast.error(body?.error ?? t("toasts.updateError"))
+      toast.error(t("toasts.updateError"))
       return
     }
     toast.success(next ? t("toasts.activated") : t("toasts.paused"))
@@ -110,8 +122,7 @@ export default function AutomationsPage() {
   async function duplicate(a: Automation) {
     const res = await fetch(`/api/automations/${a.id}/duplicate`, { method: "POST" })
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      toast.error(body?.error ?? t("toasts.duplicateError"))
+      toast.error(t("toasts.duplicateError"))
       return
     }
     toast.success(t("toasts.duplicated"))
@@ -124,8 +135,7 @@ export default function AutomationsPage() {
     const res = await fetch(`/api/automations/${pendingDelete.id}`, { method: "DELETE" })
     setDeleting(false)
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      toast.error(body?.error ?? t("toasts.deleteError"))
+      toast.error(t("toasts.deleteError"))
       return
     }
     toast.success(t("toasts.deleted"))
@@ -133,101 +143,98 @@ export default function AutomationsPage() {
     load()
   }
 
-  async function startFromTemplate(slug: TemplateSlug) {
+  function startFromTemplate(slug: TemplateSlug) {
     router.push(`/automations/new?template=${slug}`)
   }
 
-  if (error) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
-          {t("retry")}
-        </Button>
-      </div>
-    )
-  }
+  const createButton = (
+    <GatedButton
+      canAct={canCreate}
+      title={canCreate ? undefined : t("readOnly")}
+      onClick={() => router.push("/automations/new")}
+      className="rounded-xl bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+    >
+      <Plus className="h-4 w-4" />
+      {t("create")}
+    </GatedButton>
+  )
 
-  if (automations === null) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
-    )
-  }
-
-  const showTemplates = automations.length < 3
+  const activeCount = automations?.filter((a) => a.is_active).length ?? 0
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("subtitle")}
-          </p>
+    <div className="flex w-full min-w-0 flex-col gap-6">
+      {/* Header — same shape as Panel: title + subtitle left, actions right. */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-extrabold text-foreground sm:text-2xl">{t("title")}</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("subtitle")}</p>
+          {automations && automations.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium tabular-nums text-foreground shadow-sm">
+                {t("count", { count: automations.length })}
+              </span>
+              <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 font-medium tabular-nums text-primary shadow-sm">
+                {t("activeCount", { count: activeCount })}
+              </span>
+            </div>
+          )}
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason="create automations"
-          onClick={() => router.push("/automations/new")}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          {t("create")}
-        </GatedButton>
+        {createButton}
       </div>
 
-      {showTemplates && (
-        <section>
-          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">{t("templatesTitle")}</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {TEMPLATE_ORDER.map((slug) => {
-              const t = AUTOMATION_TEMPLATES[slug]
-              const Icon = TEMPLATE_ICON[slug]
-              return (
-                <button
-                  key={slug}
-                  onClick={() => startFromTemplate(slug)}
-                  className="group flex flex-col items-start rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-card/80"
-                >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="text-sm font-semibold text-foreground">{t.name}</div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {automations.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <Zap className="h-6 w-6 text-primary" />
-          </div>
-          <p className="mt-3 text-sm font-medium text-foreground">{t("emptyTitle")}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("emptyDesc")}
-          </p>
+      {error ? (
+        <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
+          <p className="text-sm font-semibold text-foreground">{error}</p>
+          <Button
+            variant="outline"
+            className="mt-3 rounded-xl"
+            onClick={() => window.location.reload()}
+          >
+            {t("retry")}
+          </Button>
+        </div>
+      ) : automations === null ? (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2" aria-busy>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />
+          ))}
         </div>
       ) : (
-        <ul className="space-y-3">
-          {automations.map((a) => (
-            <AutomationCard
-              key={a.id}
-              automation={a}
-              onToggle={(next) => toggleActive(a, next)}
-              onEdit={() => router.push(`/automations/${a.id}/edit`)}
-              onDuplicate={() => duplicate(a)}
-              onLogs={() => router.push(`/automations/${a.id}/logs`)}
-              onDelete={() => setPendingDelete(a)}
-              t={t}
-            />
-          ))}
-        </ul>
+        <>
+          {automations.length < 3 && (
+            <TemplatesSection onPick={startFromTemplate} />
+          )}
+
+          {automations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/40 px-4 py-10 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Zap className="h-6 w-6" />
+              </div>
+              <p className="mt-1 text-sm font-semibold text-foreground">{t("emptyTitle")}</p>
+              <p className="max-w-sm text-xs text-muted-foreground">{t("emptyDesc")}</p>
+              <div className="mt-2">{createButton}</div>
+            </div>
+          ) : (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                {t("myAutomations")}
+              </h2>
+              <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {automations.map((a) => (
+                  <AutomationCard
+                    key={a.id}
+                    automation={a}
+                    onToggle={(next) => toggleActive(a, next)}
+                    onEdit={() => router.push(`/automations/${a.id}/edit`)}
+                    onDuplicate={() => duplicate(a)}
+                    onLogs={() => router.push(`/automations/${a.id}/logs`)}
+                    onDelete={() => setPendingDelete(a)}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
 
       <Dialog open={!!pendingDelete} onOpenChange={(v) => !v && setPendingDelete(null)}>
@@ -235,7 +242,7 @@ export default function AutomationsPage() {
           <DialogHeader>
             <DialogTitle>{t("deleteTitle")}</DialogTitle>
             <DialogDescription>
-              {t("deleteDesc", { name: pendingDelete?.name ?? "" })}
+              {t("deleteDesc", { name: pendingDelete ? displayName(pendingDelete.name, t("untitled")) : "" })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -261,6 +268,48 @@ export default function AutomationsPage() {
   )
 }
 
+function displayName(name: string | null | undefined, fallback: string): string {
+  const trimmed = (name ?? "").trim()
+  if (!trimmed || trimmed === LEGACY_UNTITLED) return fallback
+  return trimmed
+}
+
+function TemplatesSection({ onPick }: { onPick: (slug: TemplateSlug) => void }) {
+  const t = useTranslations("Automations.list")
+  const tt = useTranslations("Automations.templates")
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {t("templatesTitle")}
+        </h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t("templatesHint")}</p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {TEMPLATE_ORDER.map((slug) => {
+          const Icon = TEMPLATE_ICON[slug]
+          return (
+            <button
+              key={slug}
+              type="button"
+              onClick={() => onPick(slug)}
+              className="group flex min-w-0 items-start gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-transform duration-200 group-hover:scale-105">
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-foreground">{tt(`${slug}.name`)}</div>
+                <p className="mt-0.5 text-xs text-muted-foreground">{tt(`${slug}.description`)}</p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function AutomationCard({
   automation,
   onToggle,
@@ -268,7 +317,6 @@ function AutomationCard({
   onDuplicate,
   onLogs,
   onDelete,
-  t,
 }: {
   automation: Automation
   onToggle: (next: boolean) => void
@@ -276,68 +324,68 @@ function AutomationCard({
   onDuplicate: () => void
   onLogs: () => void
   onDelete: () => void
-  t: ReturnType<typeof useTranslations>
 }) {
-  const meta = triggerMeta(automation.trigger_type)
+  const t = useTranslations("Automations.list")
+  const tb = useTranslations("Automations.builder")
+  const locale = useLocale()
+  const triggerLabel = isKnownTrigger(automation.trigger_type)
+    ? tb(`triggers.${automation.trigger_type}.label`)
+    : automation.trigger_type
+  const lastRun = formatRelative(automation.last_executed_at, locale) ?? t("never")
+  const active = automation.is_active
+  const runs = automation.execution_count ?? 0
+
   return (
-    <li className="rounded-xl border border-border bg-card transition-colors hover:border-border">
-      <div className="flex items-center gap-4 p-4">
+    <li
+      className={cn(
+        "group flex min-w-0 flex-col rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md",
+        active ? "border-l-[3px] border-l-primary" : "border-l-[3px] border-l-border",
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3 p-4">
         <div
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10"
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+            active ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+          )}
           aria-hidden
         >
-          <Zap className="h-5 w-5 text-primary" />
+          <Zap className="h-4 w-4" />
         </div>
 
         <button
           type="button"
           onClick={onEdit}
-          className="min-w-0 flex-1 text-left"
+          className="min-w-0 flex-1 text-left focus-visible:outline-none"
         >
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-foreground">
-              {automation.name}
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
+              {displayName(automation.name, t("untitled"))}
             </span>
-            {automation.is_active && (
-              <span className="relative flex h-2 w-2" aria-label="active">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-              </span>
-            )}
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
           </div>
           {automation.description && (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{automation.description}</p>
+            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{automation.description}</p>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span
               className={cn(
-                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                meta.pillClass,
+                "inline-flex max-w-full items-center gap-1 truncate rounded-full border px-2.5 py-0.5 text-[11px] font-medium",
+                TRIGGER_PILL_CLASS,
               )}
+              title={triggerLabel}
             >
-              {meta.label}
+              <Zap className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="truncate">{triggerLabel}</span>
             </span>
-            <span className="tabular-nums">
-              {automation.execution_count === 1
-                ? t("runs", { count: automation.execution_count })
-                : t("runsPlural", { count: automation.execution_count })}
-            </span>
-            <span aria-hidden>·</span>
-            <span>{t("lastRun", { time: formatRelative(automation.last_executed_at) })}</span>
           </div>
         </button>
 
-        <div className="flex items-center gap-3">
-          <Switch
-            checked={automation.is_active}
-            onCheckedChange={(v) => onToggle(!!v)}
-            aria-label={automation.is_active ? t("deactivate") : t("activate")}
-          />
-
+        <div className="flex shrink-0 items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger
               aria-label={t("openMenu")}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted"
             >
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
@@ -361,6 +409,41 @@ function AutomationCard({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Footer: stats left, status + switch right. Wraps on narrow phones. */}
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-center gap-1 tabular-nums">
+            <Activity className="h-3.5 w-3.5" aria-hidden />
+            {runs === 1 ? t("runs", { count: runs }) : t("runsPlural", { count: runs })}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <History className="h-3.5 w-3.5" aria-hidden />
+            {t("lastRun", { time: lastRun })}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+              active
+                ? "border-primary/25 bg-primary/10 text-primary"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-primary" : "bg-muted-foreground/60")}
+              aria-hidden
+            />
+            {active ? t("statusActive") : t("statusInactive")}
+          </span>
+          <Switch
+            checked={active}
+            onCheckedChange={(v) => onToggle(!!v)}
+            aria-label={active ? t("deactivate") : t("activate")}
+          />
         </div>
       </div>
     </li>
