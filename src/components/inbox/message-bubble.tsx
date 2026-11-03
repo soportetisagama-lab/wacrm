@@ -7,12 +7,12 @@ import {
   Check,
   CheckCheck,
   XCircle,
-  LayoutTemplate,
   CornerDownLeft,
   Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
+import { TemplateMessage } from "./template-message";
 import { LocationBubble } from "./location-bubble";
 import { MessageReactions } from "./message-reactions";
 import {
@@ -142,19 +142,7 @@ function MessageContent({
       return <MediaDocumentBubble message={message} t={t} />;
 
     case "template":
-      return (
-        <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <LayoutTemplate className="h-3 w-3" />
-            {t("template")}
-          </span>
-          {message.content_text && (
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-              {message.content_text}
-            </p>
-          )}
-        </div>
-      );
+      return <TemplateMessage message={message} t={t} />;
 
     case "location":
       return <LocationBubble text={message.content_text} t={t} />;

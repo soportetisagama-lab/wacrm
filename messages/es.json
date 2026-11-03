@@ -1220,8 +1220,9 @@
         },
         "interactive_reply": {
           "label": "Respuesta de botón / lista",
-          "hint": "El cliente toca un botón o fila de lista cuyo id coincide — encadená menús entre automatizaciones"
+          "hint": "El cliente toca un botón o fila de lista cuyo id coincide — encadena menús entre automatizaciones"
         },
+        "template_button_reply": {"label": "Respuesta a botón de plantilla", "hint": "El cliente toca un botón de respuesta rápida de una plantilla (no se activa si lo escribe a mano)"},
         "new_contact_created": {
           "label": "Nuevo contacto creado",
           "hint": "Cuando se crea automáticamente un contacto a partir de un mensaje entrante"
@@ -1245,7 +1246,13 @@
       "keywordsHint": "Lista separada por comas (p. ej. hola, ayuda, comprar)",
       "replyIds": "IDs de respuesta",
       "replyIdsHint": "si, no, mas_info",
-      "replyIdsHelp": "Lista de ids de botón/fila de lista a coincidir, exacta, separada por comas. Usá los mismos ids que definiste en un paso de Enviar botones / Enviar lista.",
+      "replyIdsHelp": "Lista de ids de botón/fila de lista a coincidir, exacta, separada por comas. Usa los mismos ids que definiste en un paso de Enviar botones / Enviar lista.",
+      "templateButtons": "Botones",
+      "templateButtonsHint": "Sí, Me interesa",
+      "templateButtonsHelp": "Texto o payload del botón, separados por comas. No distingue mayúsculas ni tildes.",
+      "templateNames": "Plantillas (opcional)",
+      "templateNamesHint": "nombre_de_la_plantilla",
+      "templateNamesHelp": "Nombres de plantilla en Meta, separados por comas. Vacío = cualquier plantilla. Solo funciona si la plantilla se envió desde el CRM.",
       "schedule": "Cronograma",
       "scheduleHint": "Expresión cron (p. ej. 0 9 * * 1-5)",
       "active": "Activa",

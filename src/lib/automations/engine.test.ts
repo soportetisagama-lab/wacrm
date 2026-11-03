@@ -388,6 +388,60 @@ describe("triggerMatches — interactive_reply", () => {
   });
 });
 
+describe("triggerMatches — template_button_reply", () => {
+  function automation(buttons: string[], template_names?: string[]): Automation {
+    return {
+      id: "a2",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: "si plantilla",
+      trigger_type: "template_button_reply",
+      trigger_config: { buttons, template_names },
+      is_active: true,
+      execution_count: 0,
+      created_at: "",
+      updated_at: "",
+    };
+  }
+
+  it("matches the tapped button text ignoring case and accents", () => {
+    expect(
+      triggerMatches(automation(["Sí"]), { template_button: { text: "si" } }),
+    ).toBe(true);
+    expect(
+      triggerMatches(automation(["si"]), { template_button: { text: "Sí " } }),
+    ).toBe(true);
+  });
+
+  it("matches on the payload too", () => {
+    expect(
+      triggerMatches(automation(["QUIERO_LLAMADA"]), {
+        template_button: { text: "Sí", payload: "quiero_llamada" },
+      }),
+    ).toBe(true);
+  });
+
+  it("never matches typed text (no template_button in context)", () => {
+    expect(triggerMatches(automation(["Sí"]), { message_text: "Sí" })).toBe(false);
+  });
+
+  it("does not match another button or an empty config", () => {
+    expect(triggerMatches(automation(["Sí"]), { template_button: { text: "No" } })).toBe(false);
+    expect(triggerMatches(automation([]), { template_button: { text: "Sí" } })).toBe(false);
+  });
+
+  it("filters by template name when configured", () => {
+    const a = automation(["Sí"], ["gondolas_tiendas"]);
+    expect(
+      triggerMatches(a, { template_button: { text: "Sí", template_name: "gondolas_tiendas" } }),
+    ).toBe(true);
+    expect(
+      triggerMatches(a, { template_button: { text: "Sí", template_name: "otra" } }),
+    ).toBe(false);
+    expect(triggerMatches(a, { template_button: { text: "Sí" } })).toBe(false);
+  });
+});
+
 describe("triggerMatches — tag_added", () => {
   function automation(tagId?: string): Automation {
     return {
