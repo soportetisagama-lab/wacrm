@@ -1,67 +1,52 @@
 import type { AutomationTriggerType } from '@/types'
 
-export interface TriggerMeta {
-  label: string
-  /** Tailwind classes for the Badge pill on the list row. */
-  pillClass: string
+/** Trigger types with a translated label under
+ *  `Automations.builder.triggers.<type>.label`. */
+export const KNOWN_TRIGGERS: readonly AutomationTriggerType[] = [
+  'new_message_received',
+  'first_inbound_message',
+  'keyword_match',
+  'new_contact_created',
+  'conversation_assigned',
+  'tag_added',
+  'time_based',
+  'interactive_reply',
+  'template_button_reply',
+]
+
+export function isKnownTrigger(t: string): t is AutomationTriggerType {
+  return (KNOWN_TRIGGERS as readonly string[]).includes(t)
 }
 
-export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
-  new_message_received: {
-    label: 'New Message',
-    pillClass: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  },
-  first_inbound_message: {
-    label: 'First Message from Contact',
-    pillClass: 'border-teal-500/30 bg-teal-500/10 text-teal-300',
-  },
-  keyword_match: {
-    label: 'Keyword Match',
-    pillClass: 'border-purple-500/30 bg-purple-500/10 text-purple-300',
-  },
-  new_contact_created: {
-    label: 'New Contact',
-    pillClass: 'border-primary/30 bg-primary/10 text-primary',
-  },
-  conversation_assigned: {
-    label: 'Conversation Assigned',
-    pillClass: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300',
-  },
-  tag_added: {
-    label: 'Tag Added',
-    pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  },
-  time_based: {
-    label: 'Time-Based',
-    pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
-  },
-  interactive_reply: {
-    label: 'Button / List Reply',
-    pillClass: 'border-pink-500/30 bg-pink-500/10 text-pink-300',
-  },
-  template_button_reply: {
-    label: 'Template Button Reply',
-    pillClass: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
-  },
-}
+/**
+ * Chip classes for the trigger pill on the list row. Theme tokens only
+ * (primary / muted / border) so every line keeps its own brand color.
+ */
+export const TRIGGER_PILL_CLASS =
+  'border-primary/25 bg-primary/10 text-primary'
 
-export function triggerMeta(t: AutomationTriggerType | string): TriggerMeta {
-  return (
-    TRIGGER_META[t as AutomationTriggerType] ?? {
-      label: t,
-      pillClass: 'border-slate-500/30 bg-slate-500/10 text-muted-foreground',
-    }
-  )
-}
-
-export function formatRelative(iso: string | null | undefined): string {
-  if (!iso) return 'never'
+/**
+ * Localized relative time ("hace 5 minutos", "5 minutes ago"…).
+ * Returns null when there is no valid date so the caller can show its
+ * own "never" text.
+ */
+export function formatRelative(
+  iso: string | null | undefined,
+  locale: string = 'es',
+): string | null {
+  if (!iso) return null
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return 'never'
-  const diffSec = Math.round((Date.now() - then) / 1000)
-  if (diffSec < 60) return 'just now'
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
-  if (diffSec < 2_592_000) return `${Math.floor(diffSec / 86400)}d ago`
-  return new Date(iso).toLocaleDateString()
+  if (Number.isNaN(then)) return null
+  const diffSec = Math.round((then - Date.now()) / 1000)
+  const abs = Math.abs(diffSec)
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  if (abs < 60) return rtf.format(0, 'second')
+  if (abs < 3600) return rtf.format(Math.round(diffSec / 60), 'minute')
+  if (abs < 86400) return rtf.format(Math.round(diffSec / 3600), 'hour')
+  if (abs < 2_592_000) return rtf.format(Math.round(diffSec / 86400), 'day')
+  return new Date(iso).toLocaleDateString(locale, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
