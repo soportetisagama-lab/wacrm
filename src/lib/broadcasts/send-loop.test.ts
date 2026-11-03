@@ -6,7 +6,6 @@ import {
   pickResumeHeaderMediaUrl,
   storedHeaderMediaUrl,
   isMediaHeaderType,
-  loopCounters,
   resumeFinalStatus,
   sendPhaseProgress,
 } from './send-loop'
@@ -44,15 +43,6 @@ describe('sendPhaseProgress', () => {
   it('no se pasa del tope ni divide entre cero', () => {
     expect(sendPhaseProgress(30, 60, 120, 100)).toBe(90)
     expect(sendPhaseProgress(10, 85, 0, 0)).toBe(95)
-  })
-})
-
-describe('loopCounters', () => {
-  it('sin saltados equivale al conteo original', () => {
-    expect(loopCounters(100, 20, 3, 0)).toEqual({ total: 100, sent: 17, failed: 3 })
-  })
-  it('los saltados salen del total y no cuentan como enviados', () => {
-    expect(loopCounters(100, 20, 3, 5)).toEqual({ total: 95, sent: 12, failed: 3 })
   })
 })
 

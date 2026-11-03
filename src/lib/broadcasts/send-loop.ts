@@ -23,16 +23,6 @@ export function sendPhaseProgress(base: number, span: number, done: number, tota
   return base + Math.round((Math.min(done, total) / total) * span)
 }
 
-/** Live counters after a batch. Skipped recipients leave the total. */
-export function loopCounters(
-  totalAll: number,
-  processed: number,
-  failed: number,
-  skipped: number,
-): { total: number; sent: number; failed: number } {
-  return { total: totalAll - skipped, sent: processed - failed - skipped, failed }
-}
-
 /**
  * Final status after a resume: 'failed' only when no recipient of the
  * whole broadcast got the message (none left in a delivered-ish state).

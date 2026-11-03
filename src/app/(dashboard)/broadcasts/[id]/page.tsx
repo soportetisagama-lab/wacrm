@@ -23,6 +23,8 @@ import {
   type ResumeMediaInfo,
 } from '@/hooks/use-broadcast-sending';
 import { headerMediaProblem } from '@/lib/broadcasts/send-loop';
+import { useBroadcastLiveProgress } from '@/hooks/use-broadcast-live-progress';
+import { liveSendPercent } from '@/lib/broadcasts/send-progress';
 import { useCan } from '@/hooks/use-can';
 import {
   Table,
@@ -189,10 +191,16 @@ export default function BroadcastDetailPage() {
   const [resumeMediaUrl, setResumeMediaUrl] = useState('');
   // The broadcast API requires admin; hide the action for other roles.
   const isAdmin = useCan('manage-members');
-  const { resumeBroadcast, isProcessing, progress, stats } = useBroadcastSending();
+  const { resumeBroadcast, isProcessing } = useBroadcastSending();
 
-  // Bumped after a resume to reload broadcast + recipients.
+  // Bumped after a resume / when the server send ends, to reload
+  // broadcast + recipients.
   const [reloadKey, setReloadKey] = useState(0);
+
+  // The server sends; this page only reads the progress every 3 s.
+  const isSending = broadcast?.status === 'sending';
+  // When the server finishes (or stops), reload the full data once.
+  const live = useBroadcastLiveProgress(broadcastId, isSending, () => setReloadKey((k) => k + 1));
 
   useEffect(() => {
     async function fetchData() {
@@ -261,12 +269,12 @@ export default function BroadcastDetailPage() {
         broadcastId,
         resumeNeedsMedia ? { headerMediaUrl: resumeMediaUrl.trim() } : {},
       );
-      if (res.attempted === 0) {
+      if (res.kind === 'nothing_pending') {
         toast.info(t('resume.toastNothing'));
-      } else if (res.failed > 0) {
-        toast.warning(t('resume.toastDoneWithFailures', { sent: res.sent, failed: res.failed }));
+      } else if (res.kind === 'already_running') {
+        toast.info(t('resume.toastAlreadyRunning'));
       } else {
-        toast.success(t('resume.toastDone', { sent: res.sent }));
+        toast.success(t('resume.toastStarted', { count: res.pending }));
       }
     } catch (err) {
       toast.error(
@@ -396,7 +404,7 @@ export default function BroadcastDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-        {isAdmin && pendingCount > 0 && !isProcessing && (
+        {isAdmin && pendingCount > 0 && !isProcessing && !(isSending && live.workerAlive) && (
           <Button
             size="sm"
             onClick={openResumeDialog}
@@ -452,7 +460,13 @@ export default function BroadcastDetailPage() {
         </div>
       </section>
 
-      <SendProgressPanel isProcessing={isProcessing} progress={progress} stats={stats} />
+      {live.stats && (
+        <SendProgressPanel
+          isProcessing={isSending && live.workerAlive}
+          progress={liveSendPercent(live.stats)}
+          stats={live.stats}
+        />
+      )}
 
       <Dialog open={confirmResume} onOpenChange={setConfirmResume}>
         <DialogContent className="border-border bg-popover sm:max-w-md">

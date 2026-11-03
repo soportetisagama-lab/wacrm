@@ -1028,8 +1028,8 @@
         "confirmTitle": "Reanudar envío",
         "confirmBody": "Se enviará solo a los {count} contactos pendientes. Los que ya recibieron el mensaje no se repiten.",
         "confirmAction": "Reanudar envío",
-        "toastDone": "Envío reanudado: {sent} enviados.",
-        "toastDoneWithFailures": "Envío reanudado: {sent} enviados y {failed} fallidos. Revisa los errores en la tabla.",
+        "toastStarted": "Envío reanudado en el servidor: {count} pendientes. Puedes cerrar esta pestaña.",
+        "toastAlreadyRunning": "Esta difusión ya se está enviando en el servidor.",
         "toastNothing": "No quedaban destinatarios pendientes.",
         "toastError": "No se pudo reanudar el envío: {error}",
         "checkingMedia": "Revisando la cabecera de la plantilla…",
@@ -1049,7 +1049,8 @@
       "toastNotSignedIn": "No has iniciado sesión.",
       "toastNotLinked": "Tu perfil no está vinculado a ninguna cuenta.",
       "toastFailedDraft": "Error al guardar el borrador: {error}",
-      "toastDraftSaved": "Borrador guardado"
+      "toastDraftSaved": "Borrador guardado",
+      "toastStartFailed": "La difusión se creó, pero no se pudo iniciar el envío: {error}. Usa «Reanudar envío» en el detalle."
     },
     "wizard": {
       "next": "Siguiente",
@@ -1154,7 +1155,7 @@
         "etaUnderMinute": "Falta menos de 1 min",
         "allGood": "Todo va bien: los mensajes están saliendo.",
         "manyFailed": "Atención: la mayoría está fallando. Revisa los errores en el detalle de la difusión.",
-        "keepTabOpen": "No cierres ni recargues esta pestaña hasta que termine: el envío se hace desde aquí."
+        "serverSending": "Puedes cerrar esta pestaña: el envío sigue en el servidor."
       }
     }
   },
