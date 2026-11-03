@@ -10,7 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 
 import { createClient } from "@/lib/supabase/client"
 import type {
@@ -20,7 +20,7 @@ import type {
 } from "@/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { formatRelative } from "@/lib/automations/trigger-meta"
+import { formatRelative, isKnownTrigger } from "@/lib/automations/trigger-meta"
 
 export default function AutomationLogsPage({
   params,
@@ -30,6 +30,8 @@ export default function AutomationLogsPage({
   const { id } = use(params)
   const router = useRouter()
   const t = useTranslations("Automations.logs")
+  const tb = useTranslations("Automations.builder")
+  const locale = useLocale()
 
   const [automation, setAutomation] = useState<Automation | null>(null)
   const [logs, setLogs] = useState<AutomationLog[] | null>(null)
@@ -135,12 +137,14 @@ export default function AutomationLogsPage({
                         t("unknownContact")}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {log.trigger_event} · {log.steps_executed?.length ?? 0}{" "}
+                      {isKnownTrigger(log.trigger_event)
+                        ? tb(`triggers.${log.trigger_event}.label`)
+                        : log.trigger_event} · {log.steps_executed?.length ?? 0}{" "}
                       {log.steps_executed?.length === 1 ? t("step", { count: 1 }).replace("1 ", "") : t("stepPlural", { count: log.steps_executed?.length ?? 0 }).replace(/^[0-9]+ /, "")}
                     </div>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {formatRelative(log.created_at)}
+                    {formatRelative(log.created_at, locale) ?? ""}
                   </div>
                 </button>
                 {isOpen && (
@@ -189,6 +193,7 @@ function StatusBadge({ status, t }: { status: AutomationLog["status"], t: Return
 }
 
 function StepRow({ result }: { result: AutomationLogStepResult }) {
+  const tb = useTranslations("Automations.builder")
   const ok = result.status === "success"
   return (
     <li className="flex items-start gap-2 text-xs">
@@ -201,7 +206,9 @@ function StepRow({ result }: { result: AutomationLogStepResult }) {
       >
         {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
       </span>
-      <span className="text-muted-foreground">{result.step_type}</span>
+      <span className="text-muted-foreground">
+        {tb.has(`steps.${result.step_type}`) ? tb(`steps.${result.step_type}`) : result.step_type}
+      </span>
       {result.detail && (
         <span className="truncate text-muted-foreground">— {result.detail}</span>
       )}
