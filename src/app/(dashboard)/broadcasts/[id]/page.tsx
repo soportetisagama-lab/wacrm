@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { metaErrorText } from '@/lib/whatsapp/meta-error-text';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -222,7 +223,7 @@ export default function BroadcastDetailPage() {
       r.sent_at ?? '',
       r.delivered_at ?? '',
       r.read_at ?? '',
-      r.error_message ?? '',
+      metaErrorText(r.error_message) ?? '',
     ]);
     const csv = toCsv([header, ...rows]);
     const safeName = broadcast.name.replace(/[^a-z0-9-_]+/gi, '-').toLowerCase();
@@ -527,8 +528,11 @@ export default function BroadcastDetailPage() {
                           ? new Date(recipient.read_at).toLocaleString()
                           : '-'}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-red-400">
-                        {recipient.error_message ?? '-'}
+                      <TableCell
+                        className="max-w-xs truncate text-xs text-red-400"
+                        title={metaErrorText(recipient.error_message) ?? undefined}
+                      >
+                        {metaErrorText(recipient.error_message) ?? '-'}
                       </TableCell>
                     </TableRow>
                   );
