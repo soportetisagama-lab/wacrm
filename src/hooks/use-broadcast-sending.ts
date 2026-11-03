@@ -498,27 +498,31 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             ...(messageParams ? { messageParams } : {}),
           }));
 
-        if (apiRecipients.length === 0) continue;
-
         try {
-          const res = await fetch('/api/whatsapp/broadcast', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              recipients: apiRecipients,
-              template_name: payload.template.name,
-              template_language: payload.template.language ?? 'en_US',
-            }),
-          });
+          // A batch with no phone numbers skips the API call; the loop
+          // below marks each of those recipients failed (no result).
+          let apiResults: BroadcastApiResult[] = [];
+          if (apiRecipients.length > 0) {
+            const res = await fetch('/api/whatsapp/broadcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                recipients: apiRecipients,
+                template_name: payload.template.name,
+                template_language: payload.template.language ?? 'en_US',
+              }),
+            });
 
-          const data = await res.json();
+            const data = await res.json();
 
-          if (!res.ok) {
-            throw new Error(data.error || 'Falló el envío de la difusión');
+            if (!res.ok) {
+              throw new Error(data.error || 'Falló el envío de la difusión');
+            }
+            apiResults = (data.results ?? []) as BroadcastApiResult[];
           }
 
           const resultsByPhone = new Map<string, BroadcastApiResult>();
-          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
+          for (const r of apiResults) {
             resultsByPhone.set(r.phone, r);
           }
 
