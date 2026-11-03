@@ -17,6 +17,7 @@ import {
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
+import { resolveReplyParent } from '@/lib/whatsapp/template-reply-parent'
 import {
   dispatchInboundToFlows,
   matchesKeywordTrigger,
@@ -1577,11 +1578,22 @@ async function processMessage(
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
   let replyToInternalId: string | null = null
+  // Template the customer is answering, when known — narrows the
+  // template_button_reply automation trigger by template name.
+  let replyToTemplateName: string | null = null
   if (message.context?.id) {
-    replyToInternalId = await lookupInternalIdByMetaId(
-      message.context.id,
-      conversation.id
-    )
+    // Also reconstructs the template bubble when the parent was a
+    // Difusión (never stored in `messages`) or, for a quick-reply tap,
+    // a template sent outside the CRM — see lib/whatsapp/template-reply-parent.
+    const parent = await resolveReplyParent(supabaseAdmin(), {
+      accountId,
+      conversationId: conversation.id,
+      contextId: message.context.id,
+      button: message.type === 'button' && message.button ? message.button : null,
+      inboundAt: new Date(parseInt(message.timestamp) * 1000).toISOString(),
+    })
+    replyToInternalId = parent?.id ?? null
+    replyToTemplateName = parent?.templateName ?? null
     if (!replyToInternalId) {
       console.warn(
         '[webhook] reply context parent not found:',
@@ -1817,6 +1829,34 @@ async function processMessage(
         )
       : false
 
+  // Template quick-reply tap no hardcoded handler owned: let the
+  // account's `template_button_reply` automations answer it. If one
+  // matched, it owns the turn — no flow, no other automation, no AI
+  // reply on top (same reasoning as templateButtonConsumed above).
+  const templateButtonAutomationConsumed =
+    !templateButtonConsumed &&
+    !handoffDoneFromPhone &&
+    message.type === 'button' &&
+    message.button
+      ? (await runAutomationsForTrigger({
+          accountId,
+          triggerType: 'template_button_reply',
+          contactId: contactRecord.id,
+          context: {
+            message_text: message.button.text ?? '',
+            conversation_id: conversation.id,
+            template_button: {
+              text: message.button.text ?? '',
+              payload: message.button.payload,
+              template_name: replyToTemplateName,
+            },
+          },
+        }).catch((err) => {
+          console.error('[automations] template_button_reply dispatch failed:', err)
+          return 0
+        })) > 0
+      : false
+
   // A chat this line just transferred out to another Sagama line: no
   // welcome menu — thanks/stickers get a capped farewell, anything else
   // goes to the AI (see lib/line-transfer-outbound.ts). Taps, template
@@ -1861,7 +1901,7 @@ async function processMessage(
         })
       : null
 
-  const flowResult = templateButtonConsumed || phoneMessageConsumed
+  const flowResult = templateButtonConsumed || templateButtonAutomationConsumed || phoneMessageConsumed
     ? { consumed: true as const }
     : outboundTransferRoute
       ? { consumed: outboundTransferRoute === 'acknowledged' }
