@@ -1026,7 +1026,17 @@
         "failed": "Fallidos"
       },
       "toastFailedDelete": "Error al eliminar: {error}",
-      "toastDeleted": "Difusión eliminada"
+      "toastDeleted": "Difusión eliminada",
+      "resume": {
+        "button": "Reanudar envío ({count} pendientes)",
+        "confirmTitle": "Reanudar envío",
+        "confirmBody": "Se enviará solo a los {count} contactos pendientes. Los que ya recibieron el mensaje no se repiten.",
+        "confirmAction": "Reanudar envío",
+        "toastDone": "Envío reanudado: {sent} enviados.",
+        "toastDoneWithFailures": "Envío reanudado: {sent} enviados y {failed} fallidos. Revisa los errores en la tabla.",
+        "toastNothing": "No quedaban destinatarios pendientes.",
+        "toastError": "No se pudo reanudar el envío: {error}"
+      }
     },
     "new": {
       "title": "Nueva difusión",

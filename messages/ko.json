@@ -1026,7 +1026,17 @@
         "failed": "실패"
       },
       "toastFailedDelete": "삭제하지 못했습니다: {error}",
-      "toastDeleted": "브로드캐스트가 삭제되었습니다"
+      "toastDeleted": "브로드캐스트가 삭제되었습니다",
+      "resume": {
+        "button": "Resume sending ({count} pending)",
+        "confirmTitle": "Resume sending",
+        "confirmBody": "Only the {count} pending contacts will be messaged. Those who already received it are not messaged again.",
+        "confirmAction": "Resume sending",
+        "toastDone": "Sending resumed: {sent} sent.",
+        "toastDoneWithFailures": "Sending resumed: {sent} sent and {failed} failed. Check the errors in the table.",
+        "toastNothing": "There were no pending recipients left.",
+        "toastError": "Could not resume sending: {error}"
+      }
     },
     "new": {
       "title": "새 브로드캐스트",
