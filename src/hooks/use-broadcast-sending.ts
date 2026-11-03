@@ -81,6 +81,9 @@ interface UseBroadcastSendingReturn {
 const SEND_BATCH_SIZE = 10;
 const SEND_BATCH_DELAY_MS = 1000;
 
+/** Retries of a batch the server rejected with 429 (rate limit). */
+const RATE_LIMIT_RETRIES = 5;
+
 /** `broadcast_recipients` inserts are independent of the send rate. */
 const INSERT_BATCH_SIZE = 200;
 
@@ -503,17 +506,26 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           // below marks each of those recipients failed (no result).
           let apiResults: BroadcastApiResult[] = [];
           if (apiRecipients.length > 0) {
-            const res = await fetch('/api/whatsapp/broadcast', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                recipients: apiRecipients,
-                template_name: payload.template.name,
-                template_language: payload.template.language ?? 'en_US',
-              }),
+            const body = JSON.stringify({
+              recipients: apiRecipients,
+              template_name: payload.template.name,
+              template_language: payload.template.language ?? 'en_US',
             });
-
-            const data = await res.json();
+            let res: Response;
+            let data: { error?: string; results?: unknown; retry_after_seconds?: number };
+            // A 429 means "too fast", not a bad batch: wait what the
+            // server asks and resend the same batch instead of failing it.
+            for (let attempt = 0; ; attempt++) {
+              res = await fetch('/api/whatsapp/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body,
+              });
+              data = await res.json();
+              if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
+              const waitSec = Math.min(Math.max(Number(data.retry_after_seconds) || 5, 1), 60);
+              await sleep(waitSec * 1000 + 250);
+            }
 
             if (!res.ok) {
               throw new Error(data.error || 'Falló el envío de la difusión');
