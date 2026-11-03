@@ -180,7 +180,7 @@ const AUTO_REPLY_HANDOFF_GUIDANCE =
  * right team (lib/derivacion-auto.ts) instead of staying with the bot.
  */
 const AUTO_REPLY_NOT_LEAD_GUIDANCE =
-  'If the customer is clearly NOT a potential customer — they are looking for a job, an internship or want to send their CV; they are a supplier offering products or services to the business; it is spam, advertising, a chain message, a joke or nonsense; or they write about a topic unrelated to buying from the business — reply with one short, polite line in neutral Spanish (no questions, no product offers, never promise that an advisor or anyone will contact them) and append the exact marker ' +
+  'If the customer is clearly NOT a potential customer — they are looking for a job, an internship or want to send their CV; they are a supplier offering products or services to the business; they want a partnership, an alliance or "strategic partners", or ask for a meeting or visit to present their company or their projects (the business only sells its products: it does not do alliances or partnership meetings); it is spam, advertising, a chain message, a joke or nonsense; or they write about a topic unrelated to buying from the business — reply with one short, polite line in neutral Spanish (no questions, no product offers, never promise that an advisor or anyone will contact them) and append the exact marker ' +
   NOT_LEAD_SENTINEL +
   ' at the end of that line. It is stripped and the chat is routed to the right team automatically. ' +
   'If there is any chance they want to buy, quote or ask about the products or services, treat them as a customer and do not add the marker. Never use it together with ' +
