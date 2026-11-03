@@ -55,10 +55,22 @@ interface BroadcastPayload {
   headerMediaUrl?: string;
 }
 
+/** Live counters of the send loop, for the progress panel. */
+export interface BroadcastSendStats {
+  total: number;
+  sent: number;
+  failed: number;
+  /** Epoch ms when the send loop started (null before it starts). */
+  startedAt: number | null;
+}
+
+export const EMPTY_SEND_STATS: BroadcastSendStats = { total: 0, sent: 0, failed: 0, startedAt: null };
+
 interface UseBroadcastSendingReturn {
   createAndSendBroadcast: (payload: BroadcastPayload) => Promise<string>;
   isProcessing: boolean;
   progress: number;
+  stats: BroadcastSendStats;
 }
 
 /**
@@ -179,6 +191,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [stats, setStats] = useState<BroadcastSendStats>(EMPTY_SEND_STATS);
 
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     const supabase = createClient();
@@ -329,6 +342,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
     setIsProcessing(true);
     setProgress(0);
+    setStats(EMPTY_SEND_STATS);
 
     const supabase = createClient();
 
@@ -452,6 +466,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       let failedCount = 0;
       const totalRecipients = recipients.length;
+      setStats({ total: totalRecipients, sent: 0, failed: 0, startedAt: Date.now() });
 
       // Media-header templates (image/video/document) require a media
       // URL on every send. Collected in the personalize step and applied
@@ -560,6 +575,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         const progressPct =
           30 + Math.round(((i + batch.length) / totalRecipients) * 60);
         setProgress(progressPct);
+        const processed = Math.min(i + batch.length, totalRecipients);
+        const failedSoFar = failedCount;
+        setStats((s) => ({ ...s, sent: processed - failedSoFar, failed: failedSoFar }));
 
         if (i + SEND_BATCH_SIZE < recipients.length) {
           await sleep(SEND_BATCH_DELAY_MS);
@@ -583,5 +601,5 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     }
   }
 
-  return { createAndSendBroadcast, isProcessing, progress };
+  return { createAndSendBroadcast, isProcessing, progress, stats };
 }
