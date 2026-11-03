@@ -2,6 +2,7 @@
 
 import { Suspense, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
+import { useTranslations } from "next-intl"
 
 import {
   AutomationBuilder,
@@ -25,6 +26,9 @@ export default function NewAutomationPage() {
 function NewAutomationPageInner() {
   const params = useSearchParams()
   const template = params.get("template") as TemplateSlug | null
+  // Quick-start templates are seeded in the UI language so a new
+  // automation starts with a localized name, description and message.
+  const tt = useTranslations("Automations.templates")
 
   const initial: BuilderInitial = useMemo(() => {
     if (template && AUTOMATION_TEMPLATES[template]) {
@@ -33,16 +37,25 @@ function NewAutomationPageInner() {
         t.steps.map((seed, idx) => ({
           index: idx,
           step_type: seed.step_type,
-          step_config: seed.step_config as Record<string, unknown>,
+          step_config: seed.text_key
+            ? { ...(seed.step_config as Record<string, unknown>), text: tt(`${template}.${seed.text_key}`) }
+            : (seed.step_config as Record<string, unknown>),
           branch: seed.branch ?? null,
           parent_index: seed.parent_index ?? null,
         })),
       )
+      const triggerConfig = { ...(t.trigger_config as Record<string, unknown>) }
+      if (t.trigger_type === "keyword_match") {
+        triggerConfig.keywords = tt(`${template}.keywords`)
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean)
+      }
       return {
-        name: t.name,
-        description: t.description,
+        name: tt(`${template}.name`),
+        description: tt(`${template}.description`),
         trigger_type: t.trigger_type,
-        trigger_config: t.trigger_config as Record<string, unknown>,
+        trigger_config: triggerConfig,
         is_active: false,
         steps,
       }
@@ -55,7 +68,7 @@ function NewAutomationPageInner() {
       is_active: false,
       steps: [],
     }
-  }, [template])
+  }, [template, tt])
 
   return <AutomationBuilder initial={initial} />
 }

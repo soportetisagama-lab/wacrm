@@ -1151,10 +1151,10 @@
       "retry": "다시 시도",
       "templatesTitle": "빠른 시작 템플릿",
       "emptyTitle": "아직 자동화가 없습니다",
-      "emptyDesc": "위의 템플릿을 선택하거나 처음부터 새로 만드세요.",
+      "emptyDesc": "빠른 시작 템플릿으로 시작하거나 처음부터 만드세요. 준비될 때까지 비활성 상태로 둘 수 있습니다.",
       "runs": "실행 {count}회",
       "runsPlural": "실행 {count}회",
-      "lastRun": "마지막 실행 {time}",
+      "lastRun": "최근: {time}",
       "activate": "활성화",
       "deactivate": "비활성화",
       "edit": "수정",
@@ -1173,7 +1173,17 @@
         "duplicateError": "복제하지 못했습니다",
         "deleteError": "삭제하지 못했습니다"
       },
-      "openMenu": "메뉴 열기"
+      "openMenu": "메뉴 열기",
+      "never": "없음",
+      "statusActive": "활성",
+      "statusInactive": "비활성",
+      "loadError": "자동화를 불러오지 못했습니다",
+      "untitled": "제목 없는 자동화",
+      "templatesHint": "하나를 눌러 바로 편집할 수 있는 예시로 시작하세요.",
+      "count": "자동화 {count}개",
+      "activeCount": "활성 {count}개",
+      "myAutomations": "내 자동화",
+      "readOnly": "읽기 전용: 현재 역할로는 자동화를 만들 수 없습니다"
     },
     "edit": {
       "loading": "불러오는 중...",
@@ -1230,7 +1240,10 @@
           "label": "버튼 / 목록 응답",
           "hint": "고객이 id가 일치하는 버튼이나 목록 행을 탭했을 때 — 자동화 간 메뉴를 연결할 수 있습니다"
         },
-        "template_button_reply": {"label": "Template Button Reply", "hint": "Customer taps a quick-reply button on a template (never fires on typed text)"},
+        "template_button_reply": {
+          "label": "Template Button Reply",
+          "hint": "Customer taps a quick-reply button on a template (never fires on typed text)"
+        },
         "new_contact_created": {
           "label": "새 연락처 생성됨",
           "hint": "수신 메시지로 연락처가 자동 생성되었을 때"
@@ -1364,7 +1377,75 @@
       "kindAction": "작업",
       "moveUp": "위로 이동",
       "moveDown": "아래로 이동",
-      "schedulePlaceholder": "Cron 표현식 또는 HH:mm"
+      "schedulePlaceholder": "Cron 표현식 또는 HH:mm",
+      "delete": "삭제",
+      "headerLabel": "자동화",
+      "statusActive": "활성",
+      "statusInactive": "비활성",
+      "canvasHint": "+를 눌러 단계를 추가하세요. 위에서 아래로 실행됩니다.",
+      "endOfFlow": "흐름 끝",
+      "preview": {
+        "noText": "아직 텍스트 없음",
+        "noBody": "아직 내용 없음",
+        "pickTemplate": "템플릿을 선택하세요",
+        "noUrl": "URL 없음",
+        "when": "조건: {subject}"
+      },
+      "issues": {
+        "title": "활성화할 수 없음: {message}",
+        "atStep": "{n}단계",
+        "atTrigger": "트리거",
+        "noSteps": "단계를 하나 이상 추가하세요",
+        "text": "메시지 텍스트를 입력하세요",
+        "interactive": "이 단계의 버튼 또는 목록을 확인하세요",
+        "template": "템플릿을 선택하세요",
+        "tag": "태그를 선택하세요",
+        "agent": "\"특정 상담원\" 모드의 상담원을 선택하세요",
+        "field": "업데이트할 필드를 선택하세요",
+        "fieldValue": "필드 값을 입력하세요",
+        "pipeline": "파이프라인을 선택하세요",
+        "stage": "단계를 선택하세요",
+        "dealTitle": "거래 제목을 입력하세요",
+        "waitAmount": "대기 시간은 0보다 커야 합니다",
+        "waitUnit": "분, 시간 또는 일을 선택하세요",
+        "conditionSubject": "조건 대상을 선택하세요",
+        "conditionOperand": "조건 피연산자를 입력하세요",
+        "url": "웹훅 URL을 입력하세요",
+        "urlProtocol": "웹훅 URL은 http 또는 https여야 합니다",
+        "urlInvalid": "웹훅 URL이 올바르지 않습니다",
+        "keywords": "키워드를 하나 이상 추가하세요",
+        "keywordsEmpty": "키워드는 비워 둘 수 없습니다",
+        "matchType": "일치 유형을 선택하세요",
+        "schedule": "일정을 입력하세요",
+        "replyIds": "응답 ID를 하나 이상 추가하세요",
+        "replyIdsEmpty": "응답 ID는 비워 둘 수 없습니다",
+        "buttons": "버튼을 하나 이상 추가하세요",
+        "buttonsEmpty": "버튼은 비워 둘 수 없습니다",
+        "generic": "설정을 확인하세요"
+      }
+    },
+    "templates": {
+      "welcome_message": {
+        "name": "환영 메시지",
+        "description": "처음 연락한 고객에게 인사로 자동 응답합니다.",
+        "message": "안녕하세요! 👋 연락 주셔서 감사합니다. 곧 답변드리겠습니다."
+      },
+      "out_of_office": {
+        "name": "업무 시간 외",
+        "description": "업무 시간 외에 자동 응답하여 아무도 기다리지 않게 합니다.",
+        "message": "메시지 감사합니다! 지금은 업무 시간이 아닙니다. 다음 영업일 오전에 답변드리겠습니다."
+      },
+      "lead_qualifier": {
+        "name": "리드 분류",
+        "description": "견적을 요청한 고객에게 첫 질문을 보내고 상담원에게 배정합니다.",
+        "message": "기꺼이 도와드리겠습니다! 관심 있는 제품과 수량을 알려주시면 곧 상담원이 연락드립니다.",
+        "keywords": "견적, 구매, 주문"
+      },
+      "follow_up_reminder": {
+        "name": "후속 알림",
+        "description": "24시간 내에 답장이 없으면 알림을 보냅니다.",
+        "message": "혹시 다른 문의 사항이 있으신가요? 기꺼이 도와드리겠습니다!"
+      }
     }
   },
   "Flows": {

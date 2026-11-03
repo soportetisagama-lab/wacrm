@@ -108,7 +108,7 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   update_contact_field: { label: "update_contact_field", icon: PencilLine, border: "border-l-primary" },
   create_deal: { label: "create_deal", icon: Briefcase, border: "border-l-primary" },
   wait: { label: "wait", icon: Hourglass, border: "border-l-border" },
-  condition: { label: "condition", icon: GitBranch, border: "border-l-amber-500" },
+  condition: { label: "condition", icon: GitBranch, border: "border-l-chart-3" },
   send_webhook: { label: "send_webhook", icon: Webhook, border: "border-l-primary" },
   close_conversation: { label: "close_conversation", icon: CircleSlash, border: "border-l-primary" },
 }
@@ -671,7 +671,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
     setSaving(true)
     try {
       const payload = {
-        name: state.name || "Untitled automation",
+        name: state.name.trim() || t("untitled"),
         description: state.description || null,
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
@@ -699,11 +699,12 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         const firstIssue: { path?: string; message?: string } | undefined =
           body?.issues?.[0]
         if (firstIssue?.message) {
-          toast.error(firstIssue.message, {
-            description: firstIssue.path ? `at ${firstIssue.path}` : undefined,
-          })
+          toast.error(
+            t("issues.title", { message: t(`issues.${issueKey(firstIssue)}`) }),
+            { description: issueLocation(firstIssue.path, t) },
+          )
         } else {
-          toast.error(body?.error ?? t("toasts.saveFailed"))
+          toast.error(t("toasts.saveFailed"))
         }
         return
       }
@@ -721,23 +722,51 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       {/* Top bar. At sub-sm widths the "Active" label is hidden and the
           switch moves to the right of the save button, so the name input
           gets maximum width. */}
-      <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 py-3 sm:gap-3 sm:px-4">
+      <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-2.5 shadow-sm sm:gap-3 sm:px-5">
         <button
           type="button"
           onClick={() => router.push("/automations")}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
           aria-label={t("backToAutomations")}
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <input
-          value={state.name}
-          onChange={(e) => patchTop("name", e.target.value)}
-          placeholder={t("untitled")}
-          className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
-        />
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="hidden sm:inline">{t("active")}</span>
+        <div
+          className="hidden h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary sm:flex"
+          aria-hidden
+        >
+          <Zap className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="hidden px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase sm:block">
+            {t("headerLabel")}
+          </div>
+          <input
+            value={state.name}
+            onChange={(e) => patchTop("name", e.target.value)}
+            placeholder={t("untitled")}
+            aria-label={t("headerLabel")}
+            className="w-full min-w-0 rounded-lg bg-transparent px-2 py-1 text-sm font-bold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
+          />
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <span
+            className={cn(
+              "hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium sm:inline-flex",
+              state.is_active
+                ? "border-primary/25 bg-primary/10 text-primary"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                state.is_active ? "bg-primary" : "bg-muted-foreground/60",
+              )}
+              aria-hidden
+            />
+            {state.is_active ? t("statusActive") : t("statusInactive")}
+          </span>
           <Switch
             checked={state.is_active}
             onCheckedChange={(v) => patchTop("is_active", !!v)}
@@ -747,7 +776,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <Button
           onClick={save}
           disabled={saving}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="flex-shrink-0 rounded-xl bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {isEditing ? t("save") : t("saveDraft")}
@@ -755,9 +784,12 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       </header>
 
       {/* Canvas */}
-      <div className="relative flex-1 overflow-y-auto">
-        <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
-        <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
+      <div className="relative flex-1 overflow-x-hidden overflow-y-auto bg-muted/30">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:24px_24px] opacity-60" />
+        <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center gap-0 px-3 py-6 sm:px-4 sm:py-10">
+          <p className="mb-4 max-w-sm text-center text-xs text-muted-foreground">
+            {t("canvasHint")}
+          </p>
           <ResourcesProvider>
             <TriggerCard
               type={state.trigger_type}
@@ -776,6 +808,9 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               deleteStepAt={deleteStepAt}
               moveStepAt={moveStepAt}
             />
+            <div className="z-10 rounded-full border border-border bg-card px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
+              {t("endOfFlow")}
+            </div>
           </ResourcesProvider>
         </div>
       </div>
@@ -805,17 +840,17 @@ function TriggerCard({
     // Card width: full on mobile, fixed 320px on sm+. The canvas wrapper
     // (max-w-2xl + px-4) keeps this tidy on tablet/desktop.
     <div className="z-10 w-full max-w-[320px] sm:w-80">
-      <div className="rounded-lg border border-border border-l-4 border-l-blue-500 bg-card shadow-lg">
+      <div className="rounded-xl border border-border border-l-[3px] border-l-primary bg-card shadow-sm transition-shadow hover:shadow-md">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex w-full items-center gap-3 px-4 py-3 text-left"
         >
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-400">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Zap className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] uppercase tracking-wide text-blue-300">{t("trigger")}</div>
+            <div className="text-[11px] font-semibold tracking-wide text-primary uppercase">{t("trigger")}</div>
             <div className="truncate text-sm font-medium text-foreground">
               {t(`triggers.${type}.label`)}
             </div>
@@ -878,7 +913,7 @@ function TriggerCard({
             {type === "tag_added" && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Tag
+                  {t("config.tagLabel")}
                 </label>
                 <TagSelect
                   value={(config.tag_id as string) ?? ""}
@@ -1187,7 +1222,7 @@ function StepRenderer({
       <div className={cn("z-10 flex flex-col", width)}>
         <div
           className={cn(
-            "rounded-lg border border-border border-l-4 bg-card shadow-lg",
+            "rounded-xl border border-border border-l-[3px] bg-card shadow-sm transition-shadow hover:shadow-md",
             meta.border,
           )}
         >
@@ -1197,15 +1232,15 @@ function StepRenderer({
             className="flex w-full items-center gap-3 px-4 py-3 text-left"
           >
             <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
               <Icon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
                 {isCondition ? t("kindCondition") : step.step_type === "wait" ? t("kindWait") : t("kindAction")}
               </div>
               <div className="truncate text-sm font-medium text-foreground">{t(`steps.${meta.label}`)}</div>
-              <div className="truncate text-[11px] text-muted-foreground">{previewFor(step)}</div>
+              <div className="truncate text-[11px] text-muted-foreground">{previewFor(step, t)}</div>
             </div>
             <ChevronDown
               className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")}
@@ -1244,7 +1279,7 @@ function StepRenderer({
                   onClick={() => props.deleteStepAt(path)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  {t("delete", { defaultValue: "Delete" })}
+                  {t("delete")}
                 </Button>
               </div>
             </div>
@@ -1298,7 +1333,7 @@ function ConditionBranches({
       <BranchColumn label={t("branches.yes")} color="text-primary">
         <StepList {...props} steps={yes} parentPath={yesPath} />
       </BranchColumn>
-      <BranchColumn label={t("branches.no")} color="text-rose-400">
+      <BranchColumn label={t("branches.no")} color="text-destructive">
         <StepList {...props} steps={no} parentPath={noPath} />
       </BranchColumn>
     </div>
@@ -1552,7 +1587,7 @@ function StepEditor({
             />
           </FieldBlock>
           {(cfg.subject === "contact_field" || cfg.subject === "message_content") && (
-            <FieldBlock label="Value">
+            <FieldBlock label={t("config.valueLabel")}>
               <Input
                 value={(cfg.value as string) ?? ""}
                 onChange={(e) => set({ value: e.target.value })}
@@ -1584,7 +1619,7 @@ function StepEditor({
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
-          {t("config.closeConversationHint", { defaultValue: "Sets the conversation status to \"closed\". No configuration needed." })}
+          {t("config.closeConversationHint")}
         </p>
       )
     default:
@@ -1607,24 +1642,102 @@ function FieldBlock({
   )
 }
 
-function previewFor(step: BuilderStep): string {
+const WAIT_UNITS = ["minutes", "hours", "days"] as const
+const CONDITION_SUBJECTS = [
+  "tag_presence",
+  "contact_field",
+  "message_content",
+  "time_of_day",
+] as const
+
+function previewFor(step: BuilderStep, t: ReturnType<typeof useTranslations>): string {
+  const cfg = step.step_config
   switch (step.step_type) {
     case "send_message":
-      return (step.step_config.text as string) || "no text yet"
+      return (cfg.text as string) || t("preview.noText")
     case "send_buttons":
     case "send_list":
-      return interactivePayloadPreviewText(asInteractive(step.step_config)) || "no body yet"
+      return interactivePayloadPreviewText(asInteractive(cfg)) || t("preview.noBody")
     case "send_template":
-      return (step.step_config.template_name as string) || "pick a template"
-    case "wait":
-      return `${step.step_config.amount ?? "?"} ${step.step_config.unit ?? ""}`
-    case "condition":
-      return `when ${step.step_config.subject ?? "?"}`
+      return (cfg.template_name as string) || t("preview.pickTemplate")
+    case "wait": {
+      const unit = (cfg.unit as string | undefined) ?? ""
+      const unitLabel = (WAIT_UNITS as readonly string[]).includes(unit)
+        ? t(`config.units.${unit}`).toLowerCase()
+        : unit
+      return `${cfg.amount ?? "?"} ${unitLabel}`
+    }
+    case "condition": {
+      const subject = (cfg.subject as string | undefined) ?? "?"
+      const subjectLabel = (CONDITION_SUBJECTS as readonly string[]).includes(subject)
+        ? t(`config.subjects.${subject}`)
+        : subject
+      return t("preview.when", { subject: subjectLabel })
+    }
     case "send_webhook":
-      return (step.step_config.url as string) || "no url"
+      return (cfg.url as string) || t("preview.noUrl")
     default:
       return ""
   }
+}
+
+// ------------------------------------------------------------
+// Validation issues (the server returns English messages; map them
+// to i18n keys so the toast follows the UI language)
+// ------------------------------------------------------------
+
+const ISSUE_MESSAGE_KEYS: Record<string, string> = {
+  "active automations need at least one step": "noSteps",
+  "message text is required": "text",
+  "template name is required": "template",
+  "tag is required": "tag",
+  'agent is required when mode is "specific"': "agent",
+  "field name is required": "field",
+  "field value is required": "fieldValue",
+  "pipeline is required": "pipeline",
+  "stage is required": "stage",
+  "title is required": "dealTitle",
+  "wait amount must be greater than 0": "waitAmount",
+  "wait unit must be minutes, hours, or days": "waitUnit",
+  "condition subject is required": "conditionSubject",
+  "condition operand is required": "conditionOperand",
+  "webhook URL is required": "url",
+  "webhook URL must use http or https": "urlProtocol",
+  "webhook URL is not a valid URL": "urlInvalid",
+  "at least one keyword is required": "keywords",
+  "keywords cannot be empty strings": "keywordsEmpty",
+  'match type must be "exact", "contains" or "word"': "matchType",
+  "schedule is required": "schedule",
+  "at least one reply id is required": "replyIds",
+  "reply ids cannot be empty strings": "replyIdsEmpty",
+  "at least one button is required": "buttons",
+  "buttons cannot be empty strings": "buttonsEmpty",
+}
+
+function issueKey(issue: { path?: string; message?: string }): string {
+  const key = issue.message ? ISSUE_MESSAGE_KEYS[issue.message] : undefined
+  if (key) return key
+  // Interactive payload errors are dynamic strings from the shared
+  // validator; point the user at the step instead of echoing English.
+  if (issue.path?.endsWith(".interactive")) return "interactive"
+  return "generic"
+}
+
+/** "steps[0].yes.steps[1].text" -> "Paso 1 > Sí > Paso 2". */
+function issueLocation(
+  path: string | undefined,
+  t: ReturnType<typeof useTranslations>,
+): string | undefined {
+  if (!path) return undefined
+  if (path.startsWith("trigger")) return t("issues.atTrigger")
+  const parts: string[] = []
+  const re = /steps\[(\d+)\]|\.(yes|no)\./g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(path)) !== null) {
+    if (m[1] !== undefined) parts.push(t("issues.atStep", { n: Number(m[1]) + 1 }))
+    else if (m[2] === "yes" || m[2] === "no") parts.push(t(`branches.${m[2]}`))
+  }
+  return parts.length > 0 ? parts.join(" › ") : undefined
 }
 
 // ------------------------------------------------------------
