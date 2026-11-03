@@ -80,7 +80,7 @@ export interface DispatchInput {
  * recorded into automation_logs with status='failed'.
  */
 export async function runAutomationsForTrigger(input: DispatchInput): Promise<number> {
-  // How many automations matched (and were run). The webhook uses it to
+  // How many matching automations ran without throwing. The webhook uses it to
   // let a template_button_reply automation own the turn (no AI reply).
   let matched = 0
   try {
@@ -125,9 +125,11 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<nu
 
     for (const automation of automations as Automation[]) {
       if (!triggerMatches(automation, input.context)) continue
-      matched++
       try {
         await executeAutomation(automation, input)
+        // Counted only once it ran: a failed run must not let the
+        // webhook treat the turn as answered (the AI would stay quiet).
+        matched++
       } catch (err) {
         console.error('[automations] execute failed:', automation.id, err)
       }
