@@ -8,6 +8,17 @@ import { fetchAllPages } from '@/lib/broadcasts/audience';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { SendProgressPanel } from '@/components/broadcasts/send-progress-panel';
+import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
+import { useCan } from '@/hooks/use-can';
+import {
   Table,
   TableBody,
   TableCell,
@@ -34,6 +45,7 @@ import {
   Download,
   ChevronDown,
   Trash2,
+  RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -165,6 +177,13 @@ export default function BroadcastDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmResume, setConfirmResume] = useState(false);
+  // The broadcast API requires admin; hide the action for other roles.
+  const isAdmin = useCan('manage-members');
+  const { resumeBroadcast, isProcessing, progress, stats } = useBroadcastSending();
+
+  // Bumped after a resume to reload broadcast + recipients.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     async function fetchData() {
@@ -200,7 +219,32 @@ export default function BroadcastDetailPage() {
     }
 
     fetchData();
-  }, [broadcastId]);
+  }, [broadcastId, reloadKey]);
+
+  const pendingCount = useMemo(
+    () => recipients.filter((r) => r.status === 'pending').length,
+    [recipients],
+  );
+
+  async function handleResume() {
+    setConfirmResume(false);
+    try {
+      const res = await resumeBroadcast(broadcastId);
+      if (res.attempted === 0) {
+        toast.info(t('resume.toastNothing'));
+      } else if (res.failed > 0) {
+        toast.warning(t('resume.toastDoneWithFailures', { sent: res.sent, failed: res.failed }));
+      } else {
+        toast.success(t('resume.toastDone', { sent: res.sent }));
+      }
+    } catch (err) {
+      toast.error(
+        t('resume.toastError', { error: err instanceof Error ? err.message : String(err) }),
+      );
+    } finally {
+      setReloadKey((k) => k + 1);
+    }
+  }
 
   const filteredRecipients = useMemo(
     () =>
@@ -320,6 +364,18 @@ export default function BroadcastDetailPage() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+        {isAdmin && pendingCount > 0 && !isProcessing && (
+          <Button
+            size="sm"
+            onClick={() => setConfirmResume(true)}
+            className="bg-primary font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            {t('resume.button', { count: pendingCount })}
+          </Button>
+        )}
+
         {/* Delete — inline-confirm pattern matches the pipeline-settings
             "Delete Pipeline" flow. Mid-send broadcasts can't be deleted
             because orphaning in-flight Meta messages would leave the
@@ -349,7 +405,7 @@ export default function BroadcastDetailPage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={broadcast.status === 'sending'}
+            disabled={broadcast.status === 'sending' || isProcessing}
             onClick={() => setConfirmDelete(true)}
             title={
               broadcast.status === 'sending'
@@ -362,7 +418,37 @@ export default function BroadcastDetailPage() {
             {t('delete')}
           </Button>
         )}
+        </div>
       </section>
+
+      <SendProgressPanel isProcessing={isProcessing} progress={progress} stats={stats} />
+
+      <Dialog open={confirmResume} onOpenChange={setConfirmResume}>
+        <DialogContent className="border-border bg-popover sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">{t('resume.confirmTitle')}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {t('resume.confirmBody', { count: pendingCount })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmResume(false)}
+              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              onClick={handleResume}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Send className="h-4 w-4" />
+              {t('resume.confirmAction')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
