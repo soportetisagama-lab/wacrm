@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   filterStillPending,
+  headerMediaProblem,
+  pickResumeHeaderMediaUrl,
+  storedHeaderMediaUrl,
   isMediaHeaderType,
   loopCounters,
   resumeFinalStatus,
@@ -57,5 +60,37 @@ describe('resumeFinalStatus', () => {
   it('failed solo si nadie recibió el mensaje', () => {
     expect(resumeFinalStatus(0)).toBe('failed')
     expect(resumeFinalStatus(480)).toBe('sent')
+  })
+})
+
+describe('headerMediaProblem', () => {
+  it('sin cabecera de media no exige nada', () => {
+    expect(headerMediaProblem(false, '')).toBeNull()
+  })
+  it('exige una URL http(s) válida', () => {
+    expect(headerMediaProblem(true, '  ')).toBe('missing')
+    expect(headerMediaProblem(true, 'ftp://x/y.jpg')).toBe('invalid')
+    expect(headerMediaProblem(true, 'no es url')).toBe('invalid')
+    expect(headerMediaProblem(true, 'https://x.com/a.jpg')).toBeNull()
+  })
+})
+
+describe('storedHeaderMediaUrl', () => {
+  it('lee audience_filter.headerMediaUrl', () => {
+    expect(storedHeaderMediaUrl({ type: 'all', headerMediaUrl: ' https://x/a.jpg ' })).toBe('https://x/a.jpg')
+  })
+  it('null si no hay o no es texto', () => {
+    expect(storedHeaderMediaUrl({ type: 'all' })).toBeNull()
+    expect(storedHeaderMediaUrl({ headerMediaUrl: 3 })).toBeNull()
+    expect(storedHeaderMediaUrl(null)).toBeNull()
+  })
+})
+
+describe('pickResumeHeaderMediaUrl', () => {
+  it('prioridad: diálogo, difusión, plantilla', () => {
+    expect(pickResumeHeaderMediaUrl('https://d', 'https://b', 'https://t')).toBe('https://d')
+    expect(pickResumeHeaderMediaUrl('', 'https://b', 'https://t')).toBe('https://b')
+    expect(pickResumeHeaderMediaUrl(undefined, null, 'https://t')).toBe('https://t')
+    expect(pickResumeHeaderMediaUrl(' ', null, undefined)).toBeNull()
   })
 })

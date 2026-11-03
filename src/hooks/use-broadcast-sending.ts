@@ -14,10 +14,13 @@ import {
 import {
   DELIVERED_LIKE_STATUSES,
   filterStillPending,
+  headerMediaProblem,
   isMediaHeaderType,
   loopCounters,
+  pickResumeHeaderMediaUrl,
   resumeFinalStatus,
   sendPhaseProgress,
+  storedHeaderMediaUrl,
 } from '@/lib/broadcasts/send-loop';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -74,6 +77,62 @@ export interface BroadcastSendStats {
 
 export const EMPTY_SEND_STATS: BroadcastSendStats = { total: 0, sent: 0, failed: 0, startedAt: null };
 
+export interface ResumeOptions {
+  /** Header media typed in the resume dialog (wins over stored URLs). */
+  headerMediaUrl?: string;
+}
+
+/** What the resume dialog needs to know about the header media. */
+export interface ResumeMediaInfo {
+  /** image / video / document, or null for text / no header. */
+  mediaHeaderType: MessageTemplate['header_type'] | null;
+  /** URL resume would use without asking (broadcast first, then template). */
+  knownUrl: string | null;
+}
+
+async function fetchTemplateHeader(
+  supabase: ReturnType<typeof createClient>,
+  name: string,
+  language: string,
+): Promise<Pick<MessageTemplate, 'header_type' | 'header_media_url'> | null> {
+  const { data } = await supabase
+    .from('message_templates')
+    .select('header_type, header_media_url')
+    .eq('name', name)
+    .eq('language', language)
+    .limit(1)
+    .maybeSingle();
+  return (data as Pick<MessageTemplate, 'header_type' | 'header_media_url'> | null) ?? null;
+}
+
+/**
+ * For the resume dialog: whether the template header is media and which
+ * URL is already known. `knownUrl` null on a media header means the
+ * dialog must ask for it.
+ */
+export async function fetchResumeMediaInfo(broadcast: {
+  template_name: string;
+  template_language: string | null;
+  audience_filter?: unknown;
+}): Promise<ResumeMediaInfo> {
+  const template = await fetchTemplateHeader(
+    createClient(),
+    broadcast.template_name,
+    broadcast.template_language ?? 'en_US',
+  );
+  if (!isMediaHeaderType(template?.header_type)) {
+    return { mediaHeaderType: null, knownUrl: null };
+  }
+  return {
+    mediaHeaderType: template!.header_type ?? null,
+    knownUrl: pickResumeHeaderMediaUrl(
+      null,
+      storedHeaderMediaUrl(broadcast.audience_filter),
+      template?.header_media_url,
+    ),
+  };
+}
+
 export interface ResumeResult {
   attempted: number;
   sent: number;
@@ -88,7 +147,7 @@ interface UseBroadcastSendingReturn {
    * Sends only the recipients still 'pending' of an existing broadcast
    * (e.g. the original tab was closed mid-send).
    */
-  resumeBroadcast: (broadcastId: string) => Promise<ResumeResult>;
+  resumeBroadcast: (broadcastId: string, options?: ResumeOptions) => Promise<ResumeResult>;
   isProcessing: boolean;
   progress: number;
   stats: BroadcastSendStats;
@@ -595,6 +654,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             tagIds: payload.audience.tagIds,
             customField: payload.audience.customField,
             excludeTagIds: payload.audience.excludeTagIds,
+            // No dedicated column: keep the header media used, so a
+            // later "Resume sending" can reuse it (see resumeBroadcast).
+            ...(isMediaHeaderType(payload.template.header_type) &&
+            payload.headerMediaUrl?.trim()
+              ? { headerMediaUrl: payload.headerMediaUrl.trim() }
+              : {}),
           },
           status: 'sending',
           total_recipients: contacts.length,
@@ -722,7 +787,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     }
   }
 
-  async function resumeBroadcast(broadcastId: string): Promise<ResumeResult> {
+  async function resumeBroadcast(
+    broadcastId: string,
+    options: ResumeOptions = {},
+  ): Promise<ResumeResult> {
     setIsProcessing(true);
     setProgress(0);
     setStats(EMPTY_SEND_STATS);
@@ -734,7 +802,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       // ── Step 1: Broadcast row + template ──────────────────────────
       const { data: bc, error: bcErr } = await supabase
         .from('broadcasts')
-        .select('id, template_name, template_language, template_variables')
+        .select('id, template_name, template_language, template_variables, audience_filter')
         .eq('id', broadcastId)
         .single();
       if (bcErr || !bc) {
@@ -744,21 +812,22 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const templateLanguage = (bc.template_language as string | null) ?? 'en_US';
       const variables = (bc.template_variables ?? {}) as Record<string, VariableMapping>;
 
-      // Only needed to know whether the header is media. No media URL
-      // was stored with the broadcast, so none is sent: the server falls
-      // back to the URL saved on the template.
-      const { data: tpl } = await supabase
-        .from('message_templates')
-        .select('header_type, header_media_url')
-        .eq('name', templateName)
-        .eq('language', templateLanguage)
-        .limit(1)
-        .maybeSingle();
-      const template = tpl as Pick<MessageTemplate, 'header_type' | 'header_media_url'> | null;
-      if (isMediaHeaderType(template?.header_type) && !template?.header_media_url) {
-        throw new Error(
-          'La plantilla tiene una cabecera con imagen, video o documento, pero no tiene la URL guardada. Sincroniza la plantilla antes de reanudar.',
+      // Media header: URL from the dialog, else the one saved with the
+      // broadcast, else the template's. Meta rejects the send without it.
+      const template = await fetchTemplateHeader(supabase, templateName, templateLanguage);
+      let messageParams: { headerMediaUrl: string } | undefined;
+      if (isMediaHeaderType(template?.header_type)) {
+        const headerMediaUrl = pickResumeHeaderMediaUrl(
+          options.headerMediaUrl,
+          storedHeaderMediaUrl(bc.audience_filter),
+          template?.header_media_url,
         );
+        if (!headerMediaUrl || headerMediaProblem(true, headerMediaUrl)) {
+          throw new Error(
+            'La plantilla tiene una cabecera con imagen, video o documento y falta una URL válida. Ingrésala en el diálogo de reanudar.',
+          );
+        }
+        messageParams = { headerMediaUrl };
       }
 
       // ── Step 2: Pending recipients + custom values ────────────────
@@ -804,6 +873,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         templateLanguage,
         variables,
         customValueIndex,
+        messageParams,
         // Fail-closed: if we cannot confirm a row is still pending, stop
         // rather than risk messaging the contact twice.
         strictPendingCheck: true,
