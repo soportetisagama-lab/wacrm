@@ -117,10 +117,11 @@ export const RATE_LIMITS = {
   /** Individual message send. 60/min per user = one per second
    *  sustained, comfortable for a live human typing. */
   send: { limit: 60, windowMs: 60_000 },
-  /** Broadcast dispatch. 5/min per user — even a 1 000-recipient
-   *  broadcast is one call; this caps the rate at which a single user
-   *  can launch campaigns, not the messages inside one. */
-  broadcast: { limit: 5, windowMs: 60_000 },
+  /** Broadcast dispatch. The wizard sends one call per batch of 10
+   *  recipients with a 1 s pause (use-broadcast-sending), so a
+   *  campaign needs up to ~60 calls/min: 5/min made large broadcasts
+   *  fail batches with 429. The client also waits and retries on 429. */
+  broadcast: { limit: 90, windowMs: 60_000 },
   /** Reaction add/swap/remove. More permissive than send — users
    *  fidget with reactions and a single "swap" is actually two calls
    *  (remove + add) under the hood. */
