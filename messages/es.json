@@ -1146,15 +1146,15 @@
   "Automations": {
     "list": {
       "title": "Automatizaciones",
-      "subtitle": "Creá flujos de trabajo que reaccionan automáticamente a eventos de WhatsApp®.",
+      "subtitle": "Crea flujos que responden solos a los eventos de WhatsApp®.",
       "create": "Crear automatización",
       "retry": "Reintentar",
       "templatesTitle": "Plantillas de inicio rápido",
-      "emptyTitle": "Todavía no hay automatizaciones",
-      "emptyDesc": "Elige una plantilla de arriba o crea una desde cero.",
+      "emptyTitle": "Aún no tienes automatizaciones",
+      "emptyDesc": "Empieza con una plantilla de inicio rápido o crea una desde cero. Puedes dejarla inactiva hasta que esté lista.",
       "runs": "{count} ejecución",
       "runsPlural": "{count} ejecuciones",
-      "lastRun": "última {time}",
+      "lastRun": "Última: {time}",
       "activate": "Activar",
       "deactivate": "Desactivar",
       "edit": "Editar",
@@ -1173,7 +1173,17 @@
         "duplicateError": "Error al duplicar",
         "deleteError": "Error al eliminar"
       },
-      "openMenu": "Abrir menú"
+      "openMenu": "Abrir menú",
+      "never": "nunca",
+      "statusActive": "Activa",
+      "statusInactive": "Inactiva",
+      "loadError": "No se pudieron cargar las automatizaciones",
+      "untitled": "Automatización sin título",
+      "templatesHint": "Toca una para empezar con un ejemplo listo para editar.",
+      "count": "{count, plural, one {# automatización} other {# automatizaciones}}",
+      "activeCount": "{count, plural, one {# activa} other {# activas}}",
+      "myAutomations": "Tus automatizaciones",
+      "readOnly": "Solo lectura: tu rol no puede crear automatizaciones"
     },
     "edit": {
       "loading": "Cargando...",
@@ -1184,7 +1194,7 @@
       "title": "Registros de ejecución",
       "loadError": "Error al cargar los registros",
       "emptyTitle": "Todavía no hay ejecuciones",
-      "emptyDesc": "Activá esta automatización para ver ejecuciones acá.",
+      "emptyDesc": "Activa esta automatización para ver sus ejecuciones aquí.",
       "unknownContact": "Contacto desconocido",
       "step": "{count} paso",
       "stepPlural": "{count} pasos",
@@ -1230,7 +1240,10 @@
           "label": "Respuesta de botón / lista",
           "hint": "El cliente toca un botón o fila de lista cuyo id coincide — encadena menús entre automatizaciones"
         },
-        "template_button_reply": {"label": "Respuesta a botón de plantilla", "hint": "El cliente toca un botón de respuesta rápida de una plantilla (no se activa si lo escribe a mano)"},
+        "template_button_reply": {
+          "label": "Respuesta a botón de plantilla",
+          "hint": "El cliente toca un botón de respuesta rápida de una plantilla (no se activa si lo escribe a mano)"
+        },
         "new_contact_created": {
           "label": "Nuevo contacto creado",
           "hint": "Cuando se crea automáticamente un contacto a partir de un mensaje entrante"
@@ -1298,7 +1311,7 @@
         "stageIdLabel": "Id de etapa",
         "selectPipeline": "Seleccionar un embudo…",
         "selectStage": "Seleccionar una etapa…",
-        "selectPipelineFirst": "Primero seleccioná un embudo…",
+        "selectPipelineFirst": "Primero selecciona un embudo…",
         "unknownPipeline": "{id} (embudo desconocido)",
         "unknownStage": "{id} (etapa desconocida)"
       },
@@ -1355,7 +1368,7 @@
         "matchType": "Tipo de coincidencia",
         "matchContains": "Contiene",
         "matchWord": "Palabra completa",
-        "matchWordHint": "Coincide con la palabra clave solo como palabra independiente, así \"k\" ya no se activa con \"gracias\". Mejor para palabras clave cortas en idiomas separados por espacios; usá Contiene para idiomas escritos sin espacios.",
+        "matchWordHint": "Coincide con la palabra clave solo como palabra independiente, así \"k\" ya no se activa con \"gracias\". Es mejor para palabras clave cortas en idiomas separados por espacios; usa Contiene para idiomas escritos sin espacios.",
         "matchExact": "Exacto",
         "closeConversationHint": "Establece el estado de la conversación en \"cerrada\". No requiere configuración."
       },
@@ -1364,7 +1377,75 @@
       "kindAction": "Acción",
       "moveUp": "Mover arriba",
       "moveDown": "Mover abajo",
-      "schedulePlaceholder": "Expresión cron o HH:mm"
+      "schedulePlaceholder": "Expresión cron o HH:mm",
+      "delete": "Eliminar",
+      "headerLabel": "Automatización",
+      "statusActive": "Activa",
+      "statusInactive": "Inactiva",
+      "canvasHint": "Toca + para agregar pasos. Se ejecutan de arriba hacia abajo.",
+      "endOfFlow": "Fin del flujo",
+      "preview": {
+        "noText": "Sin texto aún",
+        "noBody": "Sin contenido aún",
+        "pickTemplate": "Elige una plantilla",
+        "noUrl": "Sin URL",
+        "when": "Si: {subject}"
+      },
+      "issues": {
+        "title": "No se puede activar: {message}",
+        "atStep": "Paso {n}",
+        "atTrigger": "Disparador",
+        "noSteps": "agrega al menos un paso",
+        "text": "escribe el texto del mensaje",
+        "interactive": "revisa los botones o la lista de este paso",
+        "template": "elige una plantilla",
+        "tag": "elige una etiqueta",
+        "agent": "elige un agente para el modo \"Agente específico\"",
+        "field": "elige el campo a actualizar",
+        "fieldValue": "escribe el valor del campo",
+        "pipeline": "elige un embudo",
+        "stage": "elige una etapa",
+        "dealTitle": "escribe el título del negocio",
+        "waitAmount": "la espera debe ser mayor que 0",
+        "waitUnit": "elige minutos, horas o días",
+        "conditionSubject": "elige qué evalúa la condición",
+        "conditionOperand": "completa el operando de la condición",
+        "url": "escribe la URL del webhook",
+        "urlProtocol": "la URL del webhook debe usar http o https",
+        "urlInvalid": "la URL del webhook no es válida",
+        "keywords": "agrega al menos una palabra clave",
+        "keywordsEmpty": "las palabras clave no pueden estar vacías",
+        "matchType": "elige un tipo de coincidencia",
+        "schedule": "escribe el cronograma",
+        "replyIds": "agrega al menos un id de respuesta",
+        "replyIdsEmpty": "los ids de respuesta no pueden estar vacíos",
+        "buttons": "agrega al menos un botón",
+        "buttonsEmpty": "los botones no pueden estar vacíos",
+        "generic": "revisa la configuración"
+      }
+    },
+    "templates": {
+      "welcome_message": {
+        "name": "Mensaje de bienvenida",
+        "description": "Responde con un saludo a los contactos que te escriben por primera vez.",
+        "message": "¡Hola! 👋 Gracias por escribirnos. En breve te atendemos."
+      },
+      "out_of_office": {
+        "name": "Fuera de horario",
+        "description": "Responde fuera del horario de atención para que nadie se quede esperando.",
+        "message": "¡Gracias por tu mensaje! En este momento estamos fuera de horario. Te responderemos a primera hora del siguiente día hábil."
+      },
+      "lead_qualifier": {
+        "name": "Calificar prospectos",
+        "description": "Haz una pregunta inicial a quien pide una cotización y asígnalo a un asesor.",
+        "message": "¡Con gusto te ayudamos! Cuéntanos qué producto te interesa y en qué cantidad, y un asesor te atenderá en breve.",
+        "keywords": "cotización, cotizar, comprar"
+      },
+      "follow_up_reminder": {
+        "name": "Recordatorio de seguimiento",
+        "description": "Envía un recordatorio si el contacto no ha respondido en 24 horas.",
+        "message": "Hola, solo queríamos saber si tienes alguna otra consulta. ¡Con gusto te ayudamos!"
+      }
     }
   },
   "Flows": {
