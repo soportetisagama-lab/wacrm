@@ -134,6 +134,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "first_inbound_message" },
   { value: "keyword_match" },
   { value: "interactive_reply" },
+  { value: "template_button_reply" },
   { value: "new_contact_created" },
   { value: "conversation_assigned" },
   { value: "tag_added" },
@@ -854,6 +855,26 @@ function TriggerCard({
             {type === "interactive_reply" && (
               <InteractiveReplyConfig config={config} onChange={onConfigChange} t={t} />
             )}
+            {type === "template_button_reply" && (
+              <>
+                <CommaListConfig
+                  config={config}
+                  field="buttons"
+                  label={t("templateButtons")}
+                  placeholder={t("templateButtonsHint")}
+                  help={t("templateButtonsHelp")}
+                  onChange={onConfigChange}
+                />
+                <CommaListConfig
+                  config={config}
+                  field="template_names"
+                  label={t("templateNames")}
+                  placeholder={t("templateNamesHint")}
+                  help={t("templateNamesHelp")}
+                  onChange={onConfigChange}
+                />
+              </>
+            )}
             {type === "tag_added" && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -977,6 +998,55 @@ function KeywordMatchConfig({
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Comma-separated list stored as string[] under `field` (draft-then-commit). */
+function CommaListConfig({
+  config,
+  field,
+  label,
+  placeholder,
+  help,
+  onChange,
+}: {
+  config: Record<string, unknown>
+  field: string
+  label: string
+  placeholder: string
+  help: string
+  onChange: (c: Record<string, unknown>) => void
+}) {
+  const values = (config?.[field] as string[] | undefined) ?? []
+  const [draft, setDraft] = useState(values.join(", "))
+
+  function commit() {
+    const parsed = draft
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+    setDraft(parsed.join(", "))
+    onChange({ ...config, [field]: parsed })
+  }
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</label>
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault()
+            commit()
+          }
+        }}
+        placeholder={placeholder}
+        className="bg-muted text-foreground"
+      />
+      <p className="mt-1 text-[11px] text-muted-foreground">{help}</p>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import type {
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
+  TemplateButtonReplyTriggerConfig,
   TagTriggerConfig,
   SendMessageStepConfig,
   SendButtonsStepConfig,
@@ -23,6 +24,7 @@ import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
+import { normalizeLabel } from '@/lib/whatsapp/template-reply-parent'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { canBeAssignedConversation } from '@/lib/auth/roles'
 import { canAssignAgentToContact, contactChannel } from '@/lib/conversations/assignee-guard'
@@ -44,6 +46,17 @@ export interface AutomationContext {
   agent_id?: string
   /** Button / list-row id the customer tapped, for interactive_reply. */
   interactive_reply_id?: string
+  /**
+   * Quick-reply button tapped on a TEMPLATE message (Meta `type: 'button'`),
+   * for template_button_reply. Only ever set from a real tap, never from
+   * typed text, so a hand-written "Sí" can't fire it.
+   */
+  template_button?: {
+    text: string
+    payload?: string
+    /** Name of the template the tap answers, when the CRM stored it. */
+    template_name?: string | null
+  }
 }
 
 export interface DispatchInput {
@@ -66,7 +79,10 @@ export interface DispatchInput {
  * All errors are caught and logged; per-automation failures are
  * recorded into automation_logs with status='failed'.
  */
-export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
+export async function runAutomationsForTrigger(input: DispatchInput): Promise<number> {
+  // How many automations matched (and were run). The webhook uses it to
+  // let a template_button_reply automation own the turn (no AI reply).
+  let matched = 0
   try {
     const db = supabaseAdmin()
 
@@ -86,11 +102,11 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .maybeSingle()
       if (ownErr) {
         console.error('[automations] contact ownership check failed:', ownErr)
-        return
+        return matched
       }
       if (!owned) {
         console.warn('[automations] contact not in account, refusing dispatch', input.contactId)
-        return
+        return matched
       }
     }
 
@@ -103,12 +119,13 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
 
     if (error) {
       console.error('[automations] fetch failed:', error)
-      return
+      return matched
     }
-    if (!automations || automations.length === 0) return
+    if (!automations || automations.length === 0) return matched
 
     for (const automation of automations as Automation[]) {
       if (!triggerMatches(automation, input.context)) continue
+      matched++
       try {
         await executeAutomation(automation, input)
       } catch (err) {
@@ -118,6 +135,7 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
   } catch (err) {
     console.error('[automations] dispatch failed:', err)
   }
+  return matched
 }
 
 /**
@@ -736,6 +754,23 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
       return false
     }
     return cfg.reply_ids.includes(replyId)
+  }
+
+  // Quick-reply tap on a template. Matches the button text OR its payload
+  // (case/accent-insensitive, exact), optionally narrowed to some template
+  // names. Never matches typed text: ctx.template_button only exists for a
+  // real `type: 'button'` webhook message.
+  if (automation.trigger_type === 'template_button_reply') {
+    const cfg = automation.trigger_config as TemplateButtonReplyTriggerConfig
+    const tap = ctx?.template_button
+    if (!tap || !Array.isArray(cfg?.buttons) || cfg.buttons.length === 0) return false
+    const wanted = cfg.buttons.map(normalizeLabel).filter(Boolean)
+    const got = [tap.text, tap.payload ?? ''].map(normalizeLabel).filter(Boolean)
+    if (!wanted.some((w) => got.includes(w))) return false
+    const names = (cfg.template_names ?? []).map((n) => n.trim().toLowerCase()).filter(Boolean)
+    if (names.length === 0) return true
+    const tplName = (tap.template_name ?? '').trim().toLowerCase()
+    return Boolean(tplName) && names.includes(tplName)
   }
 
   if (automation.trigger_type === 'tag_added') {

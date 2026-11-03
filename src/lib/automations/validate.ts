@@ -203,6 +203,13 @@ export function validateTriggerForActivation(
         message: 'reply ids cannot be empty strings',
       })
     }
+  } else if (triggerType === 'template_button_reply') {
+    const b = cfg.buttons
+    if (!Array.isArray(b) || b.length === 0) {
+      issues.push({ path: 'trigger.buttons', message: 'at least one button is required' })
+    } else if (b.some((v) => typeof v !== 'string' || v.trim() === '')) {
+      issues.push({ path: 'trigger.buttons', message: 'buttons cannot be empty strings' })
+    }
   }
 
   return issues
