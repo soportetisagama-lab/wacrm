@@ -32,6 +32,11 @@ const META_ERRORS: ReadonlyArray<{ re: RegExp; texto: string }> = [
     texto: 'Demasiados mensajes seguidos a este número. Espera unos minutos y vuelve a intentar.',
   },
   {
+    // Our own API limiter (429), not Meta: the batch went too fast.
+    re: /^rate limit exceeded$/i,
+    texto: 'El sistema frenó este lote por ir muy rápido (no fue Meta). Reenvíalo en otra difusión.',
+  },
+  {
     // 131042: payment problem on the Meta account.
     re: /business eligibility payment|payment issue|\b131042\b/i,
     texto: 'Hay un problema de pago en la cuenta de Meta. Revisa el método de pago en WhatsApp Manager.',
