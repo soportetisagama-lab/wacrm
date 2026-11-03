@@ -1135,7 +1135,15 @@
         "sending": "Sending...",
         "preparing": "Preparing...",
         "progressDesc": "Processing {current} of {total} recipients...",
-        "toastFailedPreview": "Failed to load preview data"
+        "toastFailedPreview": "Failed to load preview data",
+        "statsProcessed": "{done} of {total} processed ({pct}%)",
+        "statsSent": "✓ {count} sent",
+        "statsFailed": "✗ {count} failed",
+        "eta": "~{min} min left",
+        "etaUnderMinute": "Less than 1 min left",
+        "allGood": "All good: messages are going out.",
+        "manyFailed": "Warning: most messages are failing. Check the errors in the broadcast details.",
+        "keepTabOpen": "Do not close or reload this tab until it finishes: the send runs from here."
       }
     }
   },

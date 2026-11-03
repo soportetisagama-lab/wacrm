@@ -1135,7 +1135,15 @@
         "sending": "Enviando...",
         "preparing": "Preparando...",
         "progressDesc": "Procesando {current} de {total} destinatarios...",
-        "toastFailedPreview": "Error al cargar los datos de vista previa"
+        "toastFailedPreview": "Error al cargar los datos de vista previa",
+        "statsProcessed": "{done} de {total} procesados ({pct}%)",
+        "statsSent": "✓ {count} enviados",
+        "statsFailed": "✗ {count} fallidos",
+        "eta": "Faltan ~{min} min",
+        "etaUnderMinute": "Falta menos de 1 min",
+        "allGood": "Todo va bien: los mensajes están saliendo.",
+        "manyFailed": "Atención: la mayoría está fallando. Revisa los errores en el detalle de la difusión.",
+        "keepTabOpen": "No cierres ni recargues esta pestaña hasta que termine: el envío se hace desde aquí."
       }
     }
   },
