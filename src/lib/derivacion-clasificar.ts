@@ -86,7 +86,9 @@ export function buildClasificarPrompt(businessContext?: string | null): string {
       '- "atc" con motivo:\n' +
       '  - "trabajo": busca empleo, prácticas o quiere dejar su CV.\n' +
       '  - "spam": spam, publicidad, cadenas, bromas, niños jugando con el celular o mensajes y audios sin sentido.\n' +
-      '  - "proveedor": ofrece productos o servicios a la empresa (vende, no compra).\n' +
+      '  - "proveedor": ofrece productos o servicios a la empresa (vende, no compra), o busca alianzas, "socios estratégicos", ' +
+      'convenios o una reunión o visita para presentar su empresa o sus proyectos. La empresa solo vende sus productos: ' +
+      'eso no es un lead aunque mencione proyectos, salvo que pida cotizar productos concretos.\n' +
       '  - "otro_tema": habla de otro tema y no quiere comprar ni cotizar.\n' +
       '  - "extranjero": el número es extranjero Y el pedido no es para Perú (entrega o uso fuera de Perú).\n' +
       'Un número extranjero por sí solo NO basta: si el cliente pide para Perú (entrega, obra o empresa en Perú), es "lead". ' +
