@@ -508,6 +508,9 @@ export function decideCollectAiOutcome(args: {
     return { kind: "complete", message: result.replyText.trim() };
   }
   if (turnCount >= maxTurns) {
+    // Out of questions but the required data is in: finish normally
+    // (no closing from the model — its text here is one more question).
+    if (collectAiRequiredFieldsPresent(fields, vars)) return { kind: "complete", message: "" };
     return { kind: "handoff", reason: "max_turns_exhausted" };
   }
   if (!result.replyText.trim()) {
@@ -2027,8 +2030,9 @@ export const COLLECT_AI_HANDOFF_REASON_VAR = "__collect_ai_motivo_derivacion";
  *  before handing off with `repeated_question`. */
 const MAX_REPEATED_QUESTIONS = 2;
 /** Few questions, as in the general assistant: whatever a collect_ai
- *  node's own max_turns says, after this many customer replies the
- *  chat goes to an advisor with what was collected. */
+ *  node's own max_turns says, after this many customer replies the node
+ *  completes if the required data is in, or goes to an advisor with
+ *  what was collected. */
 export const MAX_COLLECT_AI_TURNS = 3;
 
 /** Only the question being asked — "Perfecto, ya quedó registrado.
@@ -2259,7 +2263,8 @@ async function handleCollectAiOutcome(
     fields: cfg.fields,
     vars: run.vars,
     turnCount: run.ai_turn_count,
-    maxTurns: Math.min(cfg.max_turns, MAX_COLLECT_AI_TURNS),
+    // Without intro_text the opening question already used one model turn.
+    maxTurns: Math.min(cfg.max_turns, MAX_COLLECT_AI_TURNS + (cfg.intro_text?.trim() ? 0 : 1)),
   });
 
   if (decision.kind === "handoff") {
