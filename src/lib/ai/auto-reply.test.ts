@@ -247,6 +247,7 @@ import {
   runAutoReplyForPendingBurst,
   runAutoReplyNow,
 } from './auto-reply'
+import { NOT_LEAD_REPLIED_SUMMARY } from './defaults'
 import {
   ASK_PHONE_TEXT,
   NO_PHONE_GIVE_UP_TEXT,
@@ -610,7 +611,7 @@ describe('dispatchInboundToAiReply — non-text inbound (image/video/audio/stick
 })
 
 describe('dispatchInboundToAiReply — not a lead (job seeker, supplier, spam)', () => {
-  it('sends the courtesy line, then hands off and schedules the derivation once', async () => {
+  it('sends only the courtesy line: no handoff, no derivation', async () => {
     h.generateReply.mockResolvedValue({
       text: 'Gracias por escribirnos. Las vacantes se publican en nuestras redes oficiales.',
       handoff: false,
@@ -622,10 +623,8 @@ describe('dispatchInboundToAiReply — not a lead (job seeker, supplier, spam)',
     const sent = h.engineSendText.mock.calls[0][0] as { text: string }
     // Only the courtesy line: no menu hint, no advisor closing.
     expect(sent.text).toBe('Gracias por escribirnos. Las vacantes se publican en nuestras redes oficiales.')
-    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true, status: 'pending' })
-    expect(h.state.updatePayload?.ai_handoff_summary).toContain('no parece un cliente')
-    expect(h.programarDerivacionAuto).toHaveBeenCalledTimes(1)
-    expect(h.programarDerivacionAuto).toHaveBeenCalledWith(expect.anything(), 'conv-1')
+    expect(h.state.updatePayload).toEqual({ ai_handoff_summary: NOT_LEAD_REPLIED_SUMMARY })
+    expect(h.programarDerivacionAuto).not.toHaveBeenCalled()
   })
 
   it('a normal reply neither hands off nor derives', async () => {
