@@ -4793,3 +4793,28 @@ describe("collect_ai: pocas preguntas", () => {
     expect(MAX_COLLECT_AI_TURNS).toBe(3);
   });
 });
+
+describe("collect_ai: tope de preguntas", () => {
+  it("al llegar al tope con los datos obligatorios completa normal", () => {
+    expect(
+      decideCollectAiOutcome({
+        result: extractResult({ replyText: "¿Algo más?" }),
+        fields: FIELDS,
+        vars: { equipos: "cocina", ciudad: "Lima" },
+        turnCount: 3,
+        maxTurns: 3,
+      }),
+    ).toEqual({ kind: "complete", message: "" });
+  });
+  it("al llegar al tope sin los datos deriva con lo recogido", () => {
+    expect(
+      decideCollectAiOutcome({
+        result: extractResult({ replyText: "¿En qué ciudad?" }),
+        fields: FIELDS,
+        vars: { equipos: "cocina" },
+        turnCount: 3,
+        maxTurns: 3,
+      }),
+    ).toEqual({ kind: "handoff", reason: "max_turns_exhausted" });
+  });
+});
