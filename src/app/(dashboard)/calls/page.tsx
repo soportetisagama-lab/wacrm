@@ -10,8 +10,10 @@ import {
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
+  Phone,
   Search,
 } from "lucide-react";
+import { PageHero } from "@/components/layout/page-hero";
 
 import { createClient } from "@/lib/supabase/client";
 import { CallContactButton } from "@/components/calls/call-contact-button";
@@ -105,11 +107,8 @@ export default function CallsPage() {
             : duration(r.duration_seconds);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{t("pageTitle")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("pageDesc")}</p>
-      </div>
+    <div className="w-full min-w-0 space-y-4">
+      <PageHero icon={Phone} title={t("pageTitle")} subtitle={t("pageDesc")} />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative flex-1">
@@ -143,9 +142,9 @@ export default function CallsPage() {
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
       ) : visible.length === 0 ? (
-        <p className="py-12 text-center text-sm text-muted-foreground">{t("empty")}</p>
+        <p className="rounded-2xl border border-dashed border-border bg-card py-12 text-center text-sm text-muted-foreground">{t("empty")}</p>
       ) : (
-        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+        <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           {visible.map((r) => {
             const missed = MISSED.has(r.status);
             const Icon = missed ? PhoneMissed : r.direction === "outbound" ? PhoneOutgoing : PhoneIncoming;
