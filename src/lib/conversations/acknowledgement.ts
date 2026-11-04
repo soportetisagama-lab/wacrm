@@ -43,8 +43,6 @@ export async function routeAcknowledgement(args: {
       .eq('id', args.conversationId)
       .maybeSingle()
     if (conv?.assigned_agent_id) return null
-    // Not a customer and already answered: a closing "ok" gets nothing.
-    if (conv?.ai_handoff_summary === NOT_LEAD_REPLIED_SUMMARY) return 'acknowledged'
 
     const { data: activeRuns } = await args.db
       .from('flow_runs')
@@ -53,6 +51,9 @@ export async function routeAcknowledgement(args: {
       .eq('status', 'active')
       .limit(1)
     if (activeRuns && activeRuns.length > 0) return null
+
+    // Not a customer and already answered: a closing "ok" gets nothing.
+    if (conv?.ai_handoff_summary === NOT_LEAD_REPLIED_SUMMARY) return 'acknowledged'
 
     const since = new Date(Date.now() - FAREWELL_WINDOW_HOURS * 3600_000).toISOString()
     const { count } = await args.db
