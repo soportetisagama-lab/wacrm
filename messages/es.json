@@ -742,7 +742,7 @@
       "company": "Empresa",
       "createdAt": "Creado el",
       "customFields": "Campos personalizados",
-      "noCustomFields": "No hay campos personalizados definidos. Creálos en Configuración.",
+      "noCustomFields": "No hay campos personalizados definidos. Créalos en Configuración.",
       "manageFields": "Gestionar campos",
       "enterCustomField": "Ingresa {name}...",
       "activityTab": {
