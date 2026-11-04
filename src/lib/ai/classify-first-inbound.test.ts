@@ -17,6 +17,7 @@ vi.mock('./usage', () => ({ logAiUsage: h.logAiUsage }))
 
 import {
   classifyFirstInboundContext,
+  isJobSeekerMessage,
   isLocationOrHoursQuery,
   parseClassification,
 } from './classify-first-inbound'
@@ -263,5 +264,22 @@ describe('classifyFirstInboundContext — fail-open', () => {
     await expect(
       classifyFirstInboundContext(fakeDb, 'acct-1', 'conv-1', 'Necesito cotizar una cocina'),
     ).resolves.toBeDefined()
+  })
+})
+
+describe('not a lead', () => {
+  it('parseClassification lee not_lead', () => {
+    expect(parseClassification({ has_context: true, not_lead: true, reason: 'x' })).toEqual({ hasContext: true, notLead: true, reason: 'x' })
+  })
+  it('detecta a quien busca trabajo sin confundir a un cliente', () => {
+    expect(isJobSeekerMessage('me gustaría saber si hay alguna vacante para trabajar con ustedes')).toBe(true)
+    expect(isJobSeekerMessage('Les envío mi currículum')).toBe(true)
+    expect(isJobSeekerMessage('Busco trabajo')).toBe(true)
+    expect(isJobSeekerMessage('busco trabajo de soldadura para mi local')).toBe(false)
+    expect(isJobSeekerMessage('quiero cotizar góndolas para mi minimarket')).toBe(false)
+  })
+  it('el backstop marca not_lead sin llamar al modelo', async () => {
+    const r = await classifyFirstInboundContext({} as never, 'acct-1', 'conv-1', 'Hola, ¿tienen vacantes?')
+    expect(r.notLead).toBe(true)
   })
 })
