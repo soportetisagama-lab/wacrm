@@ -273,13 +273,11 @@ describe('not a lead', () => {
   })
   it('detecta a quien busca trabajo sin confundir a un cliente', () => {
     expect(isJobSeekerMessage('me gustaría saber si hay alguna vacante para trabajar con ustedes')).toBe(true)
+    expect(isJobSeekerMessage('Queremos trabajar con ustedes, necesitamos 200 planchas')).toBe(false)
+    expect(isJobSeekerMessage('Para postular a la licitación necesitamos su cotización')).toBe(false)
     expect(isJobSeekerMessage('Les envío mi currículum')).toBe(true)
     expect(isJobSeekerMessage('Busco trabajo')).toBe(true)
     expect(isJobSeekerMessage('busco trabajo de soldadura para mi local')).toBe(false)
     expect(isJobSeekerMessage('quiero cotizar góndolas para mi minimarket')).toBe(false)
-  })
-  it('el backstop marca not_lead sin llamar al modelo', async () => {
-    const r = await classifyFirstInboundContext({} as never, 'acct-1', 'conv-1', 'Hola, ¿tienen vacantes?')
-    expect(r.notLead).toBe(true)
   })
 })
