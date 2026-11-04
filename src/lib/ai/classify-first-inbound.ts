@@ -91,7 +91,7 @@ export function isLocationOrHoursQuery(text: string): boolean {
  *  applicant uses, so a customer asking for work to be done ("busco
  *  quien me haga un mueble") never matches. */
 const JOB_SEEKER_RE =
-  /\bvacantes?\b|curr[ií]cul|\bhoja de vida\b|\bbolsa de trabajo\b|\bpostular(?:me)?\b|\boportunidad(?:es)? laboral(?:es)?\b|\b(?:busco|buscando) (?:empleo|trabajo)\s*(?:$|[.,!]|con ustedes|en su empresa)|\btrabajar (?:con|para) ustedes\b/i
+  /\bvacantes?\b|curr[ií]cul|\bhoja de vida\b|\bbolsa de trabajo\b|\boportunidad(?:es)? laboral(?:es)?\b|\b(?:busco|buscando) (?:empleo|trabajo)\s*(?:$|[.,!]|con ustedes|en su empresa)/i
 
 export function isJobSeekerMessage(text: string): boolean {
   return JOB_SEEKER_RE.test(text)
@@ -140,9 +140,6 @@ export async function classifyFirstInboundContext(
   text: string,
 ): Promise<ClassifyFirstInboundResult> {
   const trimmed = text.trim()
-  if (isJobSeekerMessage(trimmed)) {
-    return { hasContext: true, notLead: true, reason: 'job seeker (regex backstop)' }
-  }
   if (isLocationOrHoursQuery(trimmed)) {
     return { hasContext: true, reason: 'asks for location or opening hours (regex backstop)' }
   }
@@ -162,6 +159,10 @@ export async function classifyFirstInboundContext(
   }
   if (!config) {
     return { hasContext: false, reason: 'ai not configured or inactive for this account' }
+  }
+  // Only with the AI on: it is the assistant that answers a non-lead.
+  if (isJobSeekerMessage(trimmed)) {
+    return { hasContext: true, notLead: true, reason: 'job seeker (regex backstop)' }
   }
 
   const providerArgs = {
