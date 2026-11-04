@@ -16,7 +16,7 @@ import {
   nextOpeningPhrase,
 } from '@/lib/flows/business-hours'
 import { generateReply } from './generate'
-import { buildSystemPrompt } from './defaults'
+import { buildSystemPrompt, NOT_LEAD_REPLIED_SUMMARY } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { writeHandoffBrief } from './handoff-brief'
 import { logAiUsage } from './usage'
@@ -1026,9 +1026,8 @@ export async function runAutoReplyNow(
     }
     const { text, handoff, sendDocument, usage } = generation
     // Not a potential buyer (job seeker, supplier, spam, other topic):
-    // the courtesy line goes out and the chat is handed off right after,
-    // so the derivation classifier routes it (ATC). Not while a handoff
-    // waits for the number (heldQuestion) — that one is already going.
+    // only the courtesy line goes out — no handoff, no derivation. Not
+    // while a handoff waits for the number (heldQuestion).
     const notLead = generation.notLead === true && !heldQuestion
 
     // The model took a few seconds: if the conversation moved on meanwhile
@@ -1198,31 +1197,19 @@ export async function runAutoReplyNow(
       aiGenerated: true,
     })
 
-    // Once per conversation: a thread already handed off was already
-    // derived (programarDerivacionAuto is also idempotent on its own).
-    if (notLead && !conv.ai_autoreply_disabled) {
-      await handOffToHuman(db, {
-        accountId,
-        conversationId,
-        contactId,
-        configOwnerUserId,
-        config,
-        assignedAgentId: conv.assigned_agent_id,
-        summary: NOT_LEAD_SUMMARY,
-        // The courtesy line above is the only message: no advisor promise, no phone ask.
-        notifyCustomer: false,
-        brief: true,
-      })
+    // Answered and done: the chat is not passed to anyone. The note lets
+    // a later "ok" / "gracias" go unanswered (routeAcknowledgement).
+    if (notLead) {
+      const { error: markErr } = await db
+        .from('conversations')
+        .update({ ai_handoff_summary: NOT_LEAD_REPLIED_SUMMARY })
+        .eq('id', conversationId)
+      if (markErr) console.error('[ai auto-reply] not-lead mark failed:', markErr.message)
     }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
 }
-
-/** Handoff note when the assistant saw that the chat is not a potential
- *  buyer; the derivation (lib/derivacion-auto.ts) confirms lead vs ATC. */
-export const NOT_LEAD_SUMMARY =
-  '🤖 El asistente respondió y derivó: no parece un cliente (busca trabajo, proveedor, spam u otro tema).'
 
 /** Courtesy line when the model only sent the not-lead marker. */
 export const NOT_LEAD_FALLBACK_TEXT = 'Gracias por escribirnos. Este WhatsApp es solo para consultas comerciales.'
