@@ -60,6 +60,8 @@ import {
   findEntryFlow,
   findEntryFlowWithContext,
   normalizeQuestionText,
+  collectAiQuestionKey,
+  MAX_COLLECT_AI_TURNS,
   collectAiHandoffReasonText,
   buildCollectedFieldsBrief,
   dispatchInboundToFlows,
@@ -4694,5 +4696,16 @@ describe("handoff note keeps the customer's answers when the AI is unavailable",
     await handleCollectAiReply(db, run, node, new Map());
 
     expect(pendingSummary(updates) ?? "").not.toContain("📋");
+  });
+});
+
+describe("collect_ai: pocas preguntas", () => {
+  it("la misma pregunta con otra frase delante cuenta como repetida", () => {
+    expect(collectAiQuestionKey("Perfecto, ya quedó registrado. ¿Qué tipo de negocio es: minimarket, bodega, tienda u otro?")).toBe(
+      collectAiQuestionKey("Gracias, ya registré el tamaño. ¿Qué tipo de negocio es: minimarket, bodega, tienda u otro?"),
+    );
+  });
+  it("como máximo 3 respuestas del cliente antes de pasar a un asesor", () => {
+    expect(MAX_COLLECT_AI_TURNS).toBe(3);
   });
 });

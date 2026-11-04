@@ -2026,6 +2026,18 @@ export const COLLECT_AI_HANDOFF_REASON_VAR = "__collect_ai_motivo_derivacion";
 /** Verbatim repeats tolerated (each answered with a reworded question)
  *  before handing off with `repeated_question`. */
 const MAX_REPEATED_QUESTIONS = 2;
+/** Few questions, as in the general assistant: whatever a collect_ai
+ *  node's own max_turns says, after this many customer replies the
+ *  chat goes to an advisor with what was collected. */
+export const MAX_COLLECT_AI_TURNS = 3;
+
+/** Only the question being asked — "Perfecto, ya quedó registrado.
+ *  ¿Qué tipo de negocio es?" and "Gracias. ¿Qué tipo de negocio es?"
+ *  are the same question for the repeat guard. */
+export function collectAiQuestionKey(text: string): string {
+  const start = text.lastIndexOf("¿");
+  return normalizeQuestionText(start >= 0 ? text.slice(start) : text);
+}
 
 /** Lowercase, accent/punctuation/emoji-free, single-spaced — so "¿Qué
  *  tipo de espacio vas a equipar? 🙂" equals "que tipo de espacio vas a
@@ -2150,7 +2162,7 @@ async function guardRepeatedCollectAiQuestion(
   cfg: CollectAiNodeConfig,
   message: string,
 ): Promise<{ kind: "send"; text: string; aiGenerated: boolean } | { kind: "handoff" }> {
-  const normalized = normalizeQuestionText(message);
+  const normalized = collectAiQuestionKey(message);
   const prev = run.vars[COLLECT_AI_LAST_QUESTION_VAR] as
     | { node?: string; text?: string; repeats?: number }
     | undefined;
@@ -2247,7 +2259,7 @@ async function handleCollectAiOutcome(
     fields: cfg.fields,
     vars: run.vars,
     turnCount: run.ai_turn_count,
-    maxTurns: cfg.max_turns,
+    maxTurns: Math.min(cfg.max_turns, MAX_COLLECT_AI_TURNS),
   });
 
   if (decision.kind === "handoff") {
