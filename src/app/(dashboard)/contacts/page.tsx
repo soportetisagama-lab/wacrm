@@ -50,6 +50,7 @@ import {
   Filter,
   X,
 } from 'lucide-react';
+import { PageHero } from '@/components/layout/page-hero';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
@@ -361,22 +362,13 @@ export default function ContactsPage() {
 
   return (
     <div className={cn("space-y-6", embedded && "p-4")}>
-      {/* Header — wrapped in its own card when embedded so the title
-          and subtitle read as a designed block instead of plain text
-          floating on the page background. */}
-      <div
-        className={cn(
-          "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4",
-          embedded && "rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
-        )}
-      >
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {totalCount > 0 ? t('subtitle', { count: totalCount }) : t('subtitleZero')}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Header — boxed like the other sections. */}
+      <PageHero
+        icon={Users}
+        title={t('title')}
+        subtitle={totalCount > 0 ? t('subtitle', { count: totalCount }) : t('subtitleZero')}
+        actions={
+          <>
           {canEditSettings && (
             <Button
               variant="outline"
@@ -406,8 +398,9 @@ export default function ContactsPage() {
             <Plus className="size-4" />
             {t('addContactBtn')}
           </GatedButton>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Search + tag filter */}
       <div className="space-y-2">
