@@ -163,11 +163,20 @@ export default function AutomationsPage() {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
-      {/* Header — same shape as Panel: title + subtitle left, actions right. */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      {/* Header — boxed like the broadcast detail: icon + title left, action right. */}
+      <section className="relative isolate flex flex-wrap items-center justify-between gap-3 overflow-hidden rounded-3xl border border-border bg-card px-5 py-5 shadow-sm sm:px-8">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-32"
+          style={{ background: "radial-gradient(60% 100% at 50% 0%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 75%)" }}
+        />
+        <div className="flex min-w-0 items-center gap-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden>
+          <Zap className="h-5 w-5" />
+        </span>
         <div className="min-w-0">
-          <h1 className="text-xl font-extrabold text-foreground sm:text-2xl">{t("title")}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("subtitle")}</p>
+          <h1 className="text-2xl leading-tight font-extrabold tracking-tight text-foreground">{t("title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("subtitle")}</p>
           {automations && automations.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium tabular-nums text-foreground shadow-sm">
@@ -179,8 +188,9 @@ export default function AutomationsPage() {
             </div>
           )}
         </div>
+        </div>
         {createButton}
-      </div>
+      </section>
 
       {error ? (
         <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
