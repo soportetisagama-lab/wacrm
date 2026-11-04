@@ -961,6 +961,9 @@ export async function findEntryFlowWithContext(
           message.text,
         );
       }
+      // Not a potential customer (job seeker, supplier, alliance): no
+      // welcome menu — the assistant replies with its polite line.
+      if (firstInboundContext.notLead) return none;
       if (firstInboundContext.hasContext) {
         welcomeWithQuestion = flow;
         continue;
@@ -987,6 +990,7 @@ export async function findEntryFlowWithContext(
           message.text,
         );
       }
+      if (firstInboundContext.notLead) return none;
       return { flow, answerWithAi: firstInboundContext.hasContext };
     }
     // 'manual' triggers do not auto-start from inbound messages.

@@ -39,13 +39,18 @@ const CLASSIFY_SCHEMA = {
       description:
         'True if the message already states a concrete request — mentions a product, asks for a quote, describes the customer\'s business, or asks something specific (including location/address, opening hours, shipping/delivery or payment methods). False for a generic greeting with no information ("Hola", "Buenas", "Información", a bare emoji).',
     },
+    not_lead: {
+      type: 'boolean',
+      description:
+        'True if the sender is clearly NOT a potential customer: looking for a job, internship or vacancy, sending a CV or portfolio to work there; a supplier offering products or services; proposing an alliance, partnership or presentation meeting; spam or unrelated topics. False for anyone who might buy.',
+    },
     reason: {
       type: 'string',
       description:
         'One short sentence explaining the classification — for logs/debugging only, never shown to the customer.',
     },
   },
-  required: ['has_context', 'reason'],
+  required: ['has_context', 'not_lead', 'reason'],
   additionalProperties: false,
 } as const
 
@@ -58,6 +63,8 @@ export function buildClassifyPrompt(businessContext?: string | null): string {
       'Evalúa si el mensaje ya trae una consulta concreta (menciona un producto, pide cotización, describe su negocio/rubro, ' +
       'pregunta por la ubicación/dirección, los horarios de atención, los envíos/delivery o las formas de pago, ' +
       'o pregunta algo específico) o si es solo un saludo genérico sin información ("Hola", "Buenas", "Información", emojis solos). ' +
+      'Marca además `not_lead` si quien escribe claramente no es un posible cliente: busca trabajo o vacante, envía su CV o portafolio, ' +
+      'ofrece productos o servicios como proveedor, propone alianzas o reuniones de presentación, o es spam. ' +
       'Responde siempre llamando a la tool con `has_context` y una razón breve.',
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
   ]
@@ -80,8 +87,22 @@ export function isLocationOrHoursQuery(text: string): boolean {
   return LOCATION_OR_HOURS_RE.test(text)
 }
 
+/** Deterministic backstop for job seekers — wording that only a job
+ *  applicant uses, so a customer asking for work to be done ("busco
+ *  quien me haga un mueble") never matches. */
+const JOB_SEEKER_RE =
+  /\bvacantes?\b|curr[ií]cul|\bhoja de vida\b|\bbolsa de trabajo\b|\bpostular(?:me)?\b|\boportunidad(?:es)? laboral(?:es)?\b|\b(?:busco|buscando) (?:empleo|trabajo)\s*(?:$|[.,!]|con ustedes|en su empresa)|\btrabajar (?:con|para) ustedes\b/i
+
+export function isJobSeekerMessage(text: string): boolean {
+  return JOB_SEEKER_RE.test(text)
+}
+
 export interface ClassifyFirstInboundResult {
   hasContext: boolean
+  /** The sender is clearly not a potential customer (job seeker,
+   *  supplier, alliance, spam): no welcome menu — the assistant answers
+   *  directly with its polite "not a lead" line. */
+  notLead?: boolean
   /** Brief reason from the model (or a fixed one for the short-circuit /
    *  fail-open paths) — logged for debugging, never sent to the customer. */
   reason: string
@@ -95,6 +116,7 @@ export function parseClassification(raw: unknown): ClassifyFirstInboundResult {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   return {
     hasContext: obj.has_context === true,
+    ...(obj.not_lead === true ? { notLead: true } : {}),
     reason: typeof obj.reason === 'string' ? obj.reason.trim() : '',
   }
 }
@@ -118,6 +140,9 @@ export async function classifyFirstInboundContext(
   text: string,
 ): Promise<ClassifyFirstInboundResult> {
   const trimmed = text.trim()
+  if (isJobSeekerMessage(trimmed)) {
+    return { hasContext: true, notLead: true, reason: 'job seeker (regex backstop)' }
+  }
   if (isLocationOrHoursQuery(trimmed)) {
     return { hasContext: true, reason: 'asks for location or opening hours (regex backstop)' }
   }
@@ -169,7 +194,7 @@ export async function classifyFirstInboundContext(
 
     const parsed = parseClassification(result.data)
     console.log(
-      `[ai classify] first-inbound classification for account ${accountId}: has_context=${parsed.hasContext} — ${parsed.reason}`,
+      `[ai classify] first-inbound classification for account ${accountId}: has_context=${parsed.hasContext} not_lead=${parsed.notLead} — ${parsed.reason}`,
     )
     return parsed
   } catch (err) {
