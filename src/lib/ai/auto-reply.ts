@@ -1199,10 +1199,14 @@ export async function runAutoReplyNow(
 
     // Answered and done: the chat is not passed to anyone. The note lets
     // a later "ok" / "gracias" go unanswered (routeAcknowledgement).
-    if (notLead) {
+    // Never over a real handoff note (a derived chat nobody took yet).
+    // A normal reply later clears the mark: they turned out to be a customer.
+    const markNotLead = notLead && !conv.ai_autoreply_disabled && !conv.ai_handoff_summary
+    const clearNotLead = !notLead && conv.ai_handoff_summary === NOT_LEAD_REPLIED_SUMMARY
+    if (markNotLead || clearNotLead) {
       const { error: markErr } = await db
         .from('conversations')
-        .update({ ai_handoff_summary: NOT_LEAD_REPLIED_SUMMARY })
+        .update({ ai_handoff_summary: markNotLead ? NOT_LEAD_REPLIED_SUMMARY : null })
         .eq('id', conversationId)
       if (markErr) console.error('[ai auto-reply] not-lead mark failed:', markErr.message)
     }
