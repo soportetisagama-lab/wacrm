@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import type { Notification } from "@/types";
 import { Bell, BellOff, BellRing, CheckCheck, Loader2, UserPlus } from "lucide-react";
+import { PageHero } from "@/components/layout/page-hero";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 import { useTranslations } from "next-intl";
@@ -233,39 +234,26 @@ export default function NotificationsPage() {
 
   return (
     <div className={cn("space-y-6", embedded && "p-4")}>
-      <div
-        className={cn(
-          "flex items-center justify-between",
-          // items-center + justify-between let the button sit flush
-          // against the title on the same row with no wrap — on a
-          // narrow phone, "Notificaciones" + description on one side
-          // and the (icon + text) button on the other don't both fit,
-          // and neither side had room to give, so the button spilled
-          // past the card's own edge, then past the screen. Stacking
-          // instead removes that width pressure entirely.
-          embedded && "flex-col items-start gap-3 rounded-2xl border border-border/40 bg-card p-4 shadow-sm"
-        )}
-      >
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("description")}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={unreadIds.length === 0 || markingAll}
-          onClick={markAllRead}
-        >
-          {markingAll ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckCheck className="h-4 w-4" />
-          )}
-          {t("markAllAsRead")}
-        </Button>
-      </div>
+      <PageHero
+        icon={Bell}
+        title={t("title")}
+        subtitle={t("description")}
+        actions={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={unreadIds.length === 0 || markingAll}
+              onClick={markAllRead}
+            >
+              {markingAll ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCheck className="h-4 w-4" />
+              )}
+              {t("markAllAsRead")}
+            </Button>
+        }
+      />
 
       {notifPermission !== "unsupported" && (
         <div
