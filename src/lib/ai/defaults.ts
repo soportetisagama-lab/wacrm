@@ -33,6 +33,13 @@ export const HANDOFF_SENTINEL = '[[HANDOFF]]'
  */
 export const NOT_LEAD_SENTINEL = '[[NO_LEAD]]'
 
+/** Left in `conversations.ai_handoff_summary` after the bot answered a
+ *  non-customer (job seeker, supplier, spam). The chat stays with the bot,
+ *  unassigned; a later "ok" / "gracias" gets no reply
+ *  (lib/conversations/acknowledgement.ts). */
+export const NOT_LEAD_REPLIED_SUMMARY =
+  '🙅 El asistente respondió: no es cliente (busca trabajo, proveedor u otro tema). No se derivó.'
+
 /**
  * Backstop for the sentinel: the bot's own reply already says this
  * chat is not for buying (the account prompt or a learned rule taught
@@ -176,13 +183,13 @@ const AUTO_REPLY_HANDOFF_GUIDANCE =
 
 /**
  * Auto-reply only: a chat that is clearly not a potential customer gets
- * one courtesy line plus NOT_LEAD_SENTINEL, so it is routed to the
- * right team (lib/derivacion-auto.ts) instead of staying with the bot.
+ * one courtesy line plus NOT_LEAD_SENTINEL. It is not handed off: the
+ * bot only answers, and a later "ok" / "gracias" gets no reply.
  */
 const AUTO_REPLY_NOT_LEAD_GUIDANCE =
   'If the customer is clearly NOT a potential customer — they are looking for a job, an internship or want to send their CV; they are a supplier offering products or services to the business; it is spam, advertising, a chain message, a joke or nonsense; or they write about a topic unrelated to buying from the business — reply with one short, polite line in neutral Spanish (no questions, no product offers, never promise that an advisor or anyone will contact them) and append the exact marker ' +
   NOT_LEAD_SENTINEL +
-  ' at the end of that line. It is stripped and the chat is routed to the right team automatically. ' +
+  ' at the end of that line. It is stripped; the chat stays with you and is not passed to anyone. ' +
   'If they propose a partnership, an alliance or "strategic partners", or ask for a meeting or visit to present their company or their projects, without asking to buy or quote specific products: the business only sells its products. ' +
   'Reply with one or two warm lines in neutral Spanish that thank them, say the company is dedicated only to selling its products and does not do alliances or presentation meetings, and wish them success ' +
   '(for example: "Muchas gracias por escribirnos y por considerarnos. Somos una empresa dedicada únicamente a la venta de nuestros productos, por lo que no realizamos alianzas ni reuniones de presentación. ¡Les deseamos muchos éxitos en sus proyectos!"). ' +

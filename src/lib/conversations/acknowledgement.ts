@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/flows/meta-send'
+import { NOT_LEAD_REPLIED_SUMMARY } from '@/lib/ai/defaults'
 import {
   answersPendingQuestion,
   isAcknowledgement,
@@ -38,10 +39,12 @@ export async function routeAcknowledgement(args: {
 
     const { data: conv } = await args.db
       .from('conversations')
-      .select('assigned_agent_id')
+      .select('assigned_agent_id, ai_handoff_summary')
       .eq('id', args.conversationId)
       .maybeSingle()
     if (conv?.assigned_agent_id) return null
+    // Not a customer and already answered: a closing "ok" gets nothing.
+    if (conv?.ai_handoff_summary === NOT_LEAD_REPLIED_SUMMARY) return 'acknowledged'
 
     const { data: activeRuns } = await args.db
       .from('flow_runs')
