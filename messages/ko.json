@@ -1155,8 +1155,29 @@
         "etaUnderMinute": "Less than 1 min left",
         "allGood": "All good: messages are going out.",
         "manyFailed": "Warning: most messages are failing. Check the errors in the broadcast details.",
-        "serverSending": "이 탭을 닫아도 됩니다. 전송은 서버에서 계속됩니다."
+        "serverSending": "이 탭을 닫아도 됩니다. 전송은 서버에서 계속됩니다.",
+        "replyTagLabel": "응답한 사람에게 붙일 태그",
+        "replyTagHint": "선택 사항. 이 브로드캐스트에 응답한 모든 연락처(템플릿 버튼을 누르거나 메시지를 입력)에 이 태그가 붙습니다. 응답하지 않은 사람에게는 붙지 않습니다."
       }
+    },
+    "replyTag": {
+      "placeholder": "태그를 선택하거나 새로 입력하세요",
+      "clear": "지우기",
+      "useExisting": "기존 태그 “{name}”을(를) 사용합니다.",
+      "willCreate": "새 태그 “{name}”이(가) 생성됩니다.",
+      "noTags": "아직 태그가 없습니다. 이름을 입력해 만드세요.",
+      "detailButton": "응답한 사람에게 태그 붙이기",
+      "current": "응답: {name}",
+      "currentHover": "클릭해 응답자 태그를 변경하세요",
+      "dialogTitle": "응답한 사람에게 태그 붙이기",
+      "dialogBody": "태그를 선택하거나 입력하세요. 이미 응답한 {count}명의 연락처에 지금 붙이고, 앞으로 새로 응답하는 모든 연락처에도 붙입니다.",
+      "apply": "태그 적용",
+      "applying": "적용 중…",
+      "remove": "태그 붙이기 중지",
+      "nameRequired": "태그를 입력하거나 선택하세요.",
+      "toastDone": "태그 “{name}” 적용: 응답한 {replied}명 중 {tagged}명에 태그를 붙였습니다.",
+      "toastRemoved": "더 이상 응답자에게 태그를 붙이지 않습니다. 이미 붙은 태그는 유지됩니다.",
+      "toastError": "태그를 적용할 수 없습니다: {error}"
     }
   },
   "Automations": {
