@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { SendProgressPanel } from '@/components/broadcasts/send-progress-panel';
 import { HeaderMediaInput } from '@/components/broadcasts/header-media-input';
+import { ReplyTagPicker } from '@/components/broadcasts/reply-tag-picker';
 import {
   fetchResumeMediaInfo,
   useBroadcastSending,
@@ -54,6 +55,7 @@ import {
   ChevronDown,
   Trash2,
   RotateCw,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -193,6 +195,13 @@ export default function BroadcastDetailPage() {
   const isAdmin = useCan('manage-members');
   const { resumeBroadcast, isProcessing } = useBroadcastSending();
 
+  // "Etiquetar a los que respondieron" (reply_tag_id, migration 090).
+  const tReply = useTranslations('Broadcasts.replyTag');
+  const [replyTag, setReplyTag] = useState<{ id: string; name: string; color: string } | null>(null);
+  const [replyTagOpen, setReplyTagOpen] = useState(false);
+  const [replyTagName, setReplyTagName] = useState('');
+  const [replyTagSaving, setReplyTagSaving] = useState(false);
+
   // Bumped after a resume / when the server send ends, to reload
   // broadcast + recipients.
   const [reloadKey, setReloadKey] = useState(0);
@@ -215,6 +224,17 @@ export default function BroadcastDetailPage() {
 
         if (bcError) throw bcError;
         setBroadcast(bc);
+
+        if (bc?.reply_tag_id) {
+          const { data: tag } = await supabase
+            .from('tags')
+            .select('id, name, color')
+            .eq('id', bc.reply_tag_id)
+            .maybeSingle();
+          setReplyTag(tag ?? null);
+        } else {
+          setReplyTag(null);
+        }
 
         // Paged: a plain select stops at 1000 rows (PostgREST cap), so
         // larger broadcasts showed "Destinatarios (1000)".
@@ -282,6 +302,70 @@ export default function BroadcastDetailPage() {
       );
     } finally {
       setReloadKey((k) => k + 1);
+    }
+  }
+
+  const repliedCount = useMemo(
+    () => recipients.filter((r) => r.status === 'replied' && r.contact_id).length,
+    [recipients],
+  );
+
+  function openReplyTagDialog() {
+    setReplyTagName(replyTag?.name ?? '');
+    setReplyTagOpen(true);
+  }
+
+  async function handleApplyReplyTag() {
+    const tagName = replyTagName.trim();
+    if (!tagName) {
+      toast.error(tReply('nameRequired'));
+      return;
+    }
+    setReplyTagSaving(true);
+    try {
+      const res = await fetch(`/api/broadcasts/${encodeURIComponent(broadcastId)}/reply-tag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tagName }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        tagName?: string;
+        replied?: number;
+        tagged?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      toast.success(
+        tReply('toastDone', {
+          name: data.tagName ?? tagName,
+          tagged: data.tagged ?? 0,
+          replied: data.replied ?? 0,
+        }),
+      );
+      setReplyTagOpen(false);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      toast.error(tReply('toastError', { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setReplyTagSaving(false);
+    }
+  }
+
+  async function handleRemoveReplyTag() {
+    setReplyTagSaving(true);
+    try {
+      const res = await fetch(`/api/broadcasts/${encodeURIComponent(broadcastId)}/reply-tag`, {
+        method: 'DELETE',
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      toast.success(tReply('toastRemoved'));
+      setReplyTagOpen(false);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      toast.error(tReply('toastError', { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setReplyTagSaving(false);
     }
   }
 
@@ -404,6 +488,27 @@ export default function BroadcastDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+        {isAdmin && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={openReplyTagDialog}
+            disabled={replyTagSaving}
+            title={replyTag ? tReply('currentHover') : undefined}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            <TagIcon className="h-3.5 w-3.5" />
+            {replyTag ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: replyTag.color }} />
+                {tReply('current', { name: replyTag.name })}
+              </span>
+            ) : (
+              tReply('detailButton')
+            )}
+          </Button>
+        )}
+
         {isAdmin && pendingCount > 0 && !isProcessing && !(isSending && live.workerAlive) && (
           <Button
             size="sm"
@@ -467,6 +572,46 @@ export default function BroadcastDetailPage() {
           stats={live.stats}
         />
       )}
+
+      <Dialog open={replyTagOpen} onOpenChange={setReplyTagOpen}>
+        <DialogContent className="border-border bg-popover sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">{tReply('dialogTitle')}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {tReply('dialogBody', { count: repliedCount })}
+            </DialogDescription>
+          </DialogHeader>
+          <ReplyTagPicker value={replyTagName} onChange={setReplyTagName} disabled={replyTagSaving} />
+          <DialogFooter>
+            {replyTag && (
+              <Button
+                variant="outline"
+                onClick={handleRemoveReplyTag}
+                disabled={replyTagSaving}
+                className="mr-auto border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10"
+              >
+                {tReply('remove')}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setReplyTagOpen(false)}
+              disabled={replyTagSaving}
+              className="border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              onClick={handleApplyReplyTag}
+              disabled={replyTagSaving || !replyTagName.trim()}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {replyTagSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <TagIcon className="h-4 w-4" />}
+              {replyTagSaving ? tReply('applying') : tReply('apply')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmResume} onOpenChange={setConfirmResume}>
         <DialogContent className="border-border bg-popover sm:max-w-md">

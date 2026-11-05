@@ -808,16 +808,68 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
     if (error || !recs || recs.length === 0) return
 
     const row = recs[0]
-    const { error: updErr } = await supabaseAdmin()
+    // Gated on the status again so a concurrent inbound message that
+    // already flipped the row doesn't count (or tag) twice.
+    const { data: flipped, error: updErr } = await supabaseAdmin()
       .from('broadcast_recipients')
       .update({ status: 'replied', replied_at: new Date().toISOString() })
       .eq('id', row.id)
+      .in('status', ['sent', 'delivered', 'read'])
+      .select('id')
 
     if (updErr) {
       console.error('Error marking broadcast recipient replied:', updErr)
+      return
     }
+    if (!flipped || flipped.length === 0) return
+
+    await tagBroadcastReplierIfConfigured(accountId, contactId, row.broadcast_id)
   } catch (err) {
     console.error('flagBroadcastReplyIfAny failed:', err)
+  }
+}
+
+/**
+ * "Etiqueta para quienes respondan" (migration 090): when the broadcast
+ * has a `reply_tag_id`, put it on the contact that just replied. Read in
+ * its own query so the replied flag keeps working before 090 is applied.
+ * Best-effort: errors are logged, never thrown.
+ */
+async function tagBroadcastReplierIfConfigured(
+  accountId: string,
+  contactId: string,
+  broadcastId: string
+) {
+  try {
+    const { data: bc, error: bcErr } = await supabaseAdmin()
+      .from('broadcasts')
+      .select('reply_tag_id')
+      .eq('id', broadcastId)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (bcErr || !bc?.reply_tag_id) return
+
+    // The tag must belong to the same account (the FK alone doesn't
+    // guarantee it).
+    const { data: tag } = await supabaseAdmin()
+      .from('tags')
+      .select('id')
+      .eq('id', bc.reply_tag_id)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (!tag) return
+
+    const { error: tagErr } = await supabaseAdmin()
+      .from('contact_tags')
+      .upsert(
+        { contact_id: contactId, tag_id: tag.id },
+        { onConflict: 'contact_id,tag_id', ignoreDuplicates: true }
+      )
+    if (tagErr) {
+      console.error('Error tagging broadcast replier:', tagErr)
+    }
+  } catch (err) {
+    console.error('tagBroadcastReplierIfConfigured failed:', err)
   }
 }
 
