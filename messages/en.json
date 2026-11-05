@@ -1159,8 +1159,29 @@
         "etaUnderMinute": "Less than 1 min left",
         "allGood": "All good: messages are going out.",
         "manyFailed": "Warning: most messages are failing. Check the errors in the broadcast details.",
-        "serverSending": "You can close this tab: the send keeps running on the server."
+        "serverSending": "You can close this tab: the send keeps running on the server.",
+        "replyTagLabel": "Tag for those who reply",
+        "replyTagHint": "Optional. Every contact who replies to this broadcast (taps a template button or types) gets this tag. Those who don't reply get nothing."
       }
+    },
+    "replyTag": {
+      "placeholder": "Pick a tag or type a new one",
+      "clear": "Clear",
+      "useExisting": "The existing tag “{name}” will be used.",
+      "willCreate": "The new tag “{name}” will be created.",
+      "noTags": "No tags yet. Type a name to create one.",
+      "detailButton": "Tag those who replied",
+      "current": "Replies: {name}",
+      "currentHover": "Click to change the tag for those who reply",
+      "dialogTitle": "Tag those who replied",
+      "dialogBody": "Pick or type a tag. It will be added now to the {count} contacts who already replied and, from now on, to every new contact who replies.",
+      "apply": "Apply tag",
+      "applying": "Applying…",
+      "remove": "Stop tagging",
+      "nameRequired": "Type or pick a tag.",
+      "toastDone": "Tag “{name}” applied: {tagged} contacts tagged out of {replied} who replied.",
+      "toastRemoved": "Repliers will no longer be tagged. Tags already added are kept.",
+      "toastError": "Could not apply the tag: {error}"
     }
   },
   "Automations": {

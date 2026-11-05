@@ -18,6 +18,7 @@ import {
   storedHeaderMediaUrl,
 } from '@/lib/broadcasts/send-loop';
 import type { VariableMapping } from '@/lib/broadcasts/variables';
+import { normalizeReplyTagName, resolveReplyTagId } from '@/lib/broadcasts/reply-tag';
 
 export type { VariableMapping } from '@/lib/broadcasts/variables';
 
@@ -50,6 +51,11 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  /**
+   * "Etiqueta para quienes respondan": existing tag name (any case) or a
+   * new one, created here. Saved as `broadcasts.reply_tag_id`.
+   */
+  replyTagName?: string;
 }
 
 /** Live counters of a send, for the progress panel. */
@@ -370,6 +376,22 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error('No se encontraron contactos para esta audiencia.');
       }
 
+      // ── Step 1b: Resolve the reply tag (reuse or create) ──────────
+      // Before the row exists, so a failure here creates nothing.
+      let replyTagId: string | null = null;
+      const replyTagName = normalizeReplyTagName(payload.replyTagName);
+      if (replyTagName) {
+        try {
+          replyTagId = await resolveReplyTagId(supabase, {
+            accountId,
+            userId: user.id,
+            name: replyTagName,
+          });
+        } catch (err) {
+          throw new Error(`No se pudo preparar la etiqueta para quienes respondan: ${errText(err)}`);
+        }
+      }
+
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
       const { data: broadcast, error: broadcastError } = await supabase
@@ -393,6 +415,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               ? { headerMediaUrl: payload.headerMediaUrl.trim() }
               : {}),
           },
+          // Only sent when set, so broadcasts keep working before 090.
+          ...(replyTagId ? { reply_tag_id: replyTagId } : {}),
           status: 'sending',
           total_recipients: contacts.length,
           sent_count: 0,

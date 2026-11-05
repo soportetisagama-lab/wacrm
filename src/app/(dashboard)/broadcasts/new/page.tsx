@@ -52,6 +52,7 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+  const [replyTagName, setReplyTagName] = useState('');
 
   async function handleSend() {
     if (!template) return;
@@ -69,6 +70,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        replyTagName,
       });
       // The server sends it now; the detail page shows the live progress.
       if (startError) toast.error(t('toastStartFailed', { error: startError }));
@@ -259,6 +261,8 @@ export default function NewBroadcastPage() {
             <Step4ScheduleSend
               name={name}
               onNameChange={setName}
+              replyTagName={replyTagName}
+              onReplyTagNameChange={setReplyTagName}
               template={template}
               audience={audience}
               onSend={handleSend}

@@ -1159,8 +1159,29 @@
         "etaUnderMinute": "Falta menos de 1 min",
         "allGood": "Todo va bien: los mensajes están saliendo.",
         "manyFailed": "Atención: la mayoría está fallando. Revisa los errores en el detalle de la difusión.",
-        "serverSending": "Puedes cerrar esta pestaña: el envío sigue en el servidor."
+        "serverSending": "Puedes cerrar esta pestaña: el envío sigue en el servidor.",
+        "replyTagLabel": "Etiqueta para quienes respondan",
+        "replyTagHint": "Opcional. A cada contacto que responda a esta difusión (toque un botón de la plantilla o escriba) se le pone esta etiqueta. A quien no responda, nada."
       }
+    },
+    "replyTag": {
+      "placeholder": "Elige una etiqueta o escribe una nueva",
+      "clear": "Quitar",
+      "useExisting": "Se usará la etiqueta existente «{name}».",
+      "willCreate": "Se creará la etiqueta nueva «{name}».",
+      "noTags": "Aún no hay etiquetas. Escribe un nombre para crear una.",
+      "detailButton": "Etiquetar a los que respondieron",
+      "current": "Respuestas: {name}",
+      "currentHover": "Toca para cambiar la etiqueta de quienes respondan",
+      "dialogTitle": "Etiquetar a los que respondieron",
+      "dialogBody": "Elige o escribe una etiqueta. Se pondrá ahora a los {count} contactos que ya respondieron y, desde ahora, a cada contacto nuevo que responda.",
+      "apply": "Aplicar etiqueta",
+      "applying": "Aplicando…",
+      "remove": "Dejar de etiquetar",
+      "nameRequired": "Escribe o elige una etiqueta.",
+      "toastDone": "Etiqueta «{name}» aplicada: {tagged} contactos etiquetados de {replied} que respondieron.",
+      "toastRemoved": "Ya no se etiquetará a quienes respondan. Las etiquetas ya puestas se conservan.",
+      "toastError": "No se pudo aplicar la etiqueta: {error}"
     }
   },
   "Automations": {

@@ -461,6 +461,11 @@ export interface Broadcast {
   read_count: number;
   replied_count: number;
   failed_count: number;
+  /**
+   * Tag put on every contact that replies to this broadcast (button tap
+   * or free text). NULL = nobody is tagged. Added in migration 090.
+   */
+  reply_tag_id?: string | null;
   created_at: string;
 }
 
