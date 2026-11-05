@@ -18,6 +18,7 @@ import {
 import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { SendProgressPanel } from '@/components/broadcasts/send-progress-panel';
+import { ReplyTagPicker } from '@/components/broadcasts/reply-tag-picker';
 
 interface AudienceConfig {
   type: string;
@@ -30,6 +31,9 @@ interface AudienceConfig {
 interface Step4Props {
   name: string;
   onNameChange: (name: string) => void;
+  /** "Etiqueta para quienes respondan" ('' = none). */
+  replyTagName: string;
+  onReplyTagNameChange: (name: string) => void;
   template: MessageTemplate;
   audience: AudienceConfig;
   onSend: () => void;
@@ -42,6 +46,8 @@ interface Step4Props {
 export function Step4ScheduleSend({
   name,
   onNameChange,
+  replyTagName,
+  onReplyTagNameChange,
   template,
   audience,
   onSend,
@@ -104,6 +110,17 @@ export function Step4ScheduleSend({
           onChange={(e) => onNameChange(e.target.value)}
           placeholder={t('scheduleSend.broadcastNamePlaceholder')}
           className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+        />
+      </div>
+
+      {/* Reply tag (optional) */}
+      <div>
+        <label className="mb-1 block text-sm font-semibold text-foreground">{t('scheduleSend.replyTagLabel')}</label>
+        <p className="mb-2 text-xs text-muted-foreground">{t('scheduleSend.replyTagHint')}</p>
+        <ReplyTagPicker
+          value={replyTagName}
+          onChange={onReplyTagNameChange}
+          disabled={isProcessing}
         />
       </div>
 
