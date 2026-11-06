@@ -163,6 +163,10 @@ export interface Tag {
   user_id: string;
   /** true (or absent, pre-069) = whole account; false = author's own. */
   is_shared?: boolean;
+  /** true = Difusiones-only tag (put on broadcast repliers, migration
+   *  091): visible to admins inside Difusiones only, hidden from every
+   *  other screen. Absent (pre-091) = false. */
+  is_broadcast?: boolean;
   name: string;
   color: string;
   created_at: string;

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AccountRole } from '@/lib/auth/roles'
 import { daysAgoStart } from './date-utils'
+import { isBroadcastTag } from '@/lib/tags/broadcast-tags'
 import {
   agentRanking,
   answeredPct,
@@ -203,13 +204,16 @@ async function loadTagCounts(db: DB): Promise<TagCount[]> {
   const counts = new Map<string, TagCount>()
   for (let i = 0; i < contactIds.length; i += 150) {
     const chunk = contactIds.slice(i, i + 150)
-    const tagged = await fetchAll<{ tag: { id: string; name: string; color: string } | { id: string; name: string; color: string }[] | null }>(() =>
-      db.from('contact_tags').select('tag:tags(id, name, color)').in('contact_id', chunk).order('id'),
+    type PanelTag = { id: string; name: string; color: string; is_broadcast?: boolean }
+    // `tags(*)` so this works with or without migration 091's column.
+    const tagged = await fetchAll<{ tag: PanelTag | PanelTag[] | null }>(() =>
+      db.from('contact_tags').select('tag:tags(*)').in('contact_id', chunk).order('id'),
     )
     for (const r of tagged) {
       const tag = one(r.tag)
-      if (!tag) continue
-      const row = counts.get(tag.id) ?? { ...tag, count: 0 }
+      // Difusiones tags (091) never show outside Difusiones.
+      if (!tag || isBroadcastTag(tag)) continue
+      const row = counts.get(tag.id) ?? { id: tag.id, name: tag.name, color: tag.color, count: 0 }
       row.count += 1
       counts.set(tag.id, row)
     }
