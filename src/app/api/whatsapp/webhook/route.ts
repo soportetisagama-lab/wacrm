@@ -830,8 +830,9 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
 }
 
 /**
- * "Etiqueta para quienes respondan" (migration 090): when the broadcast
- * has a `reply_tag_id`, put it on the contact that just replied. Read in
+ * "Etiqueta para quienes respondan" (migrations 090/091): when the
+ * broadcast has a `reply_tag_id` pointing to a Difusiones tag, put it on
+ * the contact that just replied. Read in
  * its own query so the replied flag keeps working before 090 is applied.
  * Best-effort: errors are logged, never thrown.
  */
@@ -850,12 +851,14 @@ async function tagBroadcastReplierIfConfigured(
     if (bcErr || !bc?.reply_tag_id) return
 
     // The tag must belong to the same account (the FK alone doesn't
-    // guarantee it).
+    // guarantee it) and be a Difusiones tag (migration 091) — a
+    // commercial tag is never put on repliers.
     const { data: tag } = await supabaseAdmin()
       .from('tags')
       .select('id')
       .eq('id', bc.reply_tag_id)
       .eq('account_id', accountId)
+      .eq('is_broadcast', true)
       .maybeSingle()
     if (!tag) return
 

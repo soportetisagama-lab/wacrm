@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 import {
   XLR8_ESTADOS,
@@ -176,7 +177,7 @@ async function ensureEstadoTags(
 ): Promise<{ tagIdByEstado: Map<string, string>; allEstadoTagIds: string[] }> {
   const { data: tags, error } = await admin
     .from('tags')
-    .select('id, name, created_at')
+    .select('*')
     .eq('account_id', accountId)
     .eq('is_shared', true)
     .order('created_at', { ascending: true });
@@ -185,7 +186,10 @@ async function ensureEstadoTags(
   const tagIdByEstado = new Map<string, string>();
   const allEstadoTagIds: string[] = [];
   const estadoKeys = new Set(defs.map((e) => estadoKey(e.name)));
-  for (const t of (tags ?? []) as { id: string; name: string }[]) {
+  // A Difusiones tag (migration 091) is never a status tag, even when
+  // marketing named it like one.
+  const shared = withoutBroadcastTags(tags as { id: string; name: string; is_broadcast?: boolean }[] | null);
+  for (const t of shared) {
     const key = estadoKey(t.name);
     if (!estadoKeys.has(key)) continue;
     // Duplicated names: the oldest is the one assigned; the rest still

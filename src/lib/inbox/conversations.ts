@@ -1,4 +1,5 @@
 import type { Conversation, Contact, Tag } from "@/types";
+import { isBroadcastTag } from "@/lib/tags/broadcast-tags";
 
 /**
  * Conversation select that embeds the contact plus its tags, so the Inbox
@@ -19,6 +20,7 @@ type RawConversation = Omit<Conversation, "contact"> & {
  * Flatten the embedded `contact_tags(tags(*))` join into `contact.tags`.
  * Safe to call on rows fetched with {@link CONVERSATION_SELECT}; a row with
  * no contact (e.g. a freshly-inserted conversation) passes through untouched.
+ * Difusiones tags (migration 091) are dropped: they never show in the inbox.
  */
 export function normalizeConversation(raw: RawConversation): Conversation {
   const rawContact = raw.contact;
@@ -31,7 +33,7 @@ export function normalizeConversation(raw: RawConversation): Conversation {
       ...contact,
       tags: (contact_tags ?? [])
         .map((ct) => ct.tags)
-        .filter((t): t is Tag => t != null),
+        .filter((t): t is Tag => t != null && !isBroadcastTag(t)),
     },
   };
 }

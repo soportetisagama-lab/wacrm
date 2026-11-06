@@ -36,6 +36,20 @@ describe('serializeContact', () => {
     });
   });
 
+  it('omits Difusiones tags (is_broadcast)', () => {
+    const row = {
+      id: 'c1',
+      phone: null,
+      created_at: '',
+      updated_at: '',
+      contact_tags: [
+        { tags: { id: 't1', name: 'vip', color: '#fff', is_broadcast: false } },
+        { tags: { id: 't2', name: 'promo', color: '#000', is_broadcast: true } },
+      ],
+    };
+    expect(serializeContact(row).tags).toEqual([{ id: 't1', name: 'vip', color: '#fff' }]);
+  });
+
   it('tolerates a row with no contact_tags key', () => {
     const row = {
       id: 'c2',

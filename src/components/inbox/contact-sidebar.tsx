@@ -29,6 +29,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { ContactTagPicker } from "./contact-tag-picker";
 import { CONTACT_TAGS_CHANGED_EVENT } from "@/lib/inbox/conversations";
+import { isBroadcastTag, withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 import { useTranslations } from "next-intl";
 
 interface ContactSidebarProps {
@@ -67,7 +68,8 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
     let cancelled = false;
     const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
-      if (!cancelled && data) setAllTags(data as Tag[]);
+      // Difusiones tags (migration 091) never show in the inbox.
+      if (!cancelled && data) setAllTags(withoutBroadcastTags(data as Tag[]));
     };
     void load();
     window.addEventListener(TAGS_CHANGED_EVENT, load);
@@ -104,7 +106,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
     if (notesRes.data) setNotes(notesRes.data);
     if (tagsRes.data) {
       const mapped = tagsRes.data
-        .filter((ct: Record<string, unknown>) => ct.tags)
+        .filter((ct: Record<string, unknown>) => ct.tags && !isBroadcastTag(ct.tags as Tag))
         .map((ct: Record<string, unknown>) => ({
           ...(ct.tags as Tag),
           contact_tag_id: ct.id as string,

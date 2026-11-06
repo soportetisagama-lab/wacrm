@@ -60,6 +60,7 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 import { isEmbeddedApp } from '@/lib/mobile-app';
 import { cn } from '@/lib/utils';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 const PAGE_SIZE = 25;
 
@@ -122,7 +123,8 @@ export default function ContactsPage() {
     const { data } = await supabase.from('tags').select('*');
     if (data) {
       const map: Record<string, Tag> = {};
-      data.forEach((t) => (map[t.id] = t));
+      // Difusiones tags (migration 091) never show outside Difusiones.
+      withoutBroadcastTags(data as Tag[]).forEach((t) => (map[t.id] = t));
       setTagsMap(map);
       // Drop any filter selections whose tag no longer exists (e.g. a tag
       // deleted elsewhere) so it can't linger invisibly in the query.
