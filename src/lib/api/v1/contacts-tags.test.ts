@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   added: [] as string[],
   removed: [] as string[],
   existing: [] as string[],
+  broadcast: [] as string[],
 }));
 
 // The account has three tags; resolveImportTagIds returns ALL of them
@@ -31,7 +32,13 @@ import { setContactTags } from './contacts';
 const db = {
   from: () => ({
     select: () => ({
-      eq: async () => ({ data: h.existing.map((tag_id) => ({ tag_id })), error: null }),
+      eq: async () => ({
+        data: h.existing.map((tag_id) => ({
+          tag_id,
+          tags: { is_broadcast: h.broadcast.includes(tag_id) },
+        })),
+        error: null,
+      }),
     }),
     delete: () => ({
       eq: () => ({
@@ -49,6 +56,14 @@ describe('setContactTags', () => {
     h.added = [];
     h.removed = [];
     h.existing = [];
+    h.broadcast = [];
+  });
+
+  it("'replace' never strips Difusiones tags", async () => {
+    h.existing = ['t-vip', 't-promo'];
+    h.broadcast = ['t-promo'];
+    await setContactTags(db, 'acc', 'user', 'c1', ['Derivado de Sagama Retail'], 'replace');
+    expect(h.removed).toEqual(['t-vip']);
   });
 
   it('adds only the requested tags, not every tag in the account', async () => {

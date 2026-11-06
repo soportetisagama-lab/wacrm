@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import type { Tag } from '@/types';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 const PRESET_COLORS = [
   { name: 'red', value: '#ef4444' },
@@ -76,7 +77,8 @@ export function TagManager() {
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      setTags(data || []);
+      // Difusiones tags (migration 091) are managed only in Difusiones.
+      setTags(withoutBroadcastTags(data));
     } catch (err) {
       console.error('Failed to fetch tags:', err);
       toast.error(t('failedToLoadTags'));

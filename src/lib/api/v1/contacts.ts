@@ -14,6 +14,7 @@ import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import { canManageEstadoTags, isAccountRole } from '@/lib/auth/roles';
 import { isEstadoTag } from '@/lib/xlr8/estados';
+import { isBroadcastTag } from '@/lib/tags/broadcast-tags';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -43,7 +44,9 @@ export class ContactError extends Error {
   }
 }
 
-type RawTagJoin = { tags: { id: string; name: string; color: string } | null };
+type RawTagJoin = {
+  tags: { id: string; name: string; color: string; is_broadcast?: boolean | null } | null;
+};
 
 /** Flatten a `CONTACT_SELECT` row into the public contact shape. */
 export function serializeContact(row: Record<string, unknown>): ApiContact {
@@ -57,7 +60,8 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
     avatar_url: (row.avatar_url as string | null) ?? null,
     tags: joins
       .map((j) => j.tags)
-      .filter((t): t is NonNullable<RawTagJoin['tags']> => t != null)
+      // Difusiones tags (migration 091) are not part of the public API.
+      .filter((t): t is NonNullable<RawTagJoin['tags']> => t != null && !isBroadcastTag(t))
       .map((t) => ({ id: t.id, name: t.name, color: t.color })),
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
@@ -214,13 +218,17 @@ export async function setContactTags(
   // being swallowed behind a misleading 200.
   const { data: current, error: readErr } = await db
     .from('contact_tags')
-    .select('tag_id')
+    .select('tag_id, tags(*)')
     .eq('contact_id', contactId);
   if (readErr) {
     throw new ContactError('Failed to read contact tags', 500);
   }
+  // Difusiones tags (migration 091) are invisible to the API: 'replace'
+  // never strips them.
   const existing = new Set(
-    (current ?? []).map((r) => r.tag_id as string)
+    ((current ?? []) as { tag_id: string; tags?: { is_broadcast?: boolean | null } | null }[])
+      .filter((r) => !isBroadcastTag(r.tags))
+      .map((r) => r.tag_id)
   );
 
   const toAdd = [...desired].filter((id) => !existing.has(id));
