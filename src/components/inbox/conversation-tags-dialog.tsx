@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Tag } from "@/types";
+import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 import { TagPickerPanel } from "./contact-tag-picker";
 
 interface ConversationTagsDialogProps {
@@ -45,7 +46,8 @@ export function ConversationTagsDialog({
     let cancelled = false;
     const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
-      if (!cancelled && data) setAllTags(data as Tag[]);
+      // Difusiones tags (migration 091) never show in the inbox.
+      if (!cancelled && data) setAllTags(withoutBroadcastTags(data as Tag[]));
     };
     void load();
     void supabase
@@ -55,8 +57,10 @@ export function ConversationTagsDialog({
       .then(({ data }) => {
         if (cancelled || !data) return;
         setTags(
-          (data as { tags: Tag | Tag[] | null }[]).flatMap((row) =>
-            Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : [],
+          withoutBroadcastTags(
+            (data as { tags: Tag | Tag[] | null }[]).flatMap((row) =>
+              Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : [],
+            ),
           ),
         );
       });

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { chunk, fetchAllPages } from '@/lib/broadcasts/audience';
-import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
+import { onlyBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 // ============================================================
 // "Etiqueta para quienes respondan" (migration 090). A broadcast may
@@ -9,11 +9,19 @@ import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 // webhook tags one replier at a time, the detail page tags all the
 // ones that already replied in bulk. Tag names are matched trimmed and
 // case-insensitive, the same rule as the contact CSV import.
+//
+// Since migration 091 these are Difusiones-only tags (`is_broadcast`):
+// the picker lists and reuses only those, and a new name is created as
+// a shared Difusiones tag — never a commercial or personal tag, even
+// when one has the same name.
 // ============================================================
+
+const DEFAULT_REPLY_TAG_COLOR = '#3b82f6';
 
 interface NamedTag {
   id: string;
   name: string;
+  is_broadcast?: boolean | null;
 }
 
 /** Trimmed name, or '' when there is nothing usable. */
@@ -33,15 +41,36 @@ export type ReplyTagChoice<T extends NamedTag = NamedTag> =
   | { kind: 'existing'; tag: T }
   | { kind: 'new'; name: string };
 
-/** What a typed name means: no tag, reuse an existing one, or create it. */
+/**
+ * What a typed name means: no tag, reuse an existing Difusiones tag, or
+ * create one. Non-Difusiones tags in `tags` are ignored, so a name that
+ * only matches a commercial tag means "create a Difusiones tag".
+ */
 export function classifyReplyTagName<T extends NamedTag>(
   tags: readonly T[],
   raw: string,
 ): ReplyTagChoice<T> {
   const name = normalizeReplyTagName(raw);
   if (!name) return { kind: 'none' };
-  const tag = findTagByName(tags, name);
+  const tag = findTagByName(onlyBroadcastTags(tags), name);
   return tag ? { kind: 'existing', tag } : { kind: 'new', name };
+}
+
+/** Row to insert for a new Difusiones tag (shared, `is_broadcast`). */
+export function newBroadcastTagRow(params: {
+  accountId: string;
+  userId: string;
+  name: string;
+  color?: string;
+}) {
+  return {
+    user_id: params.userId,
+    account_id: params.accountId,
+    name: normalizeReplyTagName(params.name),
+    color: params.color ?? DEFAULT_REPLY_TAG_COLOR,
+    is_shared: true,
+    is_broadcast: true,
+  };
 }
 
 /** Unique, non-null contact ids of the rows already marked 'replied'. */
@@ -56,9 +85,10 @@ export function repliedContactIds(
 }
 
 /**
- * Tag id for `name` in the account: reuses the existing tag (case
- * insensitive) or creates it. Creating needs admin (tags_insert RLS),
- * which every Difusiones caller already is.
+ * Difusiones tag id for `name` in the account: reuses the existing
+ * Difusiones tag (case insensitive) or creates a new shared one. Only
+ * `is_broadcast` tags are considered. Creating needs admin (tags_insert
+ * RLS, 091), which every Difusiones caller already is.
  */
 export async function resolveReplyTagId(
   db: SupabaseClient,
@@ -66,15 +96,27 @@ export async function resolveReplyTagId(
 ): Promise<string> {
   const name = normalizeReplyTagName(params.name);
   if (!name) throw new Error('Falta el nombre de la etiqueta.');
-  const { tagIdByKey } = await resolveImportTagIds(db, {
-    accountId: params.accountId,
-    userId: params.userId,
-    tagNames: [name],
-    canCreateTags: true,
-  });
-  const id = tagIdByKey.get(name.toLowerCase());
-  if (!id) throw new Error(`No se pudo crear la etiqueta «${name}».`);
-  return id;
+
+  const { data: existing, error: fetchErr } = await db
+    .from('tags')
+    .select('id, name, is_broadcast, created_at')
+    .eq('account_id', params.accountId)
+    .eq('is_broadcast', true)
+    .order('created_at', { ascending: true });
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  const choice = classifyReplyTagName((existing ?? []) as NamedTag[], name);
+  if (choice.kind === 'existing') return choice.tag.id;
+
+  const { data: created, error: createErr } = await db
+    .from('tags')
+    .insert(newBroadcastTagRow({ accountId: params.accountId, userId: params.userId, name }))
+    .select('id')
+    .single();
+  if (createErr || !created) {
+    throw new Error(createErr?.message ?? `No se pudo crear la etiqueta «${name}».`);
+  }
+  return (created as { id: string }).id;
 }
 
 const TAG_UPSERT_CHUNK = 100;

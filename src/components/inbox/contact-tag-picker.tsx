@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { canCreateSharedTags, canManageEstadoTags } from "@/lib/auth/roles";
 import { isEstadoTag } from "@/lib/xlr8/estados";
+import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 import { cn } from "@/lib/utils";
 import { announceTagsChanged } from "@/lib/contact-events";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -79,17 +80,19 @@ export function TagPickerPanel({
   const [creating, setCreating] = useState(false);
 
   const q = fold(query);
+  // Difusiones tags (migration 091) never show outside Difusiones.
+  const usable = useMemo(() => withoutBroadcastTags(allTags), [allTags]);
   // xlr8 status tags: only an admin can put them on or take them off,
   // so nobody else even sees them in the list.
   const pickable = useMemo(
-    () => (canManageEstados ? allTags : allTags.filter((tag) => !isEstadoTag(tag))),
-    [allTags, canManageEstados],
+    () => (canManageEstados ? usable : usable.filter((tag) => !isEstadoTag(tag))),
+    [usable, canManageEstados],
   );
   const visible = useMemo(
     () => (q ? pickable.filter((tag) => fold(tag.name).includes(q)) : pickable),
     [pickable, q],
   );
-  const exactExists = q !== "" && allTags.some((tag) => fold(tag.name) === q);
+  const exactExists = q !== "" && usable.some((tag) => fold(tag.name) === q);
 
   const isMine = (tag: Tag) => tag.is_shared === false && tag.user_id === user?.id;
   const canDelete = (tag: Tag) => isAdmin || isMine(tag);

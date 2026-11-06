@@ -36,6 +36,7 @@ import {
 import { isEmbeddedApp } from "@/lib/mobile-app";
 import { useAuth } from "@/hooks/use-auth";
 import { ConversationTagsDialog } from "./conversation-tags-dialog";
+import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 
 /** Matches the DB trigger in migration 063 — kept in sync manually
  *  since there's no single source of truth shared between SQL and TS. */
@@ -336,7 +337,8 @@ export function ConversationList({
     const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
       if (cancelled || !data) return;
-      const loaded = data as Tag[];
+      // Difusiones tags (migration 091) never show in the inbox.
+      const loaded = withoutBroadcastTags(data as Tag[]);
       setTags(loaded);
       // Drop a deleted tag from an active filter.
       const ids = new Set(loaded.map((t) => t.id));

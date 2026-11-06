@@ -128,6 +128,31 @@ describe("normalizeConversation", () => {
     ).toBeUndefined();
   });
 
+  it("drops Difusiones tags (is_broadcast) from contact.tags", () => {
+    const raw = {
+      id: "c1",
+      user_id: "u1",
+      contact_id: "ct1",
+      status: "open" as const,
+      unread_count: 0,
+      created_at: "",
+      updated_at: "",
+      contact: {
+        id: "ct1",
+        user_id: "u1",
+        account_id: "a1",
+        phone: "123",
+        created_at: "",
+        updated_at: "",
+        contact_tags: [
+          { tags: tag("t1", "VIP") },
+          { tags: { ...tag("t2", "Promo"), is_broadcast: true } },
+        ],
+      },
+    };
+    expect(normalizeConversation(raw).contact?.tags).toEqual([tag("t1", "VIP")]);
+  });
+
   it("passes through a conversation with no contact", () => {
     const raw = {
       id: "c1",
