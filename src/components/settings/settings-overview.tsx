@@ -12,6 +12,7 @@ import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 import { SECTION_META, type SettingsSection } from './settings-sections';
 import { SettingsChip, StatusDot } from './settings-chip';
@@ -80,10 +81,9 @@ export function SettingsOverview({
             .select('id', { count: 'exact', head: true })
             .eq('user_id', userId)
             .eq('status', 'PENDING'),
-          supabase
-            .from('tags')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', userId),
+          // Rows, not a head count: Difusiones tags (migration 091) are
+          // left out in code so this works with or without the column.
+          supabase.from('tags').select('*').eq('user_id', userId),
           supabase.from('custom_fields').select('id', { count: 'exact', head: true }),
         ]);
 
@@ -111,7 +111,10 @@ export function SettingsOverview({
           templatesPending.status === 'fulfilled'
             ? templatesPending.value.count ?? null
             : null,
-        tags: tagsRes.status === 'fulfilled' ? tagsRes.value.count ?? null : null,
+        tags:
+          tagsRes.status === 'fulfilled' && !tagsRes.value.error
+            ? withoutBroadcastTags(tagsRes.value.data).length
+            : null,
         customFields:
           fieldsRes.status === 'fulfilled' ? fieldsRes.value.count ?? null : null,
       });

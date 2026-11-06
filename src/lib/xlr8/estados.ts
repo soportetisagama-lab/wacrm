@@ -54,8 +54,17 @@ export function isTipo(name: string): boolean {
  * tags). Only admin/owner may put these on or take them off a contact —
  * see canManageEstadoTags and supabase/migrations/077 + 078.
  */
-export function isEstadoTag(tag: { name: string; is_shared?: boolean | null }): boolean {
-  return tag.is_shared !== false && (isEstado(tag.name) || isTipo(tag.name));
+export function isEstadoTag(tag: {
+  name: string;
+  is_shared?: boolean | null;
+  /** Difusiones tags (migration 091) are never status tags. */
+  is_broadcast?: boolean | null;
+}): boolean {
+  return (
+    tag.is_shared !== false &&
+    tag.is_broadcast !== true &&
+    (isEstado(tag.name) || isTipo(tag.name))
+  );
 }
 
 /**

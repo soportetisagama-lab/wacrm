@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
+
 const DEFAULT_TAG_COLOR = '#3b82f6';
 
 export interface ResolveImportTagsResult {
@@ -17,6 +19,9 @@ export interface ResolveImportTagsResult {
  *
  * Unlike the manual contact form (existing tags only), import may
  * auto-create missing tag definitions for admin+ callers.
+ *
+ * Difusiones tags (migration 091) are never matched: a name equal to
+ * one of them resolves to (or creates) a normal tag.
  */
 export async function resolveImportTagIds(
   supabase: SupabaseClient,
@@ -48,13 +53,13 @@ export async function resolveImportTagIds(
 
   const { data: existing, error: fetchError } = await supabase
     .from('tags')
-    .select('id, name')
+    .select('*')
     .eq('account_id', accountId);
 
   if (fetchError) throw fetchError;
 
   const tagIdByKey = new Map<string, string>();
-  for (const tag of existing ?? []) {
+  for (const tag of withoutBroadcastTags(existing as { id: string; name: string; is_broadcast?: boolean }[] | null)) {
     const key = tag.name.trim().toLowerCase();
     if (!tagIdByKey.has(key)) tagIdByKey.set(key, tag.id);
   }

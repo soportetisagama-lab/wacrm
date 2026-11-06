@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/hooks/use-can';
 import { isEstadoTag } from '@/lib/xlr8/estados';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
@@ -117,7 +118,8 @@ export function ContactForm({
       .from('tags')
       .select('*')
       .order('name');
-    if (data) setTags(data);
+    // Difusiones tags (migration 091) never show outside Difusiones.
+    if (data) setTags(withoutBroadcastTags(data));
     setLoadingTags(false);
   }
 

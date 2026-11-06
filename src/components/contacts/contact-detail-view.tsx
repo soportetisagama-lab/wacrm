@@ -44,6 +44,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { useCan } from '@/hooks/use-can';
 import { isEstadoTag } from '@/lib/xlr8/estados';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -132,7 +133,8 @@ export function ContactDetailView({
       supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
     ]);
 
-    if (tagsRes.data) setAllTags(tagsRes.data);
+    // Difusiones tags (migration 091) never show outside Difusiones.
+    if (tagsRes.data) setAllTags(withoutBroadcastTags(tagsRes.data));
     if (contactTagsRes.data) {
       setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
     }

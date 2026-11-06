@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { classifyReplyTagName } from '@/lib/broadcasts/reply-tag';
+import { onlyBroadcastTags } from '@/lib/tags/broadcast-tags';
 import { Tag } from '@/types';
 import { Input } from '@/components/ui/input';
 import { Loader2, Tag as TagIcon, X } from 'lucide-react';
@@ -16,10 +17,11 @@ interface ReplyTagPickerProps {
 }
 
 /**
- * "Etiqueta para quienes respondan": pick an existing team tag (same
- * chips as the audience step) or type a new name. The name is resolved
- * on save — reused when it matches an existing tag ignoring case,
- * created otherwise.
+ * "Etiqueta para quienes respondan": pick an existing Difusiones tag
+ * (`is_broadcast`, migration 091) or type a new name. The name is
+ * resolved on save — reused when it matches a Difusiones tag ignoring
+ * case, created as a new Difusiones tag otherwise (commercial and
+ * personal tags are never listed nor reused).
  */
 export function ReplyTagPicker({ value, onChange, disabled }: ReplyTagPickerProps) {
   const t = useTranslations('Broadcasts.replyTag');
@@ -31,8 +33,8 @@ export function ReplyTagPicker({ value, onChange, disabled }: ReplyTagPickerProp
     async function fetchTags() {
       try {
         const { data } = await createClient().from('tags').select('*').order('name');
-        // Team tags only — see migration 069 (personal tags are per advisor).
-        if (!cancelled) setTags(((data ?? []) as Tag[]).filter((tag) => tag.is_shared !== false));
+        // Difusiones tags only — see migration 091.
+        if (!cancelled) setTags(onlyBroadcastTags((data ?? []) as Tag[]));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -109,6 +111,8 @@ export function ReplyTagPicker({ value, onChange, disabled }: ReplyTagPickerProp
           })}
         </div>
       ) : null}
+
+      <p className="text-xs text-muted-foreground">{t('onlyBroadcastHint')}</p>
     </div>
   );
 }

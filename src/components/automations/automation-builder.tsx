@@ -63,6 +63,7 @@ import {
 import { interactivePayloadPreviewText } from "@/lib/whatsapp/interactive"
 import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
+import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags"
 
 // ------------------------------------------------------------
 // Types (builder-local — mirror the flattened rows we POST)
@@ -273,10 +274,11 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
       if (cancelled) return
       // Team tags only — an automation keyed on an advisor's personal tag
       // (migration 069) would silently stop matching once they delete it.
+      // Difusiones tags (091) never trigger automations, so they're left out.
       setTags(
-        ((tagsRes.data as (TagRecord & { is_shared?: boolean })[] | null) ?? []).filter(
-          (tag) => tag.is_shared !== false,
-        ),
+        withoutBroadcastTags(
+          tagsRes.data as (TagRecord & { is_shared?: boolean; is_broadcast?: boolean })[] | null,
+        ).filter((tag) => tag.is_shared !== false),
       )
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])

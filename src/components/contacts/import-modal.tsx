@@ -38,6 +38,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
 
 const DEFAULT_TAG_COLOR = '#3b82f6';
 const PREVIEW_LIMIT = 5;
@@ -191,11 +192,12 @@ export function ImportModal({
     if (csvHasTags && accountId) {
       const { data: tags } = await supabase
         .from('tags')
-        .select('name, color')
+        .select('*')
         .eq('account_id', accountId);
 
       const colors = new Map<string, string>();
-      for (const tag of tags ?? []) {
+      // Difusiones tags (migration 091) are not reused by the import.
+      for (const tag of withoutBroadcastTags(tags)) {
         const key = tag.name.trim().toLowerCase();
         if (!colors.has(key)) colors.set(key, tag.color);
       }

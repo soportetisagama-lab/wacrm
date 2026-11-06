@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { TAGS_CHANGED_EVENT } from "@/lib/contact-events";
 import { CONTACT_TAGS_CHANGED_EVENT } from "@/lib/inbox/conversations";
 import type { Tag } from "@/types";
+import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 import { ContactTagPicker } from "./contact-tag-picker";
 
 /**
@@ -32,7 +33,8 @@ export function MobileThreadTags({ contactId }: { contactId: string }) {
     let cancelled = false;
     const load = async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
-      if (!cancelled && data) setAllTags(data as Tag[]);
+      // Difusiones tags (migration 091) never show in the inbox.
+      if (!cancelled && data) setAllTags(withoutBroadcastTags(data as Tag[]));
     };
     void load();
     window.addEventListener(TAGS_CHANGED_EVENT, load);
@@ -52,9 +54,11 @@ export function MobileThreadTags({ contactId }: { contactId: string }) {
       .then(({ data }) => {
         if (cancelled || !data) return;
         setTags(
-          (data as { tags: Tag | Tag[] | null }[])
-            .flatMap((row) => (Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : []))
-            .sort((a, b) => a.name.localeCompare(b.name)),
+          withoutBroadcastTags(
+            (data as { tags: Tag | Tag[] | null }[]).flatMap((row) =>
+              Array.isArray(row.tags) ? row.tags : row.tags ? [row.tags] : [],
+            ),
+          ).sort((a, b) => a.name.localeCompare(b.name)),
         );
       });
     // The contact panel (or another surface) changed this contact's tags.

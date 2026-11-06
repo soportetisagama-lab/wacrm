@@ -17,6 +17,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { triggerXlr8Sync } from '@/lib/xlr8/client';
 import { estimateAudienceCount } from '@/lib/broadcasts/audience';
+import { groupAudienceTags } from '@/lib/tags/broadcast-tags';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -104,8 +105,9 @@ export function Step2SelectAudience({
       try {
         const supabase = createClient();
         const { data } = await supabase.from('tags').select('*').order('name');
-        // Team tags only — see migration 069 (personal tags are per advisor).
-        setTags((data ?? []).filter((tag) => tag.is_shared !== false));
+        // Team tags + Difusiones tags (091); personal tags are per advisor (069).
+        const { team, broadcast } = groupAudienceTags((data ?? []) as Tag[]);
+        setTags([...team, ...broadcast]);
       } finally {
         setLoadingTags(false);
       }
@@ -209,6 +211,50 @@ export function Step2SelectAudience({
     onUpdate({ ...audience, customField: { ...prev, ...patch } });
   }
 
+  const tagGroups = groupAudienceTags(tags);
+
+  /** Team tags, then the Difusiones tags (091) under their own heading. */
+  function renderTagGroups(
+    isOn: (id: string) => boolean,
+    toggle: (id: string) => void,
+    onClass: string,
+  ) {
+    const chips = (list: Tag[]) => (
+      <div className="flex flex-wrap gap-2">
+        {list.map((tag) => (
+          <button
+            key={tag.id}
+            onClick={() => toggle(tag.id)}
+            className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+              isOn(tag.id)
+                ? onClass
+                : 'border-border bg-muted text-muted-foreground hover:border-border'
+            }`}
+          >
+            <span
+              className="mr-1.5 h-2 w-2 rounded-full"
+              style={{ backgroundColor: tag.color }}
+            />
+            {tag.name}
+          </button>
+        ))}
+      </div>
+    );
+    return (
+      <div className="space-y-3">
+        {tagGroups.team.length > 0 && chips(tagGroups.team)}
+        {tagGroups.broadcast.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
+              {t('selectAudience.broadcastTagsGroup')}
+            </p>
+            {chips(tagGroups.broadcast)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const isValid =
     audience.type === 'all' ||
     (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) ||
@@ -291,28 +337,11 @@ export function Step2SelectAudience({
               {t('selectAudience.noTagsFound')}
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => {
-                const isSelected = audience.tagIds?.includes(tag.id);
-                return (
-                  <button
-                    key={tag.id}
-                    onClick={() => toggleTag(tag.id)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                      isSelected
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border bg-muted text-muted-foreground hover:border-border'
-                    }`}
-                  >
-                    <span
-                      className="mr-1.5 h-2 w-2 rounded-full"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    {tag.name}
-                  </button>
-                );
-              })}
-            </div>
+            renderTagGroups(
+              (id) => !!audience.tagIds?.includes(id),
+              toggleTag,
+              'border-primary/30 bg-primary/10 text-primary',
+            )
           )}
         </div>
       )}
@@ -378,28 +407,11 @@ export function Step2SelectAudience({
         {tags.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t('selectAudience.noTagsFound')}</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {tags.map((tag) => {
-              const isExcluded = audience.excludeTagIds?.includes(tag.id);
-              return (
-                <button
-                  key={tag.id}
-                  onClick={() => toggleExcludeTag(tag.id)}
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                    isExcluded
-                      ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                      : 'border-border bg-muted text-muted-foreground hover:border-border'
-                  }`}
-                >
-                  <span
-                    className="mr-1.5 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: tag.color }}
-                  />
-                  {tag.name}
-                </button>
-              );
-            })}
-          </div>
+          renderTagGroups(
+            (id) => !!audience.excludeTagIds?.includes(id),
+            toggleExcludeTag,
+            'border-red-500/30 bg-red-500/10 text-red-300',
+          )
         )}
       </div>
 
