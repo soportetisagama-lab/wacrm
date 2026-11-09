@@ -1101,7 +1101,13 @@
         "errorLoadTags": "Error al cargar las etiquetas",
         "errorLoadFields": "Error al cargar los campos personalizados",
         "errorCsvParse": "No se pudo procesar el archivo CSV.",
-        "errorCsvMissingPhone": "El CSV debe tener una columna 'phone'."
+        "errorCsvMissingPhone": "El CSV debe tener una columna 'phone'.",
+        "createdRange": "Fecha de primer contacto (opcional)",
+        "createdRangeHint": "Solo contactos que te escribieron por primera vez en este rango (hora de Lima).",
+        "createdFrom": "Desde",
+        "createdTo": "Hasta",
+        "createdClear": "Limpiar",
+        "createdRangeInvalid": "La fecha \"Desde\" no puede ser posterior a la fecha \"Hasta\"."
       },
       "personalize": {
         "title": "Personalizar variables",
