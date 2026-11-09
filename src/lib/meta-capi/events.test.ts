@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { buildEventId } from './event-id';
 import {
-  META_CAPI_EVENT_LABELS,
   META_CAPI_EVENT_NAMES,
   buildEventPayload,
   buttonMetaEvent,
@@ -16,10 +15,16 @@ import {
   parseMonto,
   parseQualifiedTags,
   parseVentasResponse,
+  isPurchaseCovered,
+  isUnsendablePurchase,
+  parseXlr8Fecha,
   pickVenta,
   purchaseValueDeadline,
 } from './events';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
+import en from '../../../messages/en.json';
+import es from '../../../messages/es.json';
+import ko from '../../../messages/ko.json';
 
 describe('eventForTag', () => {
   const inox = parseQualifiedTags('PROYECTO');
@@ -67,10 +72,20 @@ describe('dedup', () => {
       monto: 10,
       fecha: new Date(fecha),
     });
-    const ventas = [v('1', '2026-11-01'), v('2', '2026-11-05')];
-    expect(pickVenta(ventas, new Set())?.projectId).toBe('2');
-    expect(pickVenta(ventas, new Set(['2']))?.projectId).toBe('1');
-    expect(pickVenta(ventas, new Set(['1', '2']))).toBeNull();
+    const now = new Date('2026-11-07T00:00:00Z');
+    const ventas = [v('1', '2026-11-01'), v('2', '2026-11-05'), v('0', '2026-10-01')];
+    expect(pickVenta(ventas, new Set(), now)?.projectId).toBe('2');
+    expect(pickVenta(ventas, new Set(['2']), now)?.projectId).toBe('1');
+    // A sale older than 7 days belongs to a past closure.
+    expect(pickVenta(ventas, new Set(['1', '2']), now)).toBeNull();
+  });
+
+  it('a waiting Purchase yields to another recent Purchase of the contact', () => {
+    const now = new Date('2026-11-09T00:00:00Z');
+    const mine = { id: 'w', createdAt: now };
+    expect(isPurchaseCovered('w', [mine], now)).toBe(false);
+    expect(isPurchaseCovered('w', [mine, { id: 'p', createdAt: new Date('2026-11-08T00:00:00Z') }], now)).toBe(true);
+    expect(isPurchaseCovered('w', [mine, { id: 'old', createdAt: new Date('2026-10-01T00:00:00Z') }], now)).toBe(false);
   });
 });
 
@@ -103,6 +118,13 @@ describe('buildEventPayload', () => {
     expect(withValue.data[0].custom_data).toEqual({ value: 1500.5, currency: 'PEN' });
     const noValue = buildEventPayload({ ...base, eventName: 'Purchase', value: null });
     expect(noValue.data[0]).not.toHaveProperty('custom_data');
+  });
+
+  it('never sends a Purchase without value', () => {
+    expect(isUnsendablePurchase('Purchase', null)).toBe(true);
+    expect(isUnsendablePurchase('Purchase', 0)).toBe(true);
+    expect(isUnsendablePurchase('Purchase', '1500.00')).toBe(false);
+    expect(isUnsendablePurchase('LeadSubmitted', null)).toBe(false);
   });
 
   it('clamps event time to Meta’s 7-day window', () => {
@@ -160,10 +182,12 @@ describe('quote documents and buttons', () => {
     expect(validateInteractivePayload(p('Nope')).ok).toBe(false);
   });
 
-  it('every event has a label', () => {
-    for (const n of META_CAPI_EVENT_NAMES) {
-      expect(isMetaCapiEventName(n)).toBe(true);
-      expect(META_CAPI_EVENT_LABELS[n]).toBeTruthy();
+  it('every event has a label in each locale', () => {
+    for (const msgs of [es, en, ko]) {
+      for (const n of META_CAPI_EVENT_NAMES) {
+        expect(isMetaCapiEventName(n)).toBe(true);
+        expect((msgs.MetaCapi.events as Record<string, string>)[n]).toBeTruthy();
+      }
     }
     expect(isMetaCapiEventName('Lead')).toBe(false);
   });
@@ -195,6 +219,13 @@ describe('ventas feed', () => {
     expect(items[0].fecha?.getFullYear()).toBe(2026);
     expect(items[1]).toMatchObject({ celular: '51911111111', projectId: '8', monto: null, fecha: null });
     expect(() => parseVentasResponse({})).toThrow();
+  });
+
+  it('reads XLR8 dates as Lima time; a bare date is noon in Lima', () => {
+    expect(parseXlr8Fecha('2026-11-08')?.toISOString()).toBe('2026-11-08T17:00:00.000Z');
+    expect(parseXlr8Fecha('2026-11-08 10:30:00')?.toISOString()).toBe('2026-11-08T15:30:00.000Z');
+    expect(parseXlr8Fecha('08/11/2026')).toBeNull();
+    expect(parseXlr8Fecha(null)).toBeNull();
   });
 });
 
