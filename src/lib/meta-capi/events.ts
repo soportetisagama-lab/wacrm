@@ -295,3 +295,23 @@ export function isPurchaseCovered(
 ): boolean {
   return others.some((o) => o.id !== rowId && now.getTime() - o.createdAt.getTime() < MAX_EVENT_AGE_MS);
 }
+
+// ------------------------------------------------------------
+// Dataset name (META_CAPI_DATASET_NAME, e.g. "XLR9 Inox")
+// ------------------------------------------------------------
+
+/** Trimmed env value; unset/blank → null (no name is sent). */
+export function datasetNameFromEnv(raw: string | null | undefined): string | null {
+  const v = (raw ?? '').trim();
+  return v ? v.slice(0, 100) : null;
+}
+
+/** Body for POST /{waba_id}/dataset: with the name when there is one. */
+export function datasetCreateBody(name: string | null): { dataset_name: string } | null {
+  return name ? { dataset_name: name } : null;
+}
+
+/** Rename only when a name is configured and the dataset doesn't have it. */
+export function datasetRenameNeeded(current: string | null | undefined, desired: string | null): boolean {
+  return Boolean(desired) && (current ?? '').trim() !== desired;
+}
