@@ -6,6 +6,9 @@ import {
   buildEventPayload,
   buttonMetaEvent,
   clampEventTime,
+  datasetCreateBody,
+  datasetNameFromEnv,
+  datasetRenameNeeded,
   decideAwaitingPurchase,
   dedupKeyFor,
   eventForTag,
@@ -252,5 +255,25 @@ describe('Purchase waiting for its amount', () => {
     expect(decideAwaitingPurchase({ venta: null, ventasConfigured: true, deadline: past, now })).toBe('without_value');
     expect(decideAwaitingPurchase({ venta: venta(null), ventasConfigured: true, deadline: past, now })).toBe('without_value');
     expect(decideAwaitingPurchase({ venta: null, ventasConfigured: false, deadline: now, now })).toBe('without_value');
+  });
+});
+
+describe('dataset name', () => {
+  it('reads the env; unset or blank → no name', () => {
+    expect(datasetNameFromEnv(' XLR9 Inox ')).toBe('XLR9 Inox');
+    expect(datasetNameFromEnv('')).toBeNull();
+    expect(datasetNameFromEnv(undefined)).toBeNull();
+  });
+
+  it('sends the name on create only when configured', () => {
+    expect(datasetCreateBody('XLR9 Inox')).toEqual({ dataset_name: 'XLR9 Inox' });
+    expect(datasetCreateBody(null)).toBeNull();
+  });
+
+  it('renames only when the name differs', () => {
+    expect(datasetRenameNeeded('Dataset 123', 'XLR9 Inox')).toBe(true);
+    expect(datasetRenameNeeded(null, 'XLR9 Inox')).toBe(true);
+    expect(datasetRenameNeeded('XLR9 Inox', 'XLR9 Inox')).toBe(false);
+    expect(datasetRenameNeeded('Dataset 123', null)).toBe(false);
   });
 });
