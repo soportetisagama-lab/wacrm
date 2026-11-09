@@ -2622,5 +2622,27 @@
     "colUtilityFree": "무료 유틸리티 (24시간)",
     "colAuthentication": "인증",
     "utilityFree": "{count}건 무료 (24시간)"
+  },
+  "MetaCapi": {
+    "sendSignal": "Meta에 신호 보내기",
+    "none": "보내지 않음",
+    "hint": "고객이 WhatsApp 광고를 통해 들어온 경우에만 Meta로 전송됩니다",
+    "purchaseNote": "XLR8에 금액이 있을 때만 전송됩니다",
+    "events": {
+      "LeadSubmitted": "잠재 고객 등록",
+      "QualifiedLead": "유효 잠재 고객",
+      "ViewContent": "콘텐츠 조회",
+      "AddToCart": "장바구니 추가",
+      "InitiateCheckout": "결제 시작(견적)",
+      "OrderCreated": "주문 생성(선금)",
+      "Purchase": "구매 완료",
+      "OrderShipped": "주문 발송",
+      "OrderDelivered": "주문 배송 완료",
+      "OrderCanceled": "주문 취소",
+      "OrderReturned": "주문 반품",
+      "CartAbandoned": "장바구니 이탈",
+      "RatingProvided": "평점 제공",
+      "ReviewProvided": "리뷰 작성"
+    }
   }
 }

@@ -2622,5 +2622,27 @@
     "colUtilityFree": "Utilidad gratis (24 h)",
     "colAuthentication": "Autenticación",
     "utilityFree": "{count} gratis (24 h)"
+  },
+  "MetaCapi": {
+    "sendSignal": "Enviar señal a Meta",
+    "none": "No enviar",
+    "hint": "Se envía a Meta solo si el cliente llegó desde un anuncio de WhatsApp",
+    "purchaseNote": "Solo se envía si hay monto en XLR8",
+    "events": {
+      "LeadSubmitted": "Cliente potencial registrado",
+      "QualifiedLead": "Cliente potencial calificado",
+      "ViewContent": "Vio contenido",
+      "AddToCart": "Agregó al carrito",
+      "InitiateCheckout": "Inició la compra (cotización)",
+      "OrderCreated": "Pedido creado (anticipo)",
+      "Purchase": "Compra realizada",
+      "OrderShipped": "Pedido enviado",
+      "OrderDelivered": "Pedido entregado",
+      "OrderCanceled": "Pedido cancelado",
+      "OrderReturned": "Pedido devuelto",
+      "CartAbandoned": "Carrito abandonado",
+      "RatingProvided": "Dio una calificación",
+      "ReviewProvided": "Dejó una reseña"
+    }
   }
 }
