@@ -142,6 +142,35 @@ export function clampEventTime(at: Date, now: Date = new Date()): Date | null {
   return at;
 }
 
+/** How long a Purchase waits for its amount from XLR8 before going out without it. */
+export const PURCHASE_VALUE_WAIT_MS = 48 * 60 * 60_000;
+/** Margin kept before Meta's 7-day limit so the event still gets through. */
+const PURCHASE_DEADLINE_MARGIN_MS = 6 * 60 * 60_000;
+
+/** Latest moment a waiting Purchase may be held: 48 h, never past ~7 days. */
+export function purchaseValueDeadline(eventTime: Date): Date {
+  const t = eventTime.getTime();
+  return new Date(Math.min(t + PURCHASE_VALUE_WAIT_MS, t + MAX_EVENT_AGE_MS - PURCHASE_DEADLINE_MARGIN_MS));
+}
+
+/**
+ * What to do with a Purchase waiting for its amount: send it with the
+ * sale found, send it without value (no sales feed, or deadline reached),
+ * or keep waiting.
+ */
+export function decideAwaitingPurchase(args: {
+  venta: Xlr8Venta | null;
+  ventasConfigured: boolean;
+  deadline: Date;
+  now?: Date;
+}): 'with_value' | 'without_value' | 'wait' {
+  // A sale found without monto_venta yet keeps waiting (its project_id is
+  // still used if the deadline comes first).
+  if (args.venta && args.venta.monto != null) return 'with_value';
+  if (!args.ventasConfigured) return 'without_value';
+  return (args.now ?? new Date()).getTime() >= args.deadline.getTime() ? 'without_value' : 'wait';
+}
+
 /** Retry schedule after a failed send (attempt = attempts made so far). */
 const RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
 export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
