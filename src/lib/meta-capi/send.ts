@@ -9,6 +9,9 @@ import {
   buildEventPayload,
   buttonMetaEvent,
   clampEventTime,
+  datasetCreateBody,
+  datasetNameFromEnv,
+  datasetRenameNeeded,
   decideAwaitingPurchase,
   dedupKeyFor,
   eventForTag,
@@ -34,7 +37,8 @@ import {
 // Per-line config lives only in env:
 //   META_CAPI_ENABLED=true        master switch (anything else → off)
 //   META_CAPI_QUALIFIED_TAGS=...  type tags that mean QualifiedLead
-//   XLR8_VENTAS_URL=...           ventas_xlr9.php (optional: Purchase value)
+//   XLR8_VENTAS_URL=...           ventas_xlr9.php (Purchase value)
+//   META_CAPI_DATASET_NAME=...    dataset name, e.g. "XLR9 Inox" (optional)
 // Logs never carry tokens, phone numbers or ctwa_clid values.
 // ============================================================
 
@@ -112,20 +116,46 @@ async function graphFetch(path: string, accessToken: string, init: RequestInit =
   return body;
 }
 
-function datasetIdOf(body: unknown): string | null {
+function datasetOf(body: unknown): { id: string; name: string | null } | null {
   if (!body || typeof body !== 'object') return null;
-  const b = body as { id?: unknown; data?: Array<{ id?: unknown }> };
-  if (typeof b.id === 'string' && b.id) return b.id;
-  const first = Array.isArray(b.data) ? b.data[0] : null;
-  return first && typeof first.id === 'string' && first.id ? first.id : null;
+  const b = body as { id?: unknown; name?: unknown; data?: Array<{ id?: unknown; name?: unknown }> };
+  const hit = typeof b.id === 'string' && b.id ? b : Array.isArray(b.data) ? b.data[0] : null;
+  if (!hit || typeof hit.id !== 'string' || !hit.id) return null;
+  return { id: hit.id, name: typeof hit.name === 'string' ? hit.name : null };
+}
+
+/** Best-effort rename; a failure is only a warning and never blocks events. */
+async function renameDataset(datasetId: string, name: string, accessToken: string): Promise<void> {
+  try {
+    await graphFetch(`/${datasetId}`, accessToken, { method: 'POST', body: JSON.stringify({ name }) });
+  } catch (err) {
+    console.warn('[meta-capi] no se pudo poner nombre al dataset:', errText(err));
+  }
 }
 
 async function ensureDataset(wabaId: string, accessToken: string): Promise<string> {
-  const existing = datasetIdOf(await graphFetch(`/${wabaId}/dataset`, accessToken));
-  if (existing) return existing;
-  const created = datasetIdOf(await graphFetch(`/${wabaId}/dataset`, accessToken, { method: 'POST' }));
+  const name = datasetNameFromEnv(process.env.META_CAPI_DATASET_NAME);
+  const existing = datasetOf(await graphFetch(`/${wabaId}/dataset`, accessToken));
+  if (existing) {
+    if (datasetRenameNeeded(existing.name, name)) await renameDataset(existing.id, name!, accessToken);
+    return existing.id;
+  }
+  let created: { id: string; name: string | null } | null = null;
+  let namedOnCreate = false;
+  const body = datasetCreateBody(name);
+  if (body) {
+    try {
+      created = datasetOf(await graphFetch(`/${wabaId}/dataset`, accessToken, { method: 'POST', body: JSON.stringify(body) }));
+      namedOnCreate = Boolean(created);
+    } catch (err) {
+      // Meta may not take a name on create: retry without it, rename after.
+      console.warn('[meta-capi] crear dataset con nombre falló, se crea sin nombre:', errText(err));
+    }
+  }
+  created ??= datasetOf(await graphFetch(`/${wabaId}/dataset`, accessToken, { method: 'POST' }));
   if (!created) throw new Error('Meta no devolvió el id del dataset');
-  return created;
+  if (!namedOnCreate && datasetRenameNeeded(created.name, name)) await renameDataset(created.id, name!, accessToken);
+  return created.id;
 }
 
 async function loadLineConfig(admin: SupabaseClient, accountId: string): Promise<LineConfig | null> {
