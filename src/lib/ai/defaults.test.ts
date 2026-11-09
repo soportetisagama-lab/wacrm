@@ -4,6 +4,7 @@ import {
   HANDOFF_SENTINEL,
   looksLikeNotLeadReply,
   NO_PRICES_GUIDANCE,
+  NO_PROVINCE_SHIPPING_GUIDANCE,
   NOT_LEAD_SENTINEL,
   REPLY_LANGUAGE_GUIDANCE,
 } from './defaults'
@@ -175,5 +176,33 @@ describe('not a lead — job seekers, suppliers, spam are routed, not kept by th
     expect(looksLikeNotLeadReply('¿En qué ciudad necesitas la mesa de trabajo?')).toBe(false)
     expect(looksLikeNotLeadReply('Claro, fabricamos campanas extractoras a medida.')).toBe(false)
     expect(looksLikeNotLeadReply('Un asesor te enviará la cotización.')).toBe(false)
+  })
+})
+
+describe('Castor — no shipping to provinces', () => {
+  const shippingContext = 'Hacemos envíos a todo el Perú por Shalom.'
+
+  it('every customer-facing prompt carries the rule after the business context, right before the price rule', () => {
+    const prompts = [
+      buildSystemPrompt({ userPrompt: shippingContext, mode: 'auto_reply', knowledge: ['Enviamos a provincia'] }),
+      buildSystemPrompt({ userPrompt: shippingContext, mode: 'draft' }),
+      buildExtractionPrompt({
+        fields: [{ key: 'equipos', label: 'Equipos', required: true }],
+        knownValues: {},
+        systemContext: shippingContext,
+      }),
+      buildNudgePrompt(shippingContext),
+    ]
+    for (const p of prompts) {
+      expect(p).toContain(NO_PROVINCE_SHIPPING_GUIDANCE)
+      expect(p.indexOf(NO_PROVINCE_SHIPPING_GUIDANCE)).toBeGreaterThan(p.indexOf(shippingContext))
+      expect(p.endsWith(NO_PRICES_GUIDANCE)).toBe(true)
+    }
+  })
+
+  it('the rule says no shipping to provinces nor through agencies', () => {
+    expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/does NOT ship to provinces/)
+    expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/Shalom, Olva/)
+    expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/never invent them/)
   })
 })

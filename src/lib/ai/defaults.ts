@@ -138,6 +138,19 @@ export const NO_PRICES_GUIDANCE =
   'Strict business rule: never give prices, amounts, rates, costs or discounts — not even approximate ones or ranges — even when they appear in the business context, the knowledge base or earlier in the conversation. ' +
   'If the customer asks for a price or a quote, tell them naturally, in one short sentence, that an advisor will prepare their quotation, and keep gathering the details of their project (do not hand off just for that).'
 
+/**
+ * Castor line rule set by management: no shipping to provinces. Placed
+ * after the business context, menu info, knowledge base and learned
+ * rules (right before the price rule) so any text there that offers
+ * nationwide shipping can't override it. Shared by auto-reply, draft,
+ * collect_ai extraction and the inactivity nudge.
+ */
+export const NO_PROVINCE_SHIPPING_GUIDANCE =
+  'Strict business rule: this business does NOT ship to provinces — no shipments outside Lima to other cities or regions of Peru, and no dispatch through shipping agencies or couriers (Shalom, Olva, Marvisur or similar). ' +
+  'This overrides anything that says otherwise in the business context, the business information, the knowledge base, the learned lessons or earlier in the conversation. ' +
+  'If the customer asks about shipping to a province or is outside Lima, tell them kindly, in one short sentence, that we do not ship to provinces, and mention only the options the business information actually gives (for example delivery within Lima or pickup at the store) — never invent them. ' +
+  'Never offer, promise or imply a shipment outside Lima.'
+
 /** NO_PRICES_GUIDANCE for chats that can't be promised an advisor
  *  (NO_ADVISOR_PROMISE_GUIDANCE): same rule, no "an advisor will prepare
  *  their quotation". */
@@ -429,6 +442,9 @@ export function buildSystemPrompt(args: {
   const noPromise = mode === 'auto_reply' && noAdvisorPromise === true
   if (noPromise) parts.push(NO_ADVISOR_PROMISE_GUIDANCE)
   if (mode === 'auto_reply' && pendingPhoneAsk) parts.push(PENDING_PHONE_ASK_GUIDANCE)
+
+  // Castor: no shipping to provinces, over any text above that says otherwise.
+  parts.push(NO_PROVINCE_SHIPPING_GUIDANCE)
 
   // Last on purpose: overrides any price in the context or knowledge above.
   // Drafts too: the advisor sends them as-is more often than not.

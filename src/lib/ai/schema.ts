@@ -4,6 +4,7 @@ import {
   HUMAN_STYLE_GUIDANCE,
   TRANSCRIPT_ANNOTATIONS_GUIDANCE,
   NO_PRICES_GUIDANCE,
+  NO_PROVINCE_SHIPPING_GUIDANCE,
   customerMemoryBlock,
   learnedRulesBlock,
 } from './defaults'
@@ -211,6 +212,8 @@ export function buildExtractionPrompt(args: {
   if (rulesBlock) parts.push(rulesBlock)
   const memoryBlock = customerMemoryBlock(customerMemory)
   if (memoryBlock) parts.push(memoryBlock)
+  // Castor: no shipping to provinces, over the business context above.
+  parts.push(NO_PROVINCE_SHIPPING_GUIDANCE)
   // Last on purpose: overrides any price in the business context above.
   parts.push(NO_PRICES_GUIDANCE)
 
