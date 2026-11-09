@@ -21,6 +21,7 @@ import {
   isPurchaseCovered,
   isUnsendablePurchase,
   pickVenta,
+  purchaseCoveringVenta,
   purchaseValueDeadline,
   type MetaCapiEventName,
   type Xlr8Venta,
@@ -597,6 +598,8 @@ interface PurchaseRef {
   id: string;
   projectId: string | null;
   createdAt: Date;
+  /** The closure it reports (CERRADO time or sale date). */
+  eventTime: Date;
 }
 
 /** Non-skipped Purchase rows per contact (sent, waiting or retrying). */
@@ -605,18 +608,48 @@ async function purchaseRows(admin: SupabaseClient, contactIds: string[]): Promis
   for (const part of chunk(contactIds, CHUNK)) {
     const { data, error } = await admin
       .from('meta_capi_events')
-      .select('id, contact_id, project_id, created_at')
+      .select('id, contact_id, project_id, created_at, event_time')
       .eq('event_name', 'Purchase')
       .neq('status', 'skipped')
       .in('contact_id', part);
     if (error) throw new Error(`meta_capi_events: ${error.message}`);
-    for (const r of (data ?? []) as { id: string; contact_id: string; project_id: string | null; created_at: string }[]) {
+    for (const r of (data ?? []) as {
+      id: string;
+      contact_id: string;
+      project_id: string | null;
+      created_at: string;
+      event_time: string;
+    }[]) {
       const list = out.get(r.contact_id) ?? [];
-      list.push({ id: r.id, projectId: r.project_id, createdAt: new Date(r.created_at) });
+      list.push({
+        id: r.id,
+        projectId: r.project_id,
+        createdAt: new Date(r.created_at),
+        eventTime: new Date(r.event_time),
+      });
       out.set(r.contact_id, list);
     }
   }
   return out;
+}
+
+/**
+ * A Purchase recorded without project turned out to be this sale: tie the
+ * project to it (no resend; event_id is kept) so later sweeps see the sale
+ * as reported. A clash on the per-project index means another row already
+ * has it: nothing else to do either way.
+ */
+async function adoptProject(admin: SupabaseClient, ref: PurchaseRef, projectId: string): Promise<void> {
+  const { error } = await admin
+    .from('meta_capi_events')
+    .update({ project_id: projectId, dedup_key: dedupKeyFor('Purchase', { projectId }) })
+    .eq('id', ref.id)
+    .is('project_id', null);
+  if (error && error.code !== '23505') {
+    console.error('[meta-capi] no se pudo asignar el proyecto al Purchase', ref.id, ':', error.message);
+    return;
+  }
+  ref.projectId = projectId;
 }
 
 /**
@@ -660,6 +693,13 @@ async function handleTagsAdded(
         new Set(sent.map((s) => s.projectId).filter((p): p is string => !!p)),
         closedAt,
       );
+      // Same sale already reported by a Purchase without project (e.g. sent
+      // before the sale showed up): never a second one, just tie the project.
+      const covering = venta ? purchaseCoveringVenta(venta, sent) : null;
+      if (venta && covering) {
+        await adoptProject(admin, covering, venta.projectId);
+        continue;
+      }
       if (venta && venta.monto != null) {
         projectId = venta.projectId;
         value = venta.monto;
@@ -904,9 +944,14 @@ async function sweepAccount(admin: SupabaseClient, accountId: string): Promise<v
   for (const v of recent) {
     for (const contactId of byPhone.get(v.celular) ?? []) {
       const sent = purchases.get(contactId) ?? [];
-      // A Purchase without project already covers this contact's sale.
-      if (sent.some((s) => !s.projectId)) continue;
       if (sent.some((s) => s.projectId === v.projectId)) continue;
+      // A Purchase without project already covers this contact's sale:
+      // tie the project to it when it is this very closure.
+      if (sent.some((s) => !s.projectId)) {
+        const covering = purchaseCoveringVenta(v, sent);
+        if (covering) await adoptProject(admin, covering, v.projectId);
+        continue;
+      }
       try {
         const eventTime = v.fecha ?? new Date();
         await recordAndSend(admin, {

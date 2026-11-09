@@ -298,6 +298,18 @@ export function pickVenta(
 }
 
 /**
+ * A Purchase of the contact already recorded without project (sent,
+ * pending or waiting) whose closure (event_time) is the closure of this
+ * sale: it already reports the sale, so no second Purchase is created.
+ */
+export function purchaseCoveringVenta<T extends { projectId: string | null; eventTime: Date }>(
+  venta: Pick<Xlr8Venta, 'fecha'>,
+  purchases: ReadonlyArray<T>,
+): T | null {
+  return purchases.find((p) => !p.projectId && ventaMatchesClosure(venta.fecha, p.eventTime)) ?? null;
+}
+
+/**
  * A Purchase still without project (CERRADO seen, amount pending) is the
  * same closure as any other Purchase of that contact recorded in the last
  * 7 days: it must not become a second one.
