@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS meta_capi_events (
 CREATE INDEX IF NOT EXISTS idx_meta_capi_events_account
   ON meta_capi_events(account_id, created_at DESC);
 
+-- Una sola compra por proyecto de XLR8 en toda la cuenta (aunque haya dos
+-- contactos con el mismo celular).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_capi_events_purchase_project
+  ON meta_capi_events(account_id, dedup_key)
+  WHERE event_name = 'Purchase' AND project_id IS NOT NULL;
+
 -- Purchase en espera del monto (barrido del cron).
 CREATE INDEX IF NOT EXISTS idx_meta_capi_events_awaiting
   ON meta_capi_events(awaiting_value_until)
