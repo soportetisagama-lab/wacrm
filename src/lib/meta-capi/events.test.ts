@@ -23,6 +23,7 @@ import {
   parseXlr8Fecha,
   pickVenta,
   purchaseValueDeadline,
+  purchaseCoveringVenta,
   ventaMatchesClosure,
 } from './events';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
@@ -94,6 +95,21 @@ describe('dedup', () => {
     expect(pickVenta([sale], new Set(['42']), closedAt)).toBeNull();
     // Measured from now (old behavior) it would have been lost.
     expect(pickVenta([sale], new Set(), new Date('2026-11-09T21:12:00Z'))).toBeNull();
+  });
+
+  it('a Purchase already sent without project covers the sale found later', () => {
+    const sale = { celular: '51900000000', projectId: '42', monto: 710, fecha: parseXlr8Fecha('2026-11-02') };
+    const closedAt = new Date('2026-11-03T13:59:00Z');
+    const sentNoProject = { id: 's', projectId: null, eventTime: closedAt };
+    // The sale is found (not among sent project ids, since that one is null)…
+    const found = pickVenta([sale], new Set(), closedAt);
+    expect(found?.projectId).toBe('42');
+    // …but the projectless Purchase of that closure covers it: no second one.
+    expect(purchaseCoveringVenta(found!, [sentNoProject])?.id).toBe('s');
+    // A projectless Purchase of another closure (weeks earlier) does not.
+    expect(purchaseCoveringVenta(found!, [{ id: 'o', projectId: null, eventTime: new Date('2026-10-01T00:00:00Z') }])).toBeNull();
+    // One with a project is matched by project id, not by this rule.
+    expect(purchaseCoveringVenta(found!, [{ id: 'p', projectId: '41', eventTime: closedAt }])).toBeNull();
   });
 
   it('a sale belongs to a closure from 7 days before up to 2 days after it', () => {
