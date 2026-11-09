@@ -22,12 +22,16 @@
 // ============================================================
 
 import { INTERACTIVE_LIMITS } from './meta-api'
+import { isMetaCapiEventName, type MetaCapiEventName } from '@/lib/meta-capi/events'
 
 export interface InteractiveButton {
   /** Stable id echoed back in the webhook when tapped. */
   id: string
   /** Visible label (≤ 20 chars per Meta). */
   title: string
+  /** Optional "Enviar señal a Meta" action when tapped (never sent to
+   *  Meta as part of the message; see lib/meta-capi). */
+  meta_event?: MetaCapiEventName
 }
 
 export interface InteractiveButtonsPayload {
@@ -49,6 +53,8 @@ export interface InteractiveListRow {
   title: string
   /** Optional secondary line (≤ 72 chars). */
   description?: string
+  /** Same as InteractiveButton.meta_event. */
+  meta_event?: MetaCapiEventName
 }
 
 export interface InteractiveListSection {
@@ -150,6 +156,9 @@ export function validateInteractivePayload(
       if (typeof b.title !== 'string' || b.title.trim() === '') {
         return fail('Every button needs a label.')
       }
+      if (b.meta_event != null && !isMetaCapiEventName(b.meta_event)) {
+        return fail(`Unknown Meta event "${String(b.meta_event)}".`)
+      }
       if (b.title.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
         return fail(
           `Button label "${b.title}" exceeds the ${INTERACTIVE_LIMITS.buttonTitleMaxLength}-character limit.`,
@@ -197,6 +206,9 @@ export function validateInteractivePayload(
         seen.add(row.id)
         if (typeof row.title !== 'string' || row.title.trim() === '') {
           return fail('Every list row needs a title.')
+        }
+        if (row.meta_event != null && !isMetaCapiEventName(row.meta_event)) {
+          return fail(`Unknown Meta event "${String(row.meta_event)}".`)
         }
         if (row.title.length > INTERACTIVE_LIMITS.listRowTitleMaxLength) {
           return fail(
