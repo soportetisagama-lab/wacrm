@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withoutBroadcastTags } from '@/lib/tags/broadcast-tags';
+import { metaCapiOnTagsInserted } from '@/lib/meta-capi/send';
 
 import {
   XLR8_ESTADOS,
@@ -320,6 +321,15 @@ async function syncAccount(
       .upsert(chunk, { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
     if (error) throw new Error(`insertar contact_tags: ${error.message}`);
     agregados += chunk.length;
+  }
+
+  // Meta Conversions API (lib/meta-capi): QualifiedLead / OrderCreated /
+  // Purchase for ad contacts that just got a type or status tag.
+  // Fire-and-forget: it never throws and must never hold up the sync.
+  if (diff.toInsert.length > 0) {
+    const tagNameById = new Map<string, string>();
+    for (const [name, id] of [...estados.tagIdByEstado, ...tipos.tagIdByEstado]) tagNameById.set(id, name);
+    void metaCapiOnTagsInserted(admin, accountId, diff.toInsert, tagNameById);
   }
 
   return { revisados: diff.revisados, agregados, quitados, sinContacto: diff.sinContacto };

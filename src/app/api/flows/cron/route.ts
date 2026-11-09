@@ -19,6 +19,7 @@ import { logAiUsage } from '@/lib/ai/usage'
 import { remindPendingReplies } from '@/lib/notifications/pending-replies'
 import { internalCronState, isAuthorizedCronSecret } from '@/lib/cron/internal'
 import { runXlr8SyncIfDue } from '@/lib/xlr8/sync'
+import { runMetaCapiSweepIfDue } from '@/lib/meta-capi/send'
 import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/memory'
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
@@ -114,6 +115,10 @@ async function runFlowsCron(): Promise<Response> {
   // Fire-and-forget: a slow or failing xlr8 fetch must never hold up or
   // break the jobs below. runXlr8SyncIfDue never throws.
   void runXlr8SyncIfDue(admin, XLR8_SYNC_EVERY_MS)
+
+  // Meta Conversions API (lib/meta-capi): retries, tags put by hand and
+  // xlr8 sales. Off unless META_CAPI_ENABLED=true; every 5 min; never throws.
+  void runMetaCapiSweepIfDue(admin)
 
   // Per-customer AI memory (lib/ai/learning/memory.ts): every 10 min,
   // fire-and-forget like the xlr8 sync. Never throws.

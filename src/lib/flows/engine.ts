@@ -1070,7 +1070,13 @@ async function sendButtonsAndSuspend(
     bodyText,
     headerText: cfg.header_text,
     footerText: cfg.footer_text,
-    buttons: visibleButtons.map((b) => ({ id: b.reply_id, title: b.title })),
+    // meta_event rides on the stored payload only (meta-api sends id/title):
+    // the webhook reads it back when the customer taps (lib/meta-capi).
+    buttons: visibleButtons.map((b) => ({
+      id: b.reply_id,
+      title: b.title,
+      ...(b.meta_event ? { meta_event: b.meta_event } : {}),
+    })),
   });
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_buttons",
@@ -1135,6 +1141,7 @@ async function sendListAndSuspend(
         id: r.reply_id,
         title: r.title,
         description: r.description,
+        ...(r.meta_event ? { meta_event: r.meta_event } : {}),
       })),
     })),
   });
