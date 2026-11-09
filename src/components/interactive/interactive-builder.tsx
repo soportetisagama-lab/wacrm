@@ -17,6 +17,7 @@ import {
   type InteractiveMessagePayload,
 } from "@/lib/whatsapp/interactive";
 import { InteractivePreview } from "./interactive-preview";
+import { MetaEventSelect } from "@/components/meta-capi/meta-event-select";
 
 // ------------------------------------------------------------
 // Blank payload factories — used to seed a fresh builder and to
@@ -58,6 +59,8 @@ interface InteractiveBuilderProps {
   onChange: (payload: InteractiveMessagePayload) => void;
   /** Show the live WhatsApp-style preview beside the form. Default true. */
   showPreview?: boolean;
+  /** Offer the per-button "Enviar señal a Meta" action (automations). */
+  metaEvents?: boolean;
 }
 
 /**
@@ -71,6 +74,7 @@ export function InteractiveBuilder({
   value,
   onChange,
   showPreview = true,
+  metaEvents = false,
 }: InteractiveBuilderProps) {
   const t = useTranslations("InteractiveBuilder");
   const [advanced, setAdvanced] = useState(false);
@@ -142,9 +146,9 @@ export function InteractiveBuilder({
         </div>
 
         {value.kind === "buttons" ? (
-          <ButtonsEditor value={value} onChange={onChange} advanced={advanced} t={t} />
+          <ButtonsEditor value={value} onChange={onChange} advanced={advanced} metaEvents={metaEvents} t={t} />
         ) : (
-          <ListEditor value={value} onChange={onChange} advanced={advanced} t={t} />
+          <ListEditor value={value} onChange={onChange} advanced={advanced} metaEvents={metaEvents} t={t} />
         )}
 
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -184,11 +188,13 @@ function ButtonsEditor({
   value,
   onChange,
   advanced,
+  metaEvents,
   t,
 }: {
   value: InteractiveButtonsPayload;
   onChange: (p: InteractiveMessagePayload) => void;
   advanced: boolean;
+  metaEvents: boolean;
   t: ReturnType<typeof useTranslations>;
 }) {
   const buttons = value.buttons;
@@ -215,10 +221,8 @@ function ButtonsEditor({
       </label>
       <div className="flex flex-col gap-2">
         {buttons.map((b, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-2"
-          >
+          <div key={i} className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-2">
+          <div className="flex items-center gap-2">
             {advanced && (
               <Input
                 value={b.id}
@@ -248,6 +252,10 @@ function ButtonsEditor({
               </Button>
             )}
           </div>
+          {metaEvents && (
+            <MetaEventSelect value={b.meta_event} onChange={(v) => update(i, { meta_event: v })} />
+          )}
+          </div>
         ))}
       </div>
       {buttons.length < INTERACTIVE_LIMITS.maxButtons && (
@@ -268,11 +276,13 @@ function ListEditor({
   value,
   onChange,
   advanced,
+  metaEvents,
   t,
 }: {
   value: InteractiveListPayload;
   onChange: (p: InteractiveMessagePayload) => void;
   advanced: boolean;
+  metaEvents: boolean;
   t: ReturnType<typeof useTranslations>;
 }) {
   const sections = value.sections;
@@ -401,6 +411,13 @@ function ListEditor({
                   placeholder={t("rowDescriptionPlaceholder")}
                   className="mt-2 bg-muted text-xs"
                 />
+                {metaEvents && (
+                  <MetaEventSelect
+                    value={row.meta_event}
+                    onChange={(v) => updateRow(sIdx, rIdx, { meta_event: v })}
+                    className="mt-2"
+                  />
+                )}
               </div>
             ))}
           </div>

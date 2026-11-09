@@ -21,6 +21,7 @@
 import type { ExtractionField } from "@/lib/ai/schema";
 import type { InboundAudioRef } from "@/lib/ai/inbound-audio";
 import type { AiDocument } from "@/lib/ai/types";
+import type { MetaCapiEventName } from "@/lib/meta-capi/events";
 
 // ============================================================
 // Node configs (discriminated union by node_type)
@@ -168,6 +169,8 @@ export interface SendButtonsNodeConfig extends UnmatchedTextHandling {
     title: string;
     /** node_key the runner advances to when this button is tapped. */
     next_node_key: string;
+    /** Optional "Enviar señal a Meta" action when tapped (lib/meta-capi). */
+    meta_event?: MetaCapiEventName;
   }>;
   /**
    * Where to advance instead of sending this node, once THIS contact
@@ -196,6 +199,8 @@ export interface SendListNodeConfig extends UnmatchedTextHandling {
       title: string;
       description?: string;
       next_node_key: string;
+      /** Same as SendButtonsNodeConfig buttons' meta_event. */
+      meta_event?: MetaCapiEventName;
     }>;
   }>;
   /** Same purpose as SendButtonsNodeConfig.all_selected_node_key — see
