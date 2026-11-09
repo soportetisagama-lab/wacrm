@@ -26,6 +26,8 @@ interface AudienceConfig {
   customField?: { fieldId: string; operator: CustomFieldOperator; value: string };
   csvContacts?: { phone: string; name?: string }[];
   excludeTagIds?: string[];
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 interface Step4Props {
