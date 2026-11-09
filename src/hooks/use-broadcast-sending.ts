@@ -7,9 +7,13 @@ import { Contact, MessageTemplate } from '@/types';
 import {
   ID_CHUNK,
   chunk,
+  createdAtBounds,
   fetchAllPages,
   fetchCustomFieldContactIds,
   fetchTaggedContactIds,
+  isCreatedRangeInverted,
+  isCreatedWithin,
+  type CreatedDateRange,
 } from '@/lib/broadcasts/audience';
 import {
   isMediaHeaderType,
@@ -30,7 +34,7 @@ export interface CustomFieldFilter {
   value: string;
 }
 
-export interface AudienceConfig {
+export interface AudienceConfig extends CreatedDateRange {
   type: 'all' | 'tags' | 'custom_field' | 'csv';
   tagIds?: string[];
   customField?: CustomFieldFilter;
@@ -204,11 +208,20 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
     let contacts: Contact[] = [];
 
+    // Optional first-contact range (Lima days, "to" inclusive). Not for CSV.
+    if (audience.type !== 'csv' && isCreatedRangeInverted(audience)) {
+      throw new Error('La fecha "Desde" no puede ser posterior a la fecha "Hasta".');
+    }
+    const bounds = audience.type === 'csv' ? null : createdAtBounds(audience);
+
     if (audience.type === 'all') {
       try {
-        contacts = await fetchAllPages<Contact>((from, to) =>
-          supabase.from('contacts').select('*').order('id', { ascending: true }).range(from, to),
-        );
+        contacts = await fetchAllPages<Contact>((from, to) => {
+          let q = supabase.from('contacts').select('*');
+          if (bounds?.gte) q = q.gte('created_at', bounds.gte);
+          if (bounds?.lt) q = q.lt('created_at', bounds.lt);
+          return q.order('id', { ascending: true }).range(from, to);
+        });
       } catch (err) {
         throw new Error(`No se pudieron cargar los contactos: ${errText(err)}`);
       }
@@ -229,6 +242,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     } else if (audience.type === 'csv' && audience.csvContacts) {
       contacts = await upsertCsvContacts(supabase, audience.csvContacts);
     }
+
+    // Same range for tag / custom-field audiences (rows carry created_at).
+    if (bounds) contacts = contacts.filter((c) => isCreatedWithin(c.created_at, bounds));
 
     // Apply exclude tags (works across all contact-derived audience
     // types). CSV contacts are synthetic so exclusion doesn't apply.
@@ -408,6 +424,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             tagIds: payload.audience.tagIds,
             customField: payload.audience.customField,
             excludeTagIds: payload.audience.excludeTagIds,
+            ...(payload.audience.type !== 'csv' && createdAtBounds(payload.audience)
+              ? {
+                  createdFrom: payload.audience.createdFrom || undefined,
+                  createdTo: payload.audience.createdTo || undefined,
+                }
+              : {}),
             // No dedicated column: the server worker reads the header
             // media from here (also on "Resume sending").
             ...(isMediaHeaderType(payload.template.header_type) &&
