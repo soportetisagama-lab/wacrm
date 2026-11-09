@@ -1,6 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
+import { metaCapiOnAdReferral, metaCapiOnButtonTap } from '@/lib/meta-capi/send'
 import { getMediaUrl, downloadMedia, sendRequestContactInfo } from '@/lib/whatsapp/meta-api'
 import {
   classifyTypedPhone,
@@ -1202,6 +1203,14 @@ async function saveReferralIfPresent(
     if (error) {
       console.error('[webhook] Error inserting conversation referral:', error)
     }
+    // Meta Conversions API: LeadSubmitted (once per contact; off unless
+    // META_CAPI_ENABLED). Fire-and-forget, never throws.
+    void metaCapiOnAdReferral({
+      accountId,
+      contactId,
+      ctwaClid: referral.ctwa_clid,
+      at: new Date(parseInt(message.timestamp) * 1000),
+    })
   } catch (err) {
     console.error('[webhook] saveReferralIfPresent failed:', err)
   }
@@ -1726,6 +1735,20 @@ async function processMessage(
   if (msgError || !insertedMessage) {
     console.error('Error inserting message:', msgError)
     return
+  }
+
+  // Meta Conversions API: a tapped button / list row whose option has
+  // "Enviar señal a Meta" configured (flows and automations store it on
+  // the sent interactive payload). Fire-and-forget, never throws.
+  if (interactiveReplyId) {
+    void metaCapiOnButtonTap({
+      accountId,
+      contactId: contactRecord.id,
+      conversationId: conversation.id,
+      parentMessageId: replyToInternalId,
+      replyId: interactiveReplyId,
+      at: new Date(parseInt(message.timestamp) * 1000),
+    })
   }
 
   // Native push (FCM) for the assigned agent's phone — best-effort,
