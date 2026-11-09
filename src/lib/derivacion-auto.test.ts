@@ -5,6 +5,8 @@ import {
   debeDerivarCelular,
   derivarAuto,
   dentroDeHorario,
+  derivacionSinHorario,
+  horarioAbierto,
   procesarColaDerivacion,
   NOTA_EN_COLA,
   esNumeroExtranjero,
@@ -222,6 +224,34 @@ describe('HORARIO_DERIVACION', () => {
     // 13:00 UTC = 08:00 Lima (lunes)
     expect(dentroDeHorario(new Date('2026-11-02T13:00:00Z'))).toBe(true)
     expect(dentroDeHorario(new Date('2026-11-02T12:59:00Z'))).toBe(false)
+  })
+})
+
+describe('interruptor DERIVACION_SIN_HORARIO', () => {
+  it('solo se activa con "true" (trim, minúsculas)', () => {
+    expect(derivacionSinHorario('true')).toBe(true)
+    expect(derivacionSinHorario('  TRUE ')).toBe(true)
+    for (const v of [undefined, '', 'false', '1', 'si']) expect(derivacionSinHorario(v)).toBe(false)
+  })
+
+  it('horarioAbierto: activo siempre abre; si no, delega en dentroDeHorario', () => {
+    const domingo = lima('2026-11-08T20:00')
+    expect(horarioAbierto(domingo, undefined, true)).toBe(true)
+    expect(horarioAbierto(domingo, undefined, false)).toBe(false)
+    expect(horarioAbierto(DENTRO, undefined, false)).toBe(true)
+  })
+
+  it('con la variable activa no encola: deriva fuera de horario', async () => {
+    vi.stubEnv('DERIVACION_SIN_HORARIO', 'true')
+    try {
+      const store = makeStore()
+      const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+      await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: lima('2026-11-08T20:00') })
+      expect(store.enqueue).not.toHaveBeenCalled()
+      expect(fetchFn).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

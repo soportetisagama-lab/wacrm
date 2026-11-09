@@ -114,6 +114,25 @@ export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO
   return enTramo(min, horario.jornada[dia]) && !enTramo(min, horario.almuerzo)
 }
 
+/**
+ * Interruptor temporal: con DERIVACION_SIN_HORARIO=true la derivación
+ * ignora HORARIO_DERIVACION (deriva a cualquier hora y vacía la cola en
+ * la siguiente pasada del cron). Para volver al horario, quitar la
+ * variable o ponerla en false.
+ */
+export function derivacionSinHorario(valor: string | undefined = process.env.DERIVACION_SIN_HORARIO): boolean {
+  return valor?.trim().toLowerCase() === 'true'
+}
+
+/** True si la derivación puede correr ahora: interruptor activo o dentro de horario. */
+export function horarioAbierto(
+  date: Date,
+  horario: HorarioDerivacion = HORARIO_DERIVACION,
+  sinHorario: boolean = derivacionSinHorario(),
+): boolean {
+  return sinHorario || dentroDeHorario(date, horario)
+}
+
 /** True si el número no es peruano (ni 9 dígitos ni 51 + 9 dígitos). Solo contexto para la IA. */
 export function esNumeroExtranjero(phone: string | null | undefined): boolean {
   const digits = (phone ?? '').replace(/\D/g, '')
@@ -286,7 +305,7 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
 
     // Fuera de horario: a la cola, sin llamar al PHP. El cron la deriva
     // al abrir el horario.
-    if (!dentroDeHorario(now, deps.horario)) {
+    if (!horarioAbierto(now, deps.horario)) {
       if (!(await store.enqueue(conversationId, now, conv.assigned_agent_id ?? null))) return 'ya_en_cola'
       await store.appendNote(conversationId, NOTA_EN_COLA)
       return 'en_cola'
@@ -526,7 +545,7 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
   const res: ColaResultado = { derivadas: 0, descartadas: 0 }
   const env = deps.env ?? derivacionEnv()
   const now = deps.now ?? new Date()
-  if (!envListo(env) || !dentroDeHorario(now, deps.horario)) return res
+  if (!envListo(env) || !horarioAbierto(now, deps.horario)) return res
   const { store } = deps
   try {
     const ids = await store.listQueue(deps.limite ?? COLA_LIMITE_POR_PASADA)
@@ -566,7 +585,7 @@ let colaEnCurso = false
  * variables, es horario y no hay otra pasada en curso. Nunca lanza.
  */
 export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = new Date()): Promise<void> {
-  if (colaEnCurso || !envListo(derivacionEnv()) || !dentroDeHorario(now)) return
+  if (colaEnCurso || !envListo(derivacionEnv()) || !horarioAbierto(now)) return
   colaEnCurso = true
   try {
     await procesarColaDerivacion({ store: supabaseDerivacionStore(db), now, clasificar: clasificadorOpenAi(db) })
