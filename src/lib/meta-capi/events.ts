@@ -264,20 +264,34 @@ export function parseVentasResponse(body: unknown): Xlr8Venta[] {
   return out;
 }
 
+/** A sale may be dated up to this long after the CERRADO tag (late entry in XLR8). */
+export const VENTA_AFTER_CLOSURE_MS = 2 * 24 * 60 * 60_000;
+
 /**
- * The project a new CERRADO tag should report: the most recent sale of
- * that phone not yet sent. null → no known project (Purchase without value).
+ * Whether a sale belongs to a closure (CERRADO tag at `closedAt`): dated
+ * within the 7 days before it, or up to 2 days after. Measured against the
+ * closure, never against now, so a backfilled tag still finds its sale.
+ * A sale without date is accepted.
+ */
+export function ventaMatchesClosure(fecha: Date | null, closedAt: Date): boolean {
+  if (!fecha) return true;
+  const diff = closedAt.getTime() - fecha.getTime();
+  return diff < MAX_EVENT_AGE_MS && diff > -VENTA_AFTER_CLOSURE_MS;
+}
+
+/**
+ * The project a CERRADO tag (closed at `closedAt`) should report: the most
+ * recent sale of that phone, of this closure, not yet sent. null → no
+ * known project (the Purchase waits for its amount or is skipped).
  */
 export function pickVenta(
   ventas: ReadonlyArray<Xlr8Venta>,
   alreadySentProjectIds: ReadonlySet<string>,
-  now: Date = new Date(),
+  closedAt: Date = new Date(),
 ): Xlr8Venta | null {
-  // Only sales of this closure: an older sale (> 7 days) is a past one.
+  // Only sales of this closure: one dated > 7 days before it is a past one.
   const pending = ventas.filter(
-    (v) =>
-      !alreadySentProjectIds.has(v.projectId) &&
-      (!v.fecha || now.getTime() - v.fecha.getTime() < MAX_EVENT_AGE_MS),
+    (v) => !alreadySentProjectIds.has(v.projectId) && ventaMatchesClosure(v.fecha, closedAt),
   );
   pending.sort((a, b) => (b.fecha?.getTime() ?? 0) - (a.fecha?.getTime() ?? 0));
   return pending[0] ?? null;
