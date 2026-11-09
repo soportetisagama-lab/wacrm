@@ -3,7 +3,7 @@ import Image from 'next/image';
 import styles from '@/components/auth/auth-logo-header.module.css';
 
 // Shared header for the "form" state of each auth screen: the Sagama
-// Inox wordmark, an optional bold heading, and an optional description
+// Retail wordmark, an optional bold heading, and an optional description
 // line. The wordmark plays a one-time "light scanner" entrance —
 // see auth-logo-header.module.css.
 export function AuthLogoHeader({
@@ -26,7 +26,7 @@ export function AuthLogoHeader({
       >
         <Image
           src="/branding/BIENVENIDO-Retail.png"
-          alt="Bienvenido a Sagama Inox"
+          alt="Bienvenido a Sagama Retail"
           width={862}
           height={134}
           priority
