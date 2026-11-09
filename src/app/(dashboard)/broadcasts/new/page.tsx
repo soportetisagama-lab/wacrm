@@ -46,6 +46,9 @@ export default function NewBroadcastPage() {
     };
     csvContacts?: { phone: string; name?: string }[];
     excludeTagIds?: string[];
+    /** First-contact range, Lima days (YYYY-MM-DD). */
+    createdFrom?: string;
+    createdTo?: string;
   }>({ type: 'all' });
   const [variables, setVariables] = useState<
     Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
@@ -67,6 +70,8 @@ export default function NewBroadcastPage() {
           customField: audience.customField,
           csvContacts: audience.csvContacts,
           excludeTagIds: audience.excludeTagIds,
+          createdFrom: audience.createdFrom,
+          createdTo: audience.createdTo,
         },
         variables,
         headerMediaUrl,

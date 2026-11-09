@@ -1097,7 +1097,13 @@
         "errorLoadTags": "Failed to load tags",
         "errorLoadFields": "Failed to load custom fields",
         "errorCsvParse": "Could not parse CSV file.",
-        "errorCsvMissingPhone": "CSV must have a 'phone' column."
+        "errorCsvMissingPhone": "CSV must have a 'phone' column.",
+        "createdRange": "First contact date (optional)",
+        "createdRangeHint": "Only contacts who first wrote to you within this range (Lima time).",
+        "createdFrom": "From",
+        "createdTo": "To",
+        "createdClear": "Clear",
+        "createdRangeInvalid": "The \"From\" date cannot be after the \"To\" date."
       },
       "personalize": {
         "title": "Personalize Variables",
