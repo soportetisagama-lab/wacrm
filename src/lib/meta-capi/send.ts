@@ -15,6 +15,8 @@ import {
   nextRetryDelayMs,
   parseQualifiedTags,
   parseVentasResponse,
+  isPurchaseCovered,
+  isUnsendablePurchase,
   pickVenta,
   purchaseValueDeadline,
   type MetaCapiEventName,
@@ -213,7 +215,8 @@ interface EventRow {
   event_name: MetaCapiEventName;
   event_id: string;
   ctwa_clid: string | null;
-  value: number | null;
+  /** NUMERIC comes back from PostgREST as number or string. */
+  value: number | string | null;
   currency: string | null;
   event_time: string;
   status: 'pending' | 'sent' | 'failed' | 'skipped';
@@ -293,7 +296,12 @@ async function recordAndSend(admin: SupabaseClient, args: RecordArgs): Promise<v
     .from('meta_capi_events')
     .upsert(row, { onConflict: 'contact_id,dedup_key', ignoreDuplicates: true })
     .select(ROW_COLUMNS);
-  if (error) throw new Error(`meta_capi_events: ${error.message}`);
+  if (error) {
+    // 23505 on the per-account project index (migration 093): that sale's
+    // Purchase already exists for another contact with the same phone.
+    if (error.code === '23505') return;
+    throw new Error(`meta_capi_events: ${error.message}`);
+  }
 
   let toSend = ((inserted ?? []) as EventRow[])[0] ?? null;
   if (!toSend && args.ctwaClid) {
@@ -321,6 +329,16 @@ async function recordAndSend(admin: SupabaseClient, args: RecordArgs): Promise<v
 
 async function sendRow(admin: SupabaseClient, row: EventRow): Promise<void> {
   const attempts = row.attempts + 1;
+  // Meta requires value + currency on Purchase: without an amount it is
+  // never sent (no retries). Covers the 48 h deadline, no sales feed and
+  // a "Compra realizada" button.
+  if (isUnsendablePurchase(row.event_name, row.value)) {
+    await admin
+      .from('meta_capi_events')
+      .update({ status: 'skipped', error: 'sin monto', next_attempt_at: null, awaiting_value_until: null })
+      .eq('id', row.id);
+    return;
+  }
   try {
     if (!row.ctwa_clid) throw new Error('sin ctwa_clid');
     if (Date.now() - new Date(row.event_time).getTime() > MAX_EVENT_AGE_MS) {
@@ -523,22 +541,26 @@ async function contactPhones(admin: SupabaseClient, ids: string[]): Promise<Map<
   return out;
 }
 
-async function purchaseRows(
-  admin: SupabaseClient,
-  contactIds: string[],
-): Promise<Map<string, { projectId: string | null }[]>> {
-  const out = new Map<string, { projectId: string | null }[]>();
+interface PurchaseRef {
+  id: string;
+  projectId: string | null;
+  createdAt: Date;
+}
+
+/** Non-skipped Purchase rows per contact (sent, waiting or retrying). */
+async function purchaseRows(admin: SupabaseClient, contactIds: string[]): Promise<Map<string, PurchaseRef[]>> {
+  const out = new Map<string, PurchaseRef[]>();
   for (const part of chunk(contactIds, CHUNK)) {
     const { data, error } = await admin
       .from('meta_capi_events')
-      .select('contact_id, project_id')
+      .select('id, contact_id, project_id, created_at')
       .eq('event_name', 'Purchase')
       .neq('status', 'skipped')
       .in('contact_id', part);
     if (error) throw new Error(`meta_capi_events: ${error.message}`);
-    for (const r of (data ?? []) as { contact_id: string; project_id: string | null }[]) {
+    for (const r of (data ?? []) as { id: string; contact_id: string; project_id: string | null; created_at: string }[]) {
       const list = out.get(r.contact_id) ?? [];
-      list.push({ projectId: r.project_id });
+      list.push({ id: r.id, projectId: r.project_id, createdAt: new Date(r.created_at) });
       out.set(r.contact_id, list);
     }
   }
@@ -567,7 +589,7 @@ async function handleTagsAdded(
   const buyers = [...new Set(relevant.filter((w) => w.event === 'Purchase').map((w) => w.contact_id))];
   const ventas = buyers.length ? await loadVentas() : null;
   const phones = buyers.length && ventas ? await contactPhones(admin, buyers) : new Map<string, string>();
-  const purchases = buyers.length ? await purchaseRows(admin, buyers) : new Map();
+  const purchases = buyers.length ? await purchaseRows(admin, buyers) : new Map<string, PurchaseRef[]>();
 
   for (const w of relevant) {
     const ctwaClid = clids.get(w.contact_id)!;
@@ -576,7 +598,7 @@ async function handleTagsAdded(
     let value: number | null = null;
     let awaitValueUntil: Date | null = null;
     if (w.event === 'Purchase') {
-      const sent = (purchases.get(w.contact_id) ?? []) as { projectId: string | null }[];
+      const sent = purchases.get(w.contact_id) ?? [];
       const phone = phones.get(w.contact_id);
       const mine = ventas && phone ? ventas.filter((v) => v.celular === phone) : [];
       const venta = pickVenta(mine, new Set(sent.map((s) => s.projectId).filter((p): p is string => !!p)));
@@ -664,12 +686,22 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
   const ventas = configured ? await loadVentas() : null;
   const ids = [...new Set(rows.map((r) => r.contact_id))];
   const phones = ventas ? await contactPhones(admin, ids) : new Map<string, string>();
-  const purchases = ventas ? await purchaseRows(admin, ids) : new Map<string, { projectId: string | null }[]>();
+  // Always loaded: a waiting row may be covered by another Purchase.
+  const purchases = await purchaseRows(admin, ids);
 
   for (const row of rows) {
     try {
       const phone = phones.get(row.contact_id);
       const ownProject = (row as EventRow & { project_id?: string | null }).project_id ?? null;
+      // Sync and cron can both see one closure: a waiting row without
+      // project yields to any other recent Purchase of the contact.
+      if (!ownProject && isPurchaseCovered(row.id, purchases.get(row.contact_id) ?? [])) {
+        await admin
+          .from('meta_capi_events')
+          .update({ status: 'skipped', error: 'misma venta ya registrada', awaiting_value_until: null, next_attempt_at: null })
+          .eq('id', row.id);
+        continue;
+      }
       let venta: Xlr8Venta | null = null;
       if (ventas && ownProject) {
         // Already tied to a project (from the sales feed): wait for its amount.
@@ -781,8 +813,8 @@ async function sweepAccount(admin: SupabaseClient, accountId: string): Promise<v
     for (const contactId of byPhone.get(v.celular) ?? []) {
       const sent = purchases.get(contactId) ?? [];
       // A Purchase without project already covers this contact's sale.
-      if (sent.some((s: { projectId: string | null }) => !s.projectId)) continue;
-      if (sent.some((s: { projectId: string | null }) => s.projectId === v.projectId)) continue;
+      if (sent.some((s) => !s.projectId)) continue;
+      if (sent.some((s) => s.projectId === v.projectId)) continue;
       try {
         const eventTime = v.fecha ?? new Date();
         await recordAndSend(admin, {

@@ -7,7 +7,7 @@
 // ctwa_clid and the line's WABA id, never a phone number.
 //
 // Safe to import from client components (button-action selector):
-// no Node APIs here. The I/O lives in ./send.ts.
+// no Node APIs here. UI labels live in messages/*.json (MetaCapi.events). The I/O lives in ./send.ts.
 // ============================================================
 
 /** Event names Meta accepts for action_source = business_messaging. */
@@ -29,24 +29,6 @@ export const META_CAPI_EVENT_NAMES = [
 ] as const;
 
 export type MetaCapiEventName = (typeof META_CAPI_EVENT_NAMES)[number];
-
-/** UI labels (neutral Spanish) for the "Enviar señal a Meta" selector. */
-export const META_CAPI_EVENT_LABELS: Record<MetaCapiEventName, string> = {
-  LeadSubmitted: 'Cliente potencial registrado',
-  QualifiedLead: 'Cliente potencial calificado',
-  ViewContent: 'Vio contenido',
-  AddToCart: 'Agregó al carrito',
-  InitiateCheckout: 'Inició la compra (cotización)',
-  OrderCreated: 'Pedido creado (anticipo)',
-  Purchase: 'Compra realizada',
-  OrderShipped: 'Pedido enviado',
-  OrderDelivered: 'Pedido entregado',
-  OrderCanceled: 'Pedido cancelado',
-  OrderReturned: 'Pedido devuelto',
-  CartAbandoned: 'Carrito abandonado',
-  RatingProvided: 'Dio una calificación',
-  ReviewProvided: 'Dejó una reseña',
-};
 
 const EVENT_SET = new Set<string>(META_CAPI_EVENT_NAMES);
 
@@ -129,6 +111,13 @@ export function buildEventPayload(input: MetaCapiEventInput): {
     event.custom_data = { value: input.value, currency: input.currency || 'PEN' };
   }
   return { data: [event] };
+}
+
+/** Meta requires value + currency on Purchase: one without value > 0 is never sent. */
+export function isUnsendablePurchase(eventName: MetaCapiEventName, value: number | string | null | undefined): boolean {
+  if (eventName !== 'Purchase') return false;
+  const n = value == null ? NaN : Number(value);
+  return !(Number.isFinite(n) && n > 0);
 }
 
 /** Meta rejects events older than 7 days; clamp future times to now. */
@@ -237,6 +226,21 @@ function phoneKey(phone: string): string {
   return digits.length === 9 ? `51${digits}` : digits;
 }
 
+/**
+ * XLR8 dates are Lima time (UTC-5, no DST). "YYYY-MM-DD" alone → noon
+ * Lima; "YYYY-MM-DD HH:MM[:SS]" → that Lima time. Anything else → null.
+ */
+export function parseXlr8Fecha(v: unknown): Date | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  let iso: string | null = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) iso = `${s}T12:00:00-05:00`;
+  else if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(s)) iso = `${s.replace(' ', 'T')}-05:00`;
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
 export function parseVentasResponse(body: unknown): Xlr8Venta[] {
   if (!body || typeof body !== 'object') throw new Error('respuesta no es un objeto');
   const items = (body as { items?: unknown }).items;
@@ -249,12 +253,12 @@ export function parseVentasResponse(body: unknown): Xlr8Venta[] {
     const celular = phoneKey(String(r.celular));
     const projectId = r.project_id == null ? '' : String(r.project_id).trim();
     if (!celular || !projectId) continue;
-    const fecha = typeof r.fecha === 'string' && r.fecha ? new Date(r.fecha.replace(' ', 'T')) : null;
+    const fecha = parseXlr8Fecha(r.fecha);
     out.push({
       celular,
       projectId,
       monto: parseMonto(r.monto_venta),
-      fecha: fecha && Number.isFinite(fecha.getTime()) ? fecha : null,
+      fecha,
     });
   }
   return out;
@@ -267,8 +271,27 @@ export function parseVentasResponse(body: unknown): Xlr8Venta[] {
 export function pickVenta(
   ventas: ReadonlyArray<Xlr8Venta>,
   alreadySentProjectIds: ReadonlySet<string>,
+  now: Date = new Date(),
 ): Xlr8Venta | null {
-  const pending = ventas.filter((v) => !alreadySentProjectIds.has(v.projectId));
+  // Only sales of this closure: an older sale (> 7 days) is a past one.
+  const pending = ventas.filter(
+    (v) =>
+      !alreadySentProjectIds.has(v.projectId) &&
+      (!v.fecha || now.getTime() - v.fecha.getTime() < MAX_EVENT_AGE_MS),
+  );
   pending.sort((a, b) => (b.fecha?.getTime() ?? 0) - (a.fecha?.getTime() ?? 0));
   return pending[0] ?? null;
+}
+
+/**
+ * A Purchase still without project (CERRADO seen, amount pending) is the
+ * same closure as any other Purchase of that contact recorded in the last
+ * 7 days: it must not become a second one.
+ */
+export function isPurchaseCovered(
+  rowId: string,
+  others: ReadonlyArray<{ id: string; createdAt: Date }>,
+  now: Date = new Date(),
+): boolean {
+  return others.some((o) => o.id !== rowId && now.getTime() - o.createdAt.getTime() < MAX_EVENT_AGE_MS);
 }

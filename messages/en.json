@@ -2703,5 +2703,27 @@
     "colUtilityFree": "Free utility (24 h)",
     "colAuthentication": "Authentication",
     "utilityFree": "{count} free (24 h)"
+  },
+  "MetaCapi": {
+    "sendSignal": "Send signal to Meta",
+    "none": "Don't send",
+    "hint": "Only sent to Meta when the customer came from a WhatsApp ad",
+    "purchaseNote": "Only sent when XLR8 has an amount",
+    "events": {
+      "LeadSubmitted": "Lead submitted",
+      "QualifiedLead": "Qualified lead",
+      "ViewContent": "Viewed content",
+      "AddToCart": "Added to cart",
+      "InitiateCheckout": "Started checkout (quote)",
+      "OrderCreated": "Order created (deposit)",
+      "Purchase": "Purchase",
+      "OrderShipped": "Order shipped",
+      "OrderDelivered": "Order delivered",
+      "OrderCanceled": "Order canceled",
+      "OrderReturned": "Order returned",
+      "CartAbandoned": "Cart abandoned",
+      "RatingProvided": "Rating provided",
+      "ReviewProvided": "Review provided"
+    }
   }
 }
