@@ -258,7 +258,7 @@ function EmbeddedShell({
                 picked here. */}
             <Image
               src="/branding/SAGAMAMENU-Retail.png"
-              alt="Sagama CRM"
+              alt="Sagama Retail CRM"
               width={882}
               height={283}
               priority
