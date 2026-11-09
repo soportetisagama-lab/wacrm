@@ -8,6 +8,9 @@
 --     no duplicar, reintentar y auditar. Solo guarda ctwa_clid, nunca
 --     teléfonos. status: pending | sent | failed | skipped (skipped =
 --     botón tocado por un contacto sin ctwa_clid; no se envió).
+--   - awaiting_value_until: Purchase en espera del monto de XLR8. El
+--     cron lo busca en cada barrido; al llegar a esa hora (48 h, siempre
+--     dentro de los 7 días de Meta) se envía sin value.
 --
 -- RLS: lectura solo admin+ de la cuenta; escritura solo service role
 -- (el servidor usa la clave de servicio, que no pasa por RLS).
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS meta_capi_events (
   value NUMERIC(14, 2) NULL,
   currency TEXT NULL,
   event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  awaiting_value_until TIMESTAMPTZ NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -49,6 +53,11 @@ CREATE TABLE IF NOT EXISTS meta_capi_events (
 
 CREATE INDEX IF NOT EXISTS idx_meta_capi_events_account
   ON meta_capi_events(account_id, created_at DESC);
+
+-- Purchase en espera del monto (barrido del cron).
+CREATE INDEX IF NOT EXISTS idx_meta_capi_events_awaiting
+  ON meta_capi_events(awaiting_value_until)
+  WHERE status = 'pending' AND awaiting_value_until IS NOT NULL;
 
 -- Reintentos pendientes (barrido del cron).
 CREATE INDEX IF NOT EXISTS idx_meta_capi_events_retry

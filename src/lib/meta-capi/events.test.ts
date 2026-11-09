@@ -7,6 +7,7 @@ import {
   buildEventPayload,
   buttonMetaEvent,
   clampEventTime,
+  decideAwaitingPurchase,
   dedupKeyFor,
   eventForTag,
   isMetaCapiEventName,
@@ -16,6 +17,7 @@ import {
   parseQualifiedTags,
   parseVentasResponse,
   pickVenta,
+  purchaseValueDeadline,
 } from './events';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 
@@ -193,5 +195,31 @@ describe('ventas feed', () => {
     expect(items[0].fecha?.getFullYear()).toBe(2026);
     expect(items[1]).toMatchObject({ celular: '51911111111', projectId: '8', monto: null, fecha: null });
     expect(() => parseVentasResponse({})).toThrow();
+  });
+});
+
+describe('Purchase waiting for its amount', () => {
+  const venta = (monto: number | null) => ({ celular: '51900000000', projectId: '7', monto, fecha: null });
+  const now = new Date('2026-11-09T12:00:00Z');
+
+  it('deadline is 48 h after the event, never past Meta’s 7 days', () => {
+    const t = new Date('2026-11-09T00:00:00Z');
+    expect(purchaseValueDeadline(t).toISOString()).toBe('2026-11-11T00:00:00.000Z');
+    const old = new Date('2026-11-03T00:00:00Z');
+    expect(purchaseValueDeadline(old).getTime()).toBeLessThan(old.getTime() + 7 * 86_400_000);
+  });
+
+  it('sends with value as soon as the amount shows up', () => {
+    const deadline = new Date('2026-11-10T00:00:00Z');
+    expect(decideAwaitingPurchase({ venta: venta(1500), ventasConfigured: true, deadline, now })).toBe('with_value');
+    expect(decideAwaitingPurchase({ venta: venta(null), ventasConfigured: true, deadline, now })).toBe('wait');
+    expect(decideAwaitingPurchase({ venta: null, ventasConfigured: true, deadline, now })).toBe('wait');
+  });
+
+  it('sends without value after the deadline or without a sales feed', () => {
+    const past = new Date('2026-11-09T11:00:00Z');
+    expect(decideAwaitingPurchase({ venta: null, ventasConfigured: true, deadline: past, now })).toBe('without_value');
+    expect(decideAwaitingPurchase({ venta: venta(null), ventasConfigured: true, deadline: past, now })).toBe('without_value');
+    expect(decideAwaitingPurchase({ venta: null, ventasConfigured: false, deadline: now, now })).toBe('without_value');
   });
 });
