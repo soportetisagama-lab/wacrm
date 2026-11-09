@@ -50,6 +50,8 @@ const VENTAS_TTL_MS = 5 * 60_000;
 const SWEEP_EVERY_MS = 5 * 60_000;
 /** Safety net for a send that died mid-flight: the sweep picks it up after this. */
 const PENDING_GRACE_MS = 2 * 60_000;
+/** A pending row with neither next_attempt_at nor awaiting_value_until for this long is stuck. */
+const STALE_PENDING_MS = 10 * 60_000;
 const REFERRAL_LOOKBACK_DAYS = 90;
 const CHUNK = 200;
 
@@ -256,6 +258,18 @@ interface EventRow {
 const ROW_COLUMNS =
   'id, account_id, contact_id, event_name, event_id, ctwa_clid, value, currency, event_time, status, attempts';
 
+const NO_CLID_ERROR = 'sin ctwa_clid (no llegó desde un anuncio)';
+
+/** Status update of one row; a DB error is logged (never thrown) so the caller goes on. */
+async function updateRow(admin: SupabaseClient, id: string, patch: Record<string, unknown>): Promise<boolean> {
+  const { error } = await admin.from('meta_capi_events').update(patch).eq('id', id);
+  if (error) {
+    console.error('[meta-capi] no se pudo actualizar el evento', id, ':', error.message);
+    return false;
+  }
+  return true;
+}
+
 async function latestCtwaClid(admin: SupabaseClient, accountId: string, contactId: string): Promise<string | null> {
   const { data, error } = await admin
     .from('conversation_referrals')
@@ -316,7 +330,7 @@ async function recordAndSend(admin: SupabaseClient, args: RecordArgs): Promise<v
     currency: args.value ? 'PEN' : null,
     event_time: eventTime.toISOString(),
     status,
-    error: args.ctwaClid ? null : 'sin ctwa_clid (no llegó desde un anuncio)',
+    error: args.ctwaClid ? null : NO_CLID_ERROR,
     next_attempt_at:
       args.ctwaClid && !args.awaitValueUntil ? new Date(Date.now() + PENDING_GRACE_MS).toISOString() : null,
     awaiting_value_until: args.ctwaClid && args.awaitValueUntil ? args.awaitValueUntil.toISOString() : null,
@@ -335,7 +349,9 @@ async function recordAndSend(admin: SupabaseClient, args: RecordArgs): Promise<v
 
   let toSend = ((inserted ?? []) as EventRow[])[0] ?? null;
   if (!toSend && args.ctwaClid) {
-    // Already there: only a previously skipped row gets a second chance.
+    // Already there: only a row skipped for lack of ctwa_clid gets a second
+    // chance. A row skipped for another reason ('sin monto', 'misma venta')
+    // stays skipped: reviving it left it pending with no schedule, stuck.
     const { data: upgraded, error: upErr } = await admin
       .from('meta_capi_events')
       .update({
@@ -346,10 +362,12 @@ async function recordAndSend(admin: SupabaseClient, args: RecordArgs): Promise<v
         event_time: eventTime.toISOString(),
         error: null,
         next_attempt_at: row.next_attempt_at,
+        awaiting_value_until: row.awaiting_value_until,
       })
       .eq('contact_id', args.contactId)
       .eq('dedup_key', args.dedupKey)
       .eq('status', 'skipped')
+      .is('ctwa_clid', null)
       .select(ROW_COLUMNS);
     if (upErr) throw new Error(`meta_capi_events: ${upErr.message}`);
     toSend = ((upgraded ?? []) as EventRow[])[0] ?? null;
@@ -363,19 +381,24 @@ async function sendRow(admin: SupabaseClient, row: EventRow): Promise<void> {
   // never sent (no retries). Covers the 48 h deadline, no sales feed and
   // a "Compra realizada" button.
   if (isUnsendablePurchase(row.event_name, row.value)) {
-    await admin
-      .from('meta_capi_events')
-      .update({ status: 'skipped', error: 'sin monto', next_attempt_at: null, awaiting_value_until: null })
-      .eq('id', row.id);
+    await updateRow(admin, row.id, {
+      status: 'skipped',
+      error: 'sin monto',
+      next_attempt_at: null,
+      awaiting_value_until: null,
+    });
     return;
   }
   try {
     if (!row.ctwa_clid) throw new Error('sin ctwa_clid');
     if (Date.now() - new Date(row.event_time).getTime() > MAX_EVENT_AGE_MS) {
-      await admin
-        .from('meta_capi_events')
-        .update({ status: 'failed', attempts, error: 'evento con más de 7 días; Meta ya no lo acepta', next_attempt_at: null })
-        .eq('id', row.id);
+      await updateRow(admin, row.id, {
+        status: 'failed',
+        attempts,
+        error: 'evento con más de 7 días; Meta ya no lo acepta',
+        next_attempt_at: null,
+        awaiting_value_until: null,
+      });
       return;
     }
     const config = await loadLineConfig(admin, row.account_id);
@@ -393,30 +416,29 @@ async function sendRow(admin: SupabaseClient, row: EventRow): Promise<void> {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    await admin
-      .from('meta_capi_events')
-      .update({
-        status: 'sent',
-        attempts,
-        response: response as Record<string, unknown> | null,
-        error: null,
-        sent_at: new Date().toISOString(),
-        next_attempt_at: null,
-      })
-      .eq('id', row.id);
+    // Outside the catch on purpose: a failed write must not mark a delivered
+    // event as failed. The row keeps its due next_attempt_at; a resend is
+    // harmless (Meta deduplicates by event_id).
+    await updateRow(admin, row.id, {
+      status: 'sent',
+      attempts,
+      response: response as Record<string, unknown> | null,
+      error: null,
+      sent_at: new Date().toISOString(),
+      next_attempt_at: null,
+      awaiting_value_until: null,
+    });
   } catch (err) {
     const delay = nextRetryDelayMs(attempts);
     const message = errText(err);
     console.error(`[meta-capi] ${row.event_name} falló (intento ${attempts}):`, message);
-    await admin
-      .from('meta_capi_events')
-      .update({
-        status: 'failed',
-        attempts,
-        error: message,
-        next_attempt_at: delay == null ? null : new Date(Date.now() + delay).toISOString(),
-      })
-      .eq('id', row.id);
+    await updateRow(admin, row.id, {
+      status: 'failed',
+      attempts,
+      error: message,
+      next_attempt_at: delay == null ? null : new Date(Date.now() + delay).toISOString(),
+      awaiting_value_until: null,
+    });
   }
 }
 
@@ -623,6 +645,7 @@ async function handleTagsAdded(
 
   for (const w of relevant) {
     const ctwaClid = clids.get(w.contact_id)!;
+    const closedAt = w.at ?? new Date();
     let dedupKey = dedupKeyFor(w.event);
     let projectId: string | null = null;
     let value: number | null = null;
@@ -631,7 +654,12 @@ async function handleTagsAdded(
       const sent = purchases.get(w.contact_id) ?? [];
       const phone = phones.get(w.contact_id);
       const mine = ventas && phone ? ventas.filter((v) => v.celular === phone) : [];
-      const venta = pickVenta(mine, new Set(sent.map((s) => s.projectId).filter((p): p is string => !!p)));
+      // The sale's window is measured from the closure (tag time), not now.
+      const venta = pickVenta(
+        mine,
+        new Set(sent.map((s) => s.projectId).filter((p): p is string => !!p)),
+        closedAt,
+      );
       if (venta && venta.monto != null) {
         projectId = venta.projectId;
         value = venta.monto;
@@ -640,8 +668,12 @@ async function handleTagsAdded(
         continue; // this sale was already reported (or is already waiting)
       } else if (ventasConfigured()) {
         // No amount yet: wait for it in the cron sweep (max 48 h, inside
-        // Meta's 7 days), then it goes out without value.
-        awaitValueUntil = purchaseValueDeadline(w.at ?? new Date());
+        // Meta's 7 days). Never sent without it (skipped 'sin monto').
+        const deadline = purchaseValueDeadline(closedAt);
+        // Backfilled tag whose wait already ran out: the sale was looked up
+        // above, so with the feed read there is nothing left to wait for and
+        // sendRow skips it now. Feed unreadable → keep waiting for it.
+        awaitValueUntil = deadline.getTime() > Date.now() || ventas === null ? deadline : null;
       }
     }
     try {
@@ -651,7 +683,7 @@ async function handleTagsAdded(
         eventName: w.event,
         dedupKey,
         source: 'tag',
-        eventTime: w.at ?? new Date(),
+        eventTime: closedAt,
         ctwaClid,
         projectId,
         value,
@@ -681,6 +713,27 @@ export function metaCapiOnTagsInserted(
 // ------------------------------------------------------------
 // Sweep (flows cron, every 5 min): retries, hand-added tags, sales
 // ------------------------------------------------------------
+
+/**
+ * Safety net: a 'pending' row with neither next_attempt_at nor
+ * awaiting_value_until is reached by nothing. After STALE_PENDING_MS it is
+ * made due now, so sendRow decides (send, skip 'sin monto', or 'failed'
+ * when older than 7 days).
+ */
+async function rescheduleStuckPending(admin: SupabaseClient): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await admin
+    .from('meta_capi_events')
+    .update({ next_attempt_at: nowIso })
+    .eq('status', 'pending')
+    .is('next_attempt_at', null)
+    .is('awaiting_value_until', null)
+    .lt('updated_at', new Date(Date.now() - STALE_PENDING_MS).toISOString())
+    .select('id');
+  if (error) throw new Error(`meta_capi_events: ${error.message}`);
+  const n = (data ?? []).length;
+  if (n) console.warn(`[meta-capi] ${n} evento(s) pendiente(s) sin programar; se reintentan ahora`);
+}
 
 async function retryDue(admin: SupabaseClient): Promise<void> {
   const { data, error } = await admin
@@ -726,10 +779,12 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
       // Sync and cron can both see one closure: a waiting row without
       // project yields to any other recent Purchase of the contact.
       if (!ownProject && isPurchaseCovered(row.id, purchases.get(row.contact_id) ?? [])) {
-        await admin
-          .from('meta_capi_events')
-          .update({ status: 'skipped', error: 'misma venta ya registrada', awaiting_value_until: null, next_attempt_at: null })
-          .eq('id', row.id);
+        await updateRow(admin, row.id, {
+          status: 'skipped',
+          error: 'misma venta ya registrada',
+          awaiting_value_until: null,
+          next_attempt_at: null,
+        });
         continue;
       }
       let venta: Xlr8Venta | null = null;
@@ -740,8 +795,12 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
         const sentProjects = new Set(
           (purchases.get(row.contact_id) ?? []).map((p) => p.projectId).filter((p): p is string => !!p),
         );
-        venta = pickVenta(ventas.filter((v) => v.celular === phone), sentProjects);
+        // Window measured from the closure (the row's event_time), not now.
+        venta = pickVenta(ventas.filter((v) => v.celular === phone), sentProjects, new Date(row.event_time));
       }
+      // Feed configured but unreadable this sweep: keep waiting while Meta
+      // would still take the event, instead of giving up without a lookup.
+      if (configured && !ventas && Date.now() - new Date(row.event_time).getTime() < MAX_EVENT_AGE_MS) continue;
       const decision = decideAwaitingPurchase({
         venta,
         ventasConfigured: configured,
@@ -749,7 +808,9 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
       });
       if (decision === 'wait') continue;
 
-      const patch: Record<string, unknown> = { awaiting_value_until: null };
+      // Leaves the wait with a due next_attempt_at: if sendRow below dies,
+      // retryDue picks the row up instead of it staying pending forever.
+      const patch: Record<string, unknown> = { awaiting_value_until: null, next_attempt_at: new Date().toISOString() };
       if (venta) {
         const dedupKey = dedupKeyFor('Purchase', { projectId: venta.projectId });
         patch.dedup_key = dedupKey;
@@ -769,7 +830,8 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
       if (upErr) {
         // 23505: that project's Purchase already exists → this one is redundant.
         if (upErr.code === '23505') {
-          await admin.from('meta_capi_events').delete().eq('id', row.id);
+          const { error: delErr } = await admin.from('meta_capi_events').delete().eq('id', row.id);
+          if (delErr) console.error('[meta-capi] no se pudo borrar el Purchase repetido', row.id, ':', delErr.message);
           continue;
         }
         throw new Error(`meta_capi_events: ${upErr.message}`);
@@ -875,6 +937,11 @@ export async function runMetaCapiSweepIfDue(admin: SupabaseClient): Promise<void
   s.sweepRunning = true;
   s.lastSweepAt = Date.now();
   try {
+    try {
+      await rescheduleStuckPending(admin);
+    } catch (err) {
+      console.error('[meta-capi] red de seguridad de pendientes falló:', errText(err));
+    }
     await retryDue(admin);
     await resolveAwaitingPurchases(admin);
     const { data, error } = await admin.from('accounts').select('id');
