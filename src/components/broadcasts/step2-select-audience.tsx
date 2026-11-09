@@ -12,11 +12,12 @@ import {
   Loader2,
   ArrowRight,
   ArrowLeft,
+  CalendarRange,
   X,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { triggerXlr8Sync } from '@/lib/xlr8/client';
-import { estimateAudienceCount } from '@/lib/broadcasts/audience';
+import { estimateAudienceCount, isCreatedRangeInverted } from '@/lib/broadcasts/audience';
 import { groupAudienceTags } from '@/lib/tags/broadcast-tags';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
@@ -34,6 +35,9 @@ interface AudienceConfig {
   customField?: CustomFieldFilter;
   csvContacts?: { phone: string; name?: string }[];
   excludeTagIds?: string[];
+  /** First-contact range, Lima days (YYYY-MM-DD), both optional. */
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 interface Step2Props {
@@ -146,6 +150,8 @@ export function Step2SelectAudience({
           customField: audience.customField,
           csvContacts: audience.csvContacts,
           excludeTagIds: audience.excludeTagIds,
+          createdFrom: audience.createdFrom,
+          createdTo: audience.createdTo,
         }),
       );
     } catch (err) {
@@ -160,6 +166,8 @@ export function Step2SelectAudience({
     audience.customField,
     audience.csvContacts,
     audience.excludeTagIds,
+    audience.createdFrom,
+    audience.createdTo,
   ]);
 
   useEffect(() => {
@@ -255,15 +263,19 @@ export function Step2SelectAudience({
     );
   }
 
+  const usesDateRange = audience.type !== 'csv';
+  const rangeInverted = usesDateRange && isCreatedRangeInverted(audience);
+
   const isValid =
-    audience.type === 'all' ||
+    !rangeInverted &&
+    (audience.type === 'all' ||
     (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) ||
     (audience.type === 'custom_field' &&
       !!audience.customField?.fieldId &&
       audience.customField.value.length > 0) ||
     (audience.type === 'csv' &&
       audience.csvContacts &&
-      audience.csvContacts.length > 0);
+      audience.csvContacts.length > 0));
 
   return (
     <div className="space-y-6">
@@ -299,6 +311,11 @@ export function Step2SelectAudience({
                       : undefined,
                   csvContacts:
                     option.type === 'csv' ? audience.csvContacts : undefined,
+                  // The date range doesn't apply to CSV uploads.
+                  createdFrom:
+                    option.type === 'csv' ? undefined : audience.createdFrom,
+                  createdTo:
+                    option.type === 'csv' ? undefined : audience.createdTo,
                 })
               }
               className={`flex items-start gap-3 rounded-2xl border p-4 text-left shadow-sm transition-all duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
@@ -392,6 +409,66 @@ export function Step2SelectAudience({
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
               />
             </div>
+          )}
+        </div>
+      )}
+
+      {/* First-contact date range — contact-based audiences only */}
+      {usesDateRange && (
+        <div className="rounded-xl border border-border bg-muted/30 p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <CalendarRange className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">
+              {t('selectAudience.createdRange')}
+            </p>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            {t('selectAudience.createdRangeHint')}
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {t('selectAudience.createdFrom')}
+              <input
+                type="date"
+                value={audience.createdFrom ?? ''}
+                max={audience.createdTo || undefined}
+                onChange={(e) =>
+                  onUpdate({ ...audience, createdFrom: e.target.value || undefined })
+                }
+                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {t('selectAudience.createdTo')}
+              <input
+                type="date"
+                value={audience.createdTo ?? ''}
+                min={audience.createdFrom || undefined}
+                onChange={(e) =>
+                  onUpdate({ ...audience, createdTo: e.target.value || undefined })
+                }
+                className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+            </label>
+            {(audience.createdFrom || audience.createdTo) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  onUpdate({ ...audience, createdFrom: undefined, createdTo: undefined })
+                }
+                className="h-9 border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+                {t('selectAudience.createdClear')}
+              </Button>
+            )}
+          </div>
+          {rangeInverted && (
+            <p role="alert" className="mt-2 text-xs font-medium text-red-500">
+              {t('selectAudience.createdRangeInvalid')}
+            </p>
           )}
         </div>
       )}
