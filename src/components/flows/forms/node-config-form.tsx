@@ -46,6 +46,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import type { MetaCapiEventName } from "@/lib/meta-capi/events";
+import { MetaEventSelect } from "@/components/meta-capi/meta-event-select";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
@@ -305,7 +307,12 @@ function UnmatchedTextFields({
 interface SendButtonsCfg extends UnmatchedTextCfg {
   text?: string;
   footer_text?: string;
-  buttons?: Array<{ reply_id: string; title: string; next_node_key: string }>;
+  buttons?: Array<{
+    reply_id: string;
+    title: string;
+    next_node_key: string;
+    meta_event?: MetaCapiEventName;
+  }>;
 }
 
 function SendButtonsForm({
@@ -410,6 +417,11 @@ function SendButtonsForm({
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
+              <MetaEventSelect
+                value={b.meta_event}
+                onChange={(v) => updateButton(i, { meta_event: v })}
+                className="md:col-span-full"
+              />
             </div>
           ))}
         </div>
@@ -451,6 +463,7 @@ interface SendListCfg extends UnmatchedTextCfg {
       title: string;
       description?: string;
       next_node_key: string;
+      meta_event?: MetaCapiEventName;
     }>;
   }>;
 }
@@ -646,6 +659,11 @@ function SendListForm({
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
+                <MetaEventSelect
+                  value={row.meta_event}
+                  onChange={(v) => updateRow(sIdx, rIdx, { meta_event: v })}
+                  className="md:col-span-full"
+                />
               </div>
             ))}
             {totalRows < 10 && (

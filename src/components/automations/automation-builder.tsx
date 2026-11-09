@@ -1435,6 +1435,7 @@ function StepEditor({
       // letter while the preview overflows the card.
       return (
         <InteractiveBuilder
+          metaEvents
           value={asInteractive(cfg)}
           onChange={(payload) =>
             onChange({ ...step, step_config: toStepConfig(payload) })

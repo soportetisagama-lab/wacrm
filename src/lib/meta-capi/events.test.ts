@@ -1,0 +1,197 @@
+import { describe, expect, it } from 'vitest';
+
+import { buildEventId } from './event-id';
+import {
+  META_CAPI_EVENT_LABELS,
+  META_CAPI_EVENT_NAMES,
+  buildEventPayload,
+  buttonMetaEvent,
+  clampEventTime,
+  dedupKeyFor,
+  eventForTag,
+  isMetaCapiEventName,
+  isQuoteDocument,
+  nextRetryDelayMs,
+  parseMonto,
+  parseQualifiedTags,
+  parseVentasResponse,
+  pickVenta,
+} from './events';
+import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
+
+describe('eventForTag', () => {
+  const inox = parseQualifiedTags('PROYECTO');
+  const castor = parseQualifiedTags(' producto , PROYECTO ');
+  const industrial = parseQualifiedTags('');
+
+  it('maps status tags', () => {
+    expect(eventForTag('ANTICIPO', inox)).toBe('OrderCreated');
+    expect(eventForTag('cerrado', inox)).toBe('Purchase');
+    expect(eventForTag('CERRADO 0', inox)).toBeNull();
+    for (const t of ['CAIDO', 'SPAM', 'INFO', 'SEGUIMIENTO', 'ASIGNADO']) {
+      expect(eventForTag(t, castor)).toBeNull();
+    }
+  });
+
+  it('maps type tags per line config', () => {
+    expect(eventForTag('PROYECTO', inox)).toBe('QualifiedLead');
+    expect(eventForTag('PRODUCTO', inox)).toBeNull();
+    expect(eventForTag('producto', castor)).toBe('QualifiedLead');
+    expect(eventForTag('PROYECTO', industrial)).toBeNull();
+  });
+});
+
+describe('dedup', () => {
+  it('one key per event, Purchase per project', () => {
+    expect(dedupKeyFor('LeadSubmitted')).toBe('LeadSubmitted');
+    expect(dedupKeyFor('QualifiedLead', { projectId: 9 })).toBe('QualifiedLead');
+    expect(dedupKeyFor('Purchase')).toBe('Purchase');
+    expect(dedupKeyFor('Purchase', { projectId: 123 })).toBe('Purchase:123');
+    expect(dedupKeyFor('Purchase', { projectId: ' ' })).toBe('Purchase');
+  });
+
+  it('event_id is stable per (account, contact, key) and unique otherwise', () => {
+    const a = buildEventId('acc', 'c1', 'Purchase:1');
+    expect(buildEventId('acc', 'c1', 'Purchase:1')).toBe(a);
+    expect(buildEventId('acc', 'c1', 'Purchase:2')).not.toBe(a);
+    expect(buildEventId('acc', 'c2', 'Purchase:1')).not.toBe(a);
+    expect(a).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('pickVenta takes the newest unsent project', () => {
+    const v = (projectId: string, fecha: string) => ({
+      celular: '51900000000',
+      projectId,
+      monto: 10,
+      fecha: new Date(fecha),
+    });
+    const ventas = [v('1', '2026-11-01'), v('2', '2026-11-05')];
+    expect(pickVenta(ventas, new Set())?.projectId).toBe('2');
+    expect(pickVenta(ventas, new Set(['2']))?.projectId).toBe('1');
+    expect(pickVenta(ventas, new Set(['1', '2']))).toBeNull();
+  });
+});
+
+describe('buildEventPayload', () => {
+  const base = {
+    eventTime: new Date('2026-11-09T15:00:00Z'),
+    eventId: 'evt1',
+    wabaId: 'waba1',
+    ctwaClid: 'clid1',
+  };
+
+  it('builds a business_messaging event with only ctwa_clid + WABA', () => {
+    const body = buildEventPayload({ ...base, eventName: 'LeadSubmitted' });
+    expect(body).toEqual({
+      data: [
+        {
+          event_name: 'LeadSubmitted',
+          event_time: Math.floor(base.eventTime.getTime() / 1000),
+          event_id: 'evt1',
+          action_source: 'business_messaging',
+          messaging_channel: 'whatsapp',
+          user_data: { whatsapp_business_account_id: 'waba1', ctwa_clid: 'clid1' },
+        },
+      ],
+    });
+  });
+
+  it('adds value + PEN for a Purchase with amount, omits it without', () => {
+    const withValue = buildEventPayload({ ...base, eventName: 'Purchase', value: 1500.5, currency: 'PEN' });
+    expect(withValue.data[0].custom_data).toEqual({ value: 1500.5, currency: 'PEN' });
+    const noValue = buildEventPayload({ ...base, eventName: 'Purchase', value: null });
+    expect(noValue.data[0]).not.toHaveProperty('custom_data');
+  });
+
+  it('clamps event time to Meta’s 7-day window', () => {
+    const now = new Date('2026-11-09T00:00:00Z');
+    expect(clampEventTime(new Date('2026-11-10T00:00:00Z'), now)).toEqual(now);
+    expect(clampEventTime(new Date('2026-11-01T00:00:00Z'), now)).toBeNull();
+    const ok = new Date('2026-11-05T00:00:00Z');
+    expect(clampEventTime(ok, now)).toEqual(ok);
+  });
+
+  it('retry backoff ends after the last attempt', () => {
+    expect(nextRetryDelayMs(1)).toBe(5 * 60_000);
+    expect(nextRetryDelayMs(5)).toBe(24 * 60 * 60_000);
+    expect(nextRetryDelayMs(6)).toBeNull();
+  });
+});
+
+describe('quote documents and buttons', () => {
+  it('detects quotations by filename or caption', () => {
+    expect(isQuoteDocument('Cotización 123.pdf')).toBe(true);
+    expect(isQuoteDocument('doc.pdf', 'Te envío la proforma')).toBe(true);
+    expect(isQuoteDocument('catalogo.pdf', 'Nuestro catálogo')).toBe(false);
+  });
+
+  it('finds the event configured on the tapped button or list row', () => {
+    const buttons = {
+      kind: 'buttons',
+      body: 'x',
+      buttons: [
+        { id: 'a', title: 'A', meta_event: 'QualifiedLead' },
+        { id: 'b', title: 'B' },
+        { id: 'c', title: 'C', meta_event: 'Bogus' },
+      ],
+    };
+    expect(buttonMetaEvent(buttons, 'a')).toBe('QualifiedLead');
+    expect(buttonMetaEvent(buttons, 'b')).toBeNull();
+    expect(buttonMetaEvent(buttons, 'c')).toBeNull();
+    expect(buttonMetaEvent(buttons, 'zz')).toBeNull();
+    const list = {
+      kind: 'list',
+      sections: [{ rows: [{ id: 'r1', title: 'R', meta_event: 'AddToCart' }] }],
+    };
+    expect(buttonMetaEvent(list, 'r1')).toBe('AddToCart');
+    expect(buttonMetaEvent(null, 'r1')).toBeNull();
+  });
+
+  it('interactive validation accepts known events and rejects unknown ones', () => {
+    const p = (meta_event?: string) => ({
+      kind: 'buttons',
+      body: 'Hola',
+      buttons: [{ id: 'a', title: 'A', meta_event }],
+    });
+    expect(validateInteractivePayload(p()).ok).toBe(true);
+    expect(validateInteractivePayload(p('InitiateCheckout')).ok).toBe(true);
+    expect(validateInteractivePayload(p('Nope')).ok).toBe(false);
+  });
+
+  it('every event has a label', () => {
+    for (const n of META_CAPI_EVENT_NAMES) {
+      expect(isMetaCapiEventName(n)).toBe(true);
+      expect(META_CAPI_EVENT_LABELS[n]).toBeTruthy();
+    }
+    expect(isMetaCapiEventName('Lead')).toBe(false);
+  });
+});
+
+describe('ventas feed', () => {
+  it('parses amounts in common formats', () => {
+    expect(parseMonto('S/ 1,234.50')).toBe(1234.5);
+    expect(parseMonto('S/. 980.00')).toBe(980);
+    expect(parseMonto('1234,5')).toBe(1234.5);
+    expect(parseMonto('12,000')).toBe(12000);
+    expect(parseMonto(800)).toBe(800);
+    expect(parseMonto('')).toBeNull();
+    expect(parseMonto('0')).toBeNull();
+    expect(parseMonto(null)).toBeNull();
+  });
+
+  it('normalizes phones and drops rows without project', () => {
+    const items = parseVentasResponse({
+      linea: 'INOX',
+      items: [
+        { celular: '929564362', estado: 'CERRADO', monto_venta: '1500', project_id: 7, fecha: '2026-11-08 10:00:00' },
+        { celular: '51911111111', estado: 'CERRADO', monto_venta: null, project_id: '8', fecha: null },
+        { celular: '51922222222', estado: 'CERRADO', monto_venta: '10' },
+      ],
+    });
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ celular: '51929564362', projectId: '7', monto: 1500 });
+    expect(items[0].fecha?.getFullYear()).toBe(2026);
+    expect(items[1]).toMatchObject({ celular: '51911111111', projectId: '8', monto: null, fecha: null });
+    expect(() => parseVentasResponse({})).toThrow();
+  });
+});
