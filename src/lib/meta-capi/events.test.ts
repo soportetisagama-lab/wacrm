@@ -23,6 +23,7 @@ import {
   parseXlr8Fecha,
   pickVenta,
   purchaseValueDeadline,
+  ventaMatchesClosure,
 } from './events';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import en from '../../../messages/en.json';
@@ -81,6 +82,27 @@ describe('dedup', () => {
     expect(pickVenta(ventas, new Set(['2']), now)?.projectId).toBe('1');
     // A sale older than 7 days belongs to a past closure.
     expect(pickVenta(ventas, new Set(['1', '2']), now)).toBeNull();
+  });
+
+  it('pickVenta measures the window from the closure, not from now', () => {
+    // Real case: sale dated 2-nov (noon Lima), CERRADO on 3-nov 13:59 UTC,
+    // CAPI switched on 9-nov 21:12 UTC (more than 7 days after the sale).
+    const sale = { celular: '51900000000', projectId: '42', monto: 710, fecha: parseXlr8Fecha('2026-11-02') };
+    const closedAt = new Date('2026-11-03T13:59:00Z');
+    expect(pickVenta([sale], new Set(), closedAt)?.projectId).toBe('42');
+    // Already sent → never repeated.
+    expect(pickVenta([sale], new Set(['42']), closedAt)).toBeNull();
+    // Measured from now (old behavior) it would have been lost.
+    expect(pickVenta([sale], new Set(), new Date('2026-11-09T21:12:00Z'))).toBeNull();
+  });
+
+  it('a sale belongs to a closure from 7 days before up to 2 days after it', () => {
+    const closedAt = new Date('2026-11-10T00:00:00Z');
+    expect(ventaMatchesClosure(new Date('2026-11-03T01:00:00Z'), closedAt)).toBe(true);
+    expect(ventaMatchesClosure(new Date('2026-11-02T23:00:00Z'), closedAt)).toBe(false);
+    expect(ventaMatchesClosure(new Date('2026-11-11T23:00:00Z'), closedAt)).toBe(true);
+    expect(ventaMatchesClosure(new Date('2026-11-12T01:00:00Z'), closedAt)).toBe(false);
+    expect(ventaMatchesClosure(null, closedAt)).toBe(true);
   });
 
   it('a waiting Purchase yields to another recent Purchase of the contact', () => {
@@ -241,6 +263,10 @@ describe('Purchase waiting for its amount', () => {
     expect(purchaseValueDeadline(t).toISOString()).toBe('2026-11-11T00:00:00.000Z');
     const old = new Date('2026-11-03T00:00:00Z');
     expect(purchaseValueDeadline(old).getTime()).toBeLessThan(old.getTime() + 7 * 86_400_000);
+    // Backfilled closure: its wait is already over when it is recorded.
+    expect(purchaseValueDeadline(new Date('2026-11-03T13:59:00Z')).getTime()).toBeLessThan(
+      new Date('2026-11-09T21:12:00Z').getTime(),
+    );
   });
 
   it('sends with value as soon as the amount shows up', () => {
