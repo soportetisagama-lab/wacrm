@@ -37,12 +37,18 @@ const LEAD_CHUNK = 200;
 const MARCACIONES_DIAS = 2;
 /** First load of an account: the whole history. */
 const MARCACIONES_DIAS_HISTORICO = 3650;
+/** The history query is heavy: give it more time than the 5-min sync. */
+const HISTORICO_TIMEOUT_MS = 90_000;
+/** After a failed history load, wait this long before trying it again. */
+const HISTORICO_RETRY_MS = 60 * 60_000;
 
 interface Xlr8SyncState {
   running: Promise<Xlr8SyncSummary | null> | null;
   lastStartedAt: number;
   lastSummary: Xlr8SyncSummary | null;
   warnedMissingEnv: boolean;
+  /** When the last history load failed (0 = never). */
+  historicoFailedAt?: number;
 }
 
 // globalThis: the cron route and the manual route are bundled separately
@@ -130,6 +136,7 @@ export async function runXlr8SyncIfDue(
 async function fetchXlr8Body(
   config: { url: string; token: string; linea: string },
   dias: number,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<unknown> {
   const url = new URL(config.url);
   url.searchParams.set('linea', config.linea);
@@ -137,7 +144,7 @@ async function fetchXlr8Body(
   const res = await fetch(url, {
     headers: { 'X-Xlr9-Token': config.token, Accept: 'application/json' },
     cache: 'no-store',
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`xlr8 respondió HTTP ${res.status}`);
   const body: unknown = await res.json();
@@ -158,9 +165,21 @@ export async function syncXlr8Estados(
   const marcaciones = parseMarcaciones(body);
   // Full history, fetched at most once per run and only for an account
   // whose marcaciones_estado is still empty.
+  // After a failure it waits HISTORICO_RETRY_MS instead of repeating the
+  // heavy query every 5 min; meanwhile the account is skipped (stays empty,
+  // so the history is still loaded later rather than lost).
+  const s = state();
   let historico: Promise<Marcacion[] | null> | null = null;
   const loadHistorico = () =>
-    (historico ??= fetchXlr8Body(config, MARCACIONES_DIAS_HISTORICO).then(parseMarcaciones));
+    (historico ??=
+      Date.now() - (s.historicoFailedAt ?? 0) < HISTORICO_RETRY_MS
+        ? Promise.reject(new Error('carga histórica en espera tras un fallo'))
+        : fetchXlr8Body(config, MARCACIONES_DIAS_HISTORICO, HISTORICO_TIMEOUT_MS)
+            .then(parseMarcaciones)
+            .catch((err: unknown) => {
+              s.historicoFailedAt = Date.now();
+              throw err;
+            }));
 
   const { data: accounts, error } = await admin.from('accounts').select('id, owner_user_id');
   if (error) throw new Error(`accounts: ${error.message}`);
