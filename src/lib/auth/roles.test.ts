@@ -22,6 +22,8 @@ import {
   canTransferOwnership,
   canUseQuickActions,
   canViewMessageUsage,
+  canViewMarketing,
+  ANALISTA_ROUTES,
   canViewOnly,
   canViewTeamMembers,
   hasMinRole,
@@ -282,6 +284,10 @@ describe('analista', () => {
     expect(canSendMessages('analista')).toBe(false);
     expect(canViewOnly('analista')).toBe(true);
     expect(canViewMessageUsage('analista')).toBe(true);
+    expect(canViewMarketing('analista')).toBe(true);
+    expect(canViewMarketing('gerencia')).toBe(false);
+    expect(isRouteAllowed(ANALISTA_ROUTES, '/messages')).toBe(true);
+    expect(isRouteAllowed(ANALISTA_ROUTES, '/marketing/horarios')).toBe(true);
     expect(canViewMessageUsage('owner')).toBe(true);
     expect(canViewMessageUsage('atc')).toBe(false);
     expect(canViewMessageUsage('agent')).toBe(false);
