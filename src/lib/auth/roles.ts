@@ -179,10 +179,19 @@ export function canViewMessageUsage(role: AccountRole): boolean {
 }
 
 /**
+ * Owner / admin / analista: the Marketing group (Mensajes + Horarios de
+ * contacto). Keep in sync with the marcaciones_estado RLS policy
+ * (supabase/migrations/094_marcaciones_estado.sql).
+ */
+export function canViewMarketing(role: AccountRole): boolean {
+  return MESSAGE_USAGE_ROLES.includes(role);
+}
+
+/**
  * Routes an Analista may open — everything else redirects to the Panel
  * (see DashboardShell). Settings stays reachable for their own profile.
  */
-export const ANALISTA_ROUTES: readonly string[] = ['/dashboard', '/messages', '/settings'];
+export const ANALISTA_ROUTES: readonly string[] = ['/dashboard', '/messages', '/marketing', '/settings'];
 
 /**
  * Routes a Community Manager may open — everything else redirects to the
