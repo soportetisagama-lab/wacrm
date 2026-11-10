@@ -14,7 +14,7 @@ import {
   datasetRenameNeeded,
   decideAwaitingPurchase,
   dedupKeyFor,
-  eventForTag,
+  eventsForTag,
   nextRetryDelayMs,
   parseQualifiedTags,
   parseVentasResponse,
@@ -454,28 +454,6 @@ function guard(label: string, fn: () => Promise<void>): Promise<void> {
 // Entry points
 // ------------------------------------------------------------
 
-/** First message from a Click-to-WhatsApp ad → LeadSubmitted. */
-export function metaCapiOnAdReferral(args: {
-  accountId: string;
-  contactId: string;
-  ctwaClid: string | null | undefined;
-  at: Date;
-}): Promise<void> {
-  return guard('LeadSubmitted', async () => {
-    const ctwaClid = args.ctwaClid?.trim();
-    if (!ctwaClid) return;
-    await recordAndSend(supabaseAdmin(), {
-      accountId: args.accountId,
-      contactId: args.contactId,
-      eventName: 'LeadSubmitted',
-      dedupKey: dedupKeyFor('LeadSubmitted'),
-      source: 'message',
-      eventTime: args.at,
-      ctwaClid,
-    });
-  });
-}
-
 /** A quotation document went out to the customer → InitiateCheckout. */
 export function metaCapiOnQuoteSent(args: { accountId: string; contactId: string }): Promise<void> {
   return guard('InitiateCheckout', async () => {
@@ -654,17 +632,25 @@ async function adoptProject(admin: SupabaseClient, ref: PurchaseRef, projectId: 
 
 /**
  * Tags just put on contacts (xlr8 sync, an admin by hand, the sweep).
- * Only ad contacts (with ctwa_clid) produce anything.
+ * Only ad contacts (with ctwa_clid) produce anything. A tag may fire
+ * several events (e.g. CERRADO → LeadSubmitted + Purchase); `events`,
+ * when given, limits them to those (the sweep passes the ones not yet
+ * recorded).
  */
 async function handleTagsAdded(
   admin: SupabaseClient,
   accountId: string,
-  added: ReadonlyArray<{ contact_id: string; tag_name: string; at?: Date }>,
+  added: ReadonlyArray<{ contact_id: string; tag_name: string; at?: Date; events?: MetaCapiEventName[] }>,
 ): Promise<void> {
   const qualified = qualifiedTags();
-  const wanted = added
-    .map((a) => ({ ...a, event: eventForTag(a.tag_name, qualified) }))
-    .filter((a): a is typeof a & { event: MetaCapiEventName } => a.event !== null);
+  const wanted = added.flatMap((a) =>
+    (a.events ?? eventsForTag(a.tag_name, qualified)).map((event) => ({
+      contact_id: a.contact_id,
+      tag_name: a.tag_name,
+      at: a.at,
+      event,
+    })),
+  );
   if (wanted.length === 0) return;
 
   const clids = await adContacts(admin, accountId, [...new Set(wanted.map((w) => w.contact_id))]);
@@ -923,10 +909,12 @@ async function sweepAccount(admin: SupabaseClient, accountId: string): Promise<v
       }
     }
     const qualified = qualifiedTags();
-    const todo = added.filter((a) => {
-      const ev = eventForTag(a.tag_name, qualified);
-      return ev !== null && !done.has(`${a.contact_id}:${ev}`);
-    });
+    const todo = added
+      .map((a) => ({
+        ...a,
+        events: eventsForTag(a.tag_name, qualified).filter((ev) => !done.has(`${a.contact_id}:${ev}`)),
+      }))
+      .filter((a) => a.events.length > 0);
     await handleTagsAdded(admin, accountId, todo);
   }
 

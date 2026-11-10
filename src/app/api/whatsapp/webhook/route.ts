@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { metaCapiOnAdReferral, metaCapiOnButtonTap } from '@/lib/meta-capi/send'
+import { metaCapiOnButtonTap } from '@/lib/meta-capi/send'
 import { getMediaUrl, downloadMedia, sendRequestContactInfo } from '@/lib/whatsapp/meta-api'
 import {
   classifyTypedPhone,
@@ -1203,14 +1203,9 @@ async function saveReferralIfPresent(
     if (error) {
       console.error('[webhook] Error inserting conversation referral:', error)
     }
-    // Meta Conversions API: LeadSubmitted (once per contact; off unless
-    // META_CAPI_ENABLED). Fire-and-forget, never throws.
-    void metaCapiOnAdReferral({
-      accountId,
-      contactId,
-      ctwaClid: referral.ctwa_clid,
-      at: new Date(parseInt(message.timestamp) * 1000),
-    })
+    // Meta Conversions API: LeadSubmitted is no longer sent here. It goes
+    // out when the lead gets a contact status in xlr8 (CONTESTADO or later),
+    // via the tag hooks in lib/meta-capi/send.ts.
   } catch (err) {
     console.error('[webhook] saveReferralIfPresent failed:', err)
   }
