@@ -10,6 +10,8 @@
 // no Node APIs here. UI labels live in messages/*.json (MetaCapi.events). The I/O lives in ./send.ts.
 // ============================================================
 
+import { clasificarMarcacion } from '../xlr8/marcaciones';
+
 /** Event names Meta accepts for action_source = business_messaging. */
 export const META_CAPI_EVENT_NAMES = [
   'LeadSubmitted',
@@ -52,19 +54,25 @@ export function parseQualifiedTags(raw: string | null | undefined): Set<string> 
 }
 
 /**
- * Which event a newly added tag fires, or null. Status tags: ANTICIPO →
- * OrderCreated, CERRADO → Purchase (CERRADO 0, CAIDO, SPAM… → nothing).
- * Type tags listed in META_CAPI_QUALIFIED_TAGS → QualifiedLead.
+ * Events a newly added tag fires (empty → none), LeadSubmitted first.
+ * Status tags that imply contact (CONTESTADO or later: the same rule as
+ * "Horarios de contacto", clasificarMarcacion → 'contestado') → LeadSubmitted;
+ * ASIGNADO, NO CONTESTADO and SPAM → nothing. On top of that: ANTICIPO →
+ * OrderCreated, CERRADO → Purchase. Type tags listed in
+ * META_CAPI_QUALIFIED_TAGS → QualifiedLead. LeadSubmitted is deduped per
+ * contact, so it goes out once, with the first contact status.
  */
-export function eventForTag(
+export function eventsForTag(
   tagName: string,
   qualifiedTags: ReadonlySet<string>,
-): MetaCapiEventName | null {
+): MetaCapiEventName[] {
   const k = tagKey(tagName);
-  if (k === 'ANTICIPO') return 'OrderCreated';
-  if (k === 'CERRADO') return 'Purchase';
-  if (qualifiedTags.has(k)) return 'QualifiedLead';
-  return null;
+  const out: MetaCapiEventName[] = [];
+  if (clasificarMarcacion(k) === 'contestado') out.push('LeadSubmitted');
+  if (k === 'ANTICIPO') out.push('OrderCreated');
+  else if (k === 'CERRADO') out.push('Purchase');
+  else if (qualifiedTags.has(k)) out.push('QualifiedLead');
+  return out;
 }
 
 /**
