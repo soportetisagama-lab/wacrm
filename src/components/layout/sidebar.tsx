@@ -18,6 +18,7 @@ import {
   Headphones,
   LayoutDashboard,
   LogOut,
+  Megaphone,
   MessageSquare,
   MessagesSquare,
   Radio,
@@ -130,7 +131,18 @@ const navItems: NavItem[] = [
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
   { href: '/calls', labelKey: 'calls', icon: Phone },
-  { href: '/messages', labelKey: 'messages', icon: BarChart3, roles: ['owner', 'admin', 'analista'] },
+  // Marketing group: the row itself opens Mensajes; its children are the
+  // two reports. Same roles as canViewMarketing (lib/auth/roles).
+  {
+    href: '/messages',
+    labelKey: 'marketing',
+    icon: Megaphone,
+    roles: ['owner', 'admin', 'analista'],
+    children: [
+      { href: '/messages', labelKey: 'messages' },
+      { href: '/marketing/horarios', labelKey: 'contactHours' },
+    ],
+  },
   { href: '/pipelines', labelKey: 'pipelines', icon: GitBranch, minRole: 'admin' },
   { href: '/broadcasts', labelKey: 'broadcasts', icon: Radio, minRole: 'admin' },
   { href: '/automations', labelKey: 'automations', icon: Zap, minRole: 'admin' },

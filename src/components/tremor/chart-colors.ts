@@ -68,6 +68,14 @@ export const chartColors = {
     fill: "fill-fuchsia-500",
     text: "text-fuchsia-500",
   },
+  // Local addition: the line's brand colour (theme token), so a chart
+  // can follow each line's palette without hardcoding a hue.
+  primary: {
+    bg: "bg-primary",
+    stroke: "stroke-primary",
+    fill: "fill-primary",
+    text: "text-primary",
+  },
 } as const satisfies {
   [color: string]: {
     [key in ColorUtility]: string

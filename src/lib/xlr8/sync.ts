@@ -11,6 +11,7 @@ import {
   phoneKey,
   type Xlr8Item,
 } from './estados';
+import { parseMarcaciones, planMarcaciones, type Marcacion } from './marcaciones';
 
 // ============================================================
 // Mirrors each phone's xlr8 status and type as shared contact tags (see
@@ -30,6 +31,12 @@ const FETCH_TIMEOUT_MS = 20_000;
 const PAGE_SIZE = 1000;
 const INSERT_CHUNK = 500;
 const DELETE_CHUNK = 200;
+/** Lead ids per `.in()` lookup/update (keeps the URL short). */
+const LEAD_CHUNK = 200;
+/** Usual window for marcaciones; the cron runs every 5 min. */
+const MARCACIONES_DIAS = 2;
+/** First load of an account: the whole history. */
+const MARCACIONES_DIAS_HISTORICO = 3650;
 
 interface Xlr8SyncState {
   running: Promise<Xlr8SyncSummary | null> | null;
@@ -119,9 +126,14 @@ export async function runXlr8SyncIfDue(
   return summary ? { status: 'ok', summary } : { status: 'error' };
 }
 
-async function fetchXlr8Items(config: { url: string; token: string; linea: string }): Promise<Xlr8Item[]> {
+/** GET estado_xlr9.php; `dias` limits how far back `marcaciones` go. */
+async function fetchXlr8Body(
+  config: { url: string; token: string; linea: string },
+  dias: number,
+): Promise<unknown> {
   const url = new URL(config.url);
   url.searchParams.set('linea', config.linea);
+  url.searchParams.set('dias', String(dias));
   const res = await fetch(url, {
     headers: { 'X-Xlr9-Token': config.token, Accept: 'application/json' },
     cache: 'no-store',
@@ -133,14 +145,22 @@ async function fetchXlr8Items(config: { url: string; token: string; linea: strin
   if (typeof linea === 'string' && linea.toUpperCase() !== config.linea) {
     throw new Error(`xlr8 devolvió la línea ${linea}, se esperaba ${config.linea}`);
   }
-  return parseXlr8Response(body);
+  return body;
 }
 
 export async function syncXlr8Estados(
   admin: SupabaseClient,
   config: { url: string; token: string; linea: string },
 ): Promise<Xlr8SyncSummary> {
-  const items = await fetchXlr8Items(config);
+  const body = await fetchXlr8Body(config, MARCACIONES_DIAS);
+  const items = parseXlr8Response(body);
+  // null = the PHP doesn't send marcaciones yet: skip that part.
+  const marcaciones = parseMarcaciones(body);
+  // Full history, fetched at most once per run and only for an account
+  // whose marcaciones_estado is still empty.
+  let historico: Promise<Marcacion[] | null> | null = null;
+  const loadHistorico = () =>
+    (historico ??= fetchXlr8Body(config, MARCACIONES_DIAS_HISTORICO).then(parseMarcaciones));
 
   const { data: accounts, error } = await admin.from('accounts').select('id, owner_user_id');
   if (error) throw new Error(`accounts: ${error.message}`);
@@ -156,6 +176,15 @@ export async function syncXlr8Estados(
     total.agregados += r.agregados;
     total.quitados += r.quitados;
     total.sinContacto += r.sinContacto;
+    if (marcaciones) {
+      // Best effort: a failure here (e.g. migration 094 not run yet)
+      // never breaks the tag sync above.
+      try {
+        await syncMarcaciones(admin, acc.id, marcaciones, loadHistorico);
+      } catch (err) {
+        console.warn('[xlr8-sync] marcaciones:', err instanceof Error ? err.message : err);
+      }
+    }
   }
   return total;
 }
@@ -333,4 +362,58 @@ async function syncAccount(
   }
 
   return { revisados: diff.revisados, agregados, quitados, sinContacto: diff.sinContacto };
+}
+
+/**
+ * Mirrors xlr8's per-lead first status change into marcaciones_estado
+ * (migration 094) for "Horarios de contacto". New leads are inserted;
+ * known ones only get estado_actual / asesor refreshed.
+ */
+async function syncMarcaciones(
+  admin: SupabaseClient,
+  accountId: string,
+  recientes: Marcacion[],
+  loadHistorico: () => Promise<Marcacion[] | null>,
+): Promise<void> {
+  const { count, error: countError } = await admin
+    .from('marcaciones_estado')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId);
+  if (countError) throw new Error(`marcaciones_estado: ${countError.message}`);
+  const marcaciones = (count ?? 0) === 0 ? ((await loadHistorico()) ?? recientes) : recientes;
+  if (marcaciones.length === 0) return;
+
+  const now = Date.now();
+  for (let i = 0; i < marcaciones.length; i += LEAD_CHUNK) {
+    const chunk = marcaciones.slice(i, i + LEAD_CHUNK);
+    const { data, error } = await admin
+      .from('marcaciones_estado')
+      .select('lead_id, estado_actual, asesor')
+      .eq('account_id', accountId)
+      .in(
+        'lead_id',
+        chunk.map((m) => m.lead_id),
+      );
+    if (error) throw new Error(`marcaciones_estado: ${error.message}`);
+    const existing = new Map<number, { estado_actual: string | null; asesor: string | null }>();
+    for (const r of (data ?? []) as { lead_id: number | string; estado_actual: string | null; asesor: string | null }[]) {
+      existing.set(Number(r.lead_id), { estado_actual: r.estado_actual, asesor: r.asesor });
+    }
+
+    const plan = planMarcaciones({ accountId, marcaciones: chunk, existing, now });
+    if (plan.toInsert.length > 0) {
+      const { error: insertError } = await admin
+        .from('marcaciones_estado')
+        .upsert(plan.toInsert, { onConflict: 'account_id,lead_id', ignoreDuplicates: true });
+      if (insertError) throw new Error(`insertar marcaciones_estado: ${insertError.message}`);
+    }
+    for (const group of plan.toUpdate) {
+      const { error: updateError } = await admin
+        .from('marcaciones_estado')
+        .update({ estado_actual: group.estado_actual, asesor: group.asesor })
+        .eq('account_id', accountId)
+        .in('lead_id', group.lead_ids);
+      if (updateError) throw new Error(`actualizar marcaciones_estado: ${updateError.message}`);
+    }
+  }
 }
