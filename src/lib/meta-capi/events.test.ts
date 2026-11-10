@@ -11,7 +11,7 @@ import {
   datasetRenameNeeded,
   decideAwaitingPurchase,
   dedupKeyFor,
-  eventForTag,
+  eventsForTag,
   isMetaCapiEventName,
   isQuoteDocument,
   nextRetryDelayMs,
@@ -31,25 +31,43 @@ import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
 import ko from '../../../messages/ko.json';
 
-describe('eventForTag', () => {
+describe('eventsForTag', () => {
   const inox = parseQualifiedTags('PROYECTO');
   const castor = parseQualifiedTags(' producto , PROYECTO ');
   const industrial = parseQualifiedTags('');
 
-  it('maps status tags', () => {
-    expect(eventForTag('ANTICIPO', inox)).toBe('OrderCreated');
-    expect(eventForTag('cerrado', inox)).toBe('Purchase');
-    expect(eventForTag('CERRADO 0', inox)).toBeNull();
-    for (const t of ['CAIDO', 'SPAM', 'INFO', 'SEGUIMIENTO', 'ASIGNADO']) {
-      expect(eventForTag(t, castor)).toBeNull();
+  it('contact statuses (CONTESTADO or later) fire LeadSubmitted', () => {
+    for (const t of [
+      'CONTESTADO',
+      'seguimiento',
+      'CAIDO',
+      'VISITA',
+      'VENTA FUTURA',
+      'SERVICIO',
+      'EN EVALUACION',
+      'CERRADO 0',
+      ' en  evaluacion ',
+    ]) {
+      expect(eventsForTag(t, castor)).toEqual(['LeadSubmitted']);
     }
   });
 
+  it('statuses without contact fire nothing', () => {
+    for (const t of ['ASIGNADO', 'NO CONTESTADO', 'no contestado', 'SPAM', 'INFO', 'OTRO', '']) {
+      expect(eventsForTag(t, castor)).toEqual([]);
+    }
+  });
+
+  it('ANTICIPO and CERRADO also fire their own event', () => {
+    expect(eventsForTag('ANTICIPO', inox)).toEqual(['LeadSubmitted', 'OrderCreated']);
+    expect(eventsForTag('cerrado', inox)).toEqual(['LeadSubmitted', 'Purchase']);
+  });
+
   it('maps type tags per line config', () => {
-    expect(eventForTag('PROYECTO', inox)).toBe('QualifiedLead');
-    expect(eventForTag('PRODUCTO', inox)).toBeNull();
-    expect(eventForTag('producto', castor)).toBe('QualifiedLead');
-    expect(eventForTag('PROYECTO', industrial)).toBeNull();
+    expect(eventsForTag('PROYECTO', inox)).toEqual(['QualifiedLead']);
+    expect(eventsForTag('PRODUCTO', inox)).toEqual([]);
+    expect(eventsForTag('producto', castor)).toEqual(['QualifiedLead']);
+    expect(eventsForTag('PROYECTO', industrial)).toEqual([]);
   });
 });
 
