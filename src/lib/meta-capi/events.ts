@@ -177,15 +177,6 @@ export function nextRetryDelayMs(attempts: number): number | null {
   return RETRY_DELAYS_MS[attempts - 1] ?? null;
 }
 
-/** An outbound document that is a quotation (filename or caption). */
-export function isQuoteDocument(filename?: string | null, caption?: string | null): boolean {
-  const text = `${filename ?? ''} ${caption ?? ''}`
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase();
-  return /cotiz|proforma|presupuesto/.test(text);
-}
-
 /**
  * The event configured on the tapped button / list row of an interactive
  * message payload (as stored in messages.interactive_payload), or null.
@@ -328,6 +319,71 @@ export function isPurchaseCovered(
   now: Date = new Date(),
 ): boolean {
   return others.some((o) => o.id !== rowId && now.getTime() - o.createdAt.getTime() < MAX_EVENT_AGE_MS);
+}
+
+// ------------------------------------------------------------
+// XLR8 quotations feed (cotizaciones_xlr9.php) → InitiateCheckout
+// ------------------------------------------------------------
+
+export interface Xlr8Cotizacion {
+  /** phoneKey-normalized (51 + 9 digits). */
+  celular: string;
+  projectId: string;
+  monto: number;
+  fecha: Date;
+}
+
+/**
+ * Feed URL: XLR8_COTIZACIONES_URL when set; otherwise XLR8_VENTAS_URL with
+ * ventas_xlr9.php swapped for cotizaciones_xlr9.php (same folder). null →
+ * not configured.
+ */
+export function cotizacionesUrlFromEnv(
+  cotizacionesUrl: string | null | undefined,
+  ventasUrl: string | null | undefined,
+): string | null {
+  const own = (cotizacionesUrl ?? '').trim();
+  if (own) return own;
+  const ventas = (ventasUrl ?? '').trim();
+  if (!/ventas_xlr9\.php/i.test(ventas)) return null;
+  return ventas.replace(/ventas_xlr9\.php/i, 'cotizaciones_xlr9.php');
+}
+
+/** Items without phone, project, amount > 0 or a valid date are dropped. */
+export function parseCotizacionesResponse(body: unknown): Xlr8Cotizacion[] {
+  if (!body || typeof body !== 'object') throw new Error('respuesta no es un objeto');
+  const items = (body as { items?: unknown }).items;
+  if (!Array.isArray(items)) throw new Error('respuesta sin "items"');
+  const out: Xlr8Cotizacion[] = [];
+  for (const it of items) {
+    if (!it || typeof it !== 'object') continue;
+    const r = it as Record<string, unknown>;
+    if (typeof r.celular !== 'string' && typeof r.celular !== 'number') continue;
+    const celular = phoneKey(String(r.celular));
+    const projectId = r.project_id == null ? '' : String(r.project_id).trim();
+    const monto = parseMonto(r.monto_cotizacion);
+    const fecha = parseXlr8Fecha(r.fecha_cotizacion);
+    if (!celular || !projectId || monto == null || !fecha) continue;
+    out.push({ celular, projectId, monto, fecha });
+  }
+  return out;
+}
+
+/**
+ * The quotation an ad contact's InitiateCheckout reports: of that phone's
+ * quotations inside Meta's 7-day window (and not yet reported by another
+ * contact of the account), the oldest one. null → nothing to send.
+ */
+export function pickCotizacion(
+  cotizaciones: ReadonlyArray<Xlr8Cotizacion>,
+  alreadySentProjectIds: ReadonlySet<string>,
+  now: Date = new Date(),
+): Xlr8Cotizacion | null {
+  const inWindow = cotizaciones.filter(
+    (c) => !alreadySentProjectIds.has(c.projectId) && clampEventTime(c.fecha, now) !== null,
+  );
+  inWindow.sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+  return inWindow[0] ?? null;
 }
 
 // ------------------------------------------------------------
