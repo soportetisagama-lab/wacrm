@@ -36,8 +36,6 @@ import {
 } from '@/lib/whatsapp/interactive';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
-import { isQuoteDocument } from '@/lib/meta-capi/events';
-import { metaCapiOnQuoteSent } from '@/lib/meta-capi/send';
 import {
   isValidE164,
   phoneVariants,
@@ -553,12 +551,6 @@ export async function sendMessageToConversation(
       '[flows] pause-on-agent-send threw:',
       err instanceof Error ? err.message : err
     );
-  }
-
-  // Meta Conversions API: a quotation document reached the customer →
-  // InitiateCheckout (once per ad contact). Fire-and-forget, never throws.
-  if (messageType === 'document' && isQuoteDocument(filename, contentText)) {
-    void metaCapiOnQuoteSent({ accountId, contactId: contact.id });
   }
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };

@@ -9,6 +9,7 @@ import {
   buildEventPayload,
   buttonMetaEvent,
   clampEventTime,
+  cotizacionesUrlFromEnv,
   datasetCreateBody,
   datasetNameFromEnv,
   datasetRenameNeeded,
@@ -17,13 +18,16 @@ import {
   eventsForTag,
   nextRetryDelayMs,
   parseQualifiedTags,
+  parseCotizacionesResponse,
   parseVentasResponse,
   isPurchaseCovered,
   isUnsendablePurchase,
+  pickCotizacion,
   pickVenta,
   purchaseCoveringVenta,
   purchaseValueDeadline,
   type MetaCapiEventName,
+  type Xlr8Cotizacion,
   type Xlr8Venta,
 } from './events';
 
@@ -39,6 +43,8 @@ import {
 //   META_CAPI_ENABLED=true        master switch (anything else → off)
 //   META_CAPI_QUALIFIED_TAGS=...  type tags that mean QualifiedLead
 //   XLR8_VENTAS_URL=...           ventas_xlr9.php (Purchase value)
+//   XLR8_COTIZACIONES_URL=...     cotizaciones_xlr9.php (InitiateCheckout);
+//                                 default: XLR8_VENTAS_URL's folder
 //   META_CAPI_DATASET_NAME=...    dataset name, e.g. "XLR9 Inox" (optional)
 // Logs never carry tokens, phone numbers or ctwa_clid values.
 // ============================================================
@@ -81,13 +87,14 @@ interface LineConfig {
 interface CapiState {
   configs: Map<string, { at: number; config: LineConfig | null }>;
   ventas: { at: number; items: Xlr8Venta[] | null } | null;
+  cotizaciones: { at: number; items: Xlr8Cotizacion[] | null } | null;
   sweepRunning: boolean;
   lastSweepAt: number;
 }
 
 const g = globalThis as { __wacrmMetaCapi?: CapiState };
 function state(): CapiState {
-  g.__wacrmMetaCapi ??= { configs: new Map(), ventas: null, sweepRunning: false, lastSweepAt: 0 };
+  g.__wacrmMetaCapi ??= { configs: new Map(), ventas: null, cotizaciones: null, sweepRunning: false, lastSweepAt: 0 };
   return g.__wacrmMetaCapi;
 }
 
@@ -229,6 +236,32 @@ async function loadVentas(): Promise<Xlr8Venta[] | null> {
     console.error('[meta-capi] lectura de ventas falló:', errText(err));
   }
   s.ventas = { at: Date.now(), items };
+  return items;
+}
+
+/** null = feed not configured or the fetch failed. Same token and line as the sales feed. */
+async function loadCotizaciones(): Promise<Xlr8Cotizacion[] | null> {
+  const url = cotizacionesUrlFromEnv(process.env.XLR8_COTIZACIONES_URL, process.env.XLR8_VENTAS_URL);
+  const token = process.env.XLR8_TOKEN?.trim();
+  const linea = process.env.XLR8_LINEA?.trim().toUpperCase();
+  if (!url || !token || !linea) return null;
+  const s = state();
+  if (s.cotizaciones && Date.now() - s.cotizaciones.at < VENTAS_TTL_MS) return s.cotizaciones.items;
+  let items: Xlr8Cotizacion[] | null = null;
+  try {
+    const u = new URL(url);
+    u.searchParams.set('linea', linea);
+    const res = await fetch(u, {
+      headers: { 'X-Xlr9-Token': token, Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`cotizaciones respondió HTTP ${res.status}`);
+    items = parseCotizacionesResponse(await res.json());
+  } catch (err) {
+    console.error('[meta-capi] lectura de cotizaciones falló:', errText(err));
+  }
+  s.cotizaciones = { at: Date.now(), items };
   return items;
 }
 
@@ -453,24 +486,6 @@ function guard(label: string, fn: () => Promise<void>): Promise<void> {
 // ------------------------------------------------------------
 // Entry points
 // ------------------------------------------------------------
-
-/** A quotation document went out to the customer → InitiateCheckout. */
-export function metaCapiOnQuoteSent(args: { accountId: string; contactId: string }): Promise<void> {
-  return guard('InitiateCheckout', async () => {
-    const admin = supabaseAdmin();
-    const ctwaClid = await latestCtwaClid(admin, args.accountId, args.contactId);
-    if (!ctwaClid) return;
-    await recordAndSend(admin, {
-      accountId: args.accountId,
-      contactId: args.contactId,
-      eventName: 'InitiateCheckout',
-      dedupKey: dedupKeyFor('InitiateCheckout'),
-      source: 'quote',
-      eventTime: new Date(),
-      ctwaClid,
-    });
-  });
-}
 
 /**
  * Customer tapped a button / list row. If the interactive message it
@@ -870,6 +885,82 @@ async function resolveAwaitingPurchases(admin: SupabaseClient): Promise<void> {
   }
 }
 
+/**
+ * InitiateCheckout from xlr8 quotations: for each ad contact whose phone has
+ * a quotation dated inside Meta's 7 days, the oldest one goes out with its
+ * amount (PEN) and date. Only one per contact (dedup key 'InitiateCheckout':
+ * a contact that already has that row, in any status, gets nothing more),
+ * and one per xlr8 project in the account (two contacts with the same phone
+ * do not report the same quotation twice).
+ */
+async function sweepCotizaciones(
+  admin: SupabaseClient,
+  accountId: string,
+  clids: ReadonlyMap<string, string>,
+  ids: string[],
+): Promise<void> {
+  const cotizaciones = await loadCotizaciones();
+  if (!cotizaciones?.length) return;
+  const recent = cotizaciones.filter((c) => clampEventTime(c.fecha) !== null);
+  if (!recent.length) return;
+
+  const phones = await contactPhones(admin, ids);
+  const quotedPhones = new Set(recent.map((c) => c.celular));
+  const candidates = ids.filter((id) => quotedPhones.has(phones.get(id) ?? ''));
+  if (!candidates.length) return;
+
+  const withRow = new Set<string>();
+  for (const part of chunk(candidates, CHUNK)) {
+    const { data, error } = await admin
+      .from('meta_capi_events')
+      .select('contact_id')
+      .eq('event_name', 'InitiateCheckout')
+      .in('contact_id', part);
+    if (error) throw new Error(`meta_capi_events: ${error.message}`);
+    for (const r of (data ?? []) as { contact_id: string }[]) withRow.add(r.contact_id);
+  }
+  const todo = candidates.filter((id) => !withRow.has(id));
+  if (!todo.length) return;
+
+  // Projects already reported by an InitiateCheckout of this account.
+  const reported = new Set<string>();
+  for (const part of chunk([...new Set(recent.map((c) => c.projectId))], CHUNK)) {
+    const { data, error } = await admin
+      .from('meta_capi_events')
+      .select('project_id')
+      .eq('account_id', accountId)
+      .eq('event_name', 'InitiateCheckout')
+      .in('project_id', part);
+    if (error) throw new Error(`meta_capi_events: ${error.message}`);
+    for (const r of (data ?? []) as { project_id: string | null }[]) if (r.project_id) reported.add(r.project_id);
+  }
+
+  for (const contactId of todo) {
+    const phone = phones.get(contactId)!;
+    const cot = pickCotizacion(
+      recent.filter((c) => c.celular === phone),
+      reported,
+    );
+    if (!cot) continue;
+    try {
+      await recordAndSend(admin, {
+        accountId,
+        contactId,
+        eventName: 'InitiateCheckout',
+        dedupKey: dedupKeyFor('InitiateCheckout'),
+        source: 'quote',
+        eventTime: cot.fecha,
+        ctwaClid: clids.get(contactId)!,
+        projectId: cot.projectId,
+        value: cot.monto,
+      });
+      reported.add(cot.projectId);
+    } catch (err) {
+      console.error('[meta-capi] InitiateCheckout por cotización:', errText(err));
+    }
+  }
+}
+
 async function sweepAccount(admin: SupabaseClient, accountId: string): Promise<void> {
   const clids = await adContacts(admin, accountId);
   if (clids.size === 0) return;
@@ -916,6 +1007,14 @@ async function sweepAccount(admin: SupabaseClient, accountId: string): Promise<v
       }))
       .filter((a) => a.events.length > 0);
     await handleTagsAdded(admin, accountId, todo);
+  }
+
+  // First xlr8 quotation (with its amount) → InitiateCheckout, once per
+  // contact. A failure here must not stop the sales pass below.
+  try {
+    await sweepCotizaciones(admin, accountId, clids, ids);
+  } catch (err) {
+    console.error('[meta-capi] InitiateCheckout por cotización:', errText(err));
   }
 
   // Sales closed in xlr8 in the last 7 days → one Purchase per project.
