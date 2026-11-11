@@ -6,6 +6,7 @@ import {
   buildEventPayload,
   buttonMetaEvent,
   clampEventTime,
+  cotizacionesUrlFromEnv,
   datasetCreateBody,
   datasetNameFromEnv,
   datasetRenameNeeded,
@@ -13,14 +14,15 @@ import {
   dedupKeyFor,
   eventsForTag,
   isMetaCapiEventName,
-  isQuoteDocument,
   nextRetryDelayMs,
   parseMonto,
+  parseCotizacionesResponse,
   parseQualifiedTags,
   parseVentasResponse,
   isPurchaseCovered,
   isUnsendablePurchase,
   parseXlr8Fecha,
+  pickCotizacion,
   pickVenta,
   purchaseValueDeadline,
   purchaseCoveringVenta,
@@ -201,13 +203,7 @@ describe('buildEventPayload', () => {
   });
 });
 
-describe('quote documents and buttons', () => {
-  it('detects quotations by filename or caption', () => {
-    expect(isQuoteDocument('Cotización 123.pdf')).toBe(true);
-    expect(isQuoteDocument('doc.pdf', 'Te envío la proforma')).toBe(true);
-    expect(isQuoteDocument('catalogo.pdf', 'Nuestro catálogo')).toBe(false);
-  });
-
+describe('buttons', () => {
   it('finds the event configured on the tapped button or list row', () => {
     const buttons = {
       kind: 'buttons',
@@ -335,5 +331,54 @@ describe('dataset name', () => {
     expect(datasetRenameNeeded(null, 'XLR9 Inox')).toBe(true);
     expect(datasetRenameNeeded('XLR9 Inox', 'XLR9 Inox')).toBe(false);
     expect(datasetRenameNeeded('Dataset 123', null)).toBe(false);
+  });
+});
+
+describe('xlr8 quotations (InitiateCheckout)', () => {
+  it('derives the feed URL from XLR8_VENTAS_URL unless its own is set', () => {
+    expect(cotizacionesUrlFromEnv(' https://x/c.php ', 'https://x/ventas_xlr9.php')).toBe('https://x/c.php');
+    expect(cotizacionesUrlFromEnv(undefined, 'https://h/p/ventas_xlr9.php?a=1')).toBe(
+      'https://h/p/cotizaciones_xlr9.php?a=1',
+    );
+    expect(cotizacionesUrlFromEnv('', 'https://h/otra.php')).toBeNull();
+    expect(cotizacionesUrlFromEnv(null, null)).toBeNull();
+  });
+
+  it('parses the feed and drops items without phone, project, amount or date', () => {
+    const items = parseCotizacionesResponse({
+      linea: 'INOX',
+      items: [
+        { celular: '929564362', project_id: 12, monto_cotizacion: '1,500.50', fecha_cotizacion: '2026-11-08 10:15:00' },
+        { celular: '929564362', project_id: 13, monto_cotizacion: '0.00', fecha_cotizacion: '2026-11-08' },
+        { celular: '929564362', project_id: 14, monto_cotizacion: '200', fecha_cotizacion: null },
+        { celular: '', project_id: 15, monto_cotizacion: '200', fecha_cotizacion: '2026-11-08' },
+        { celular: '51929564362', monto_cotizacion: '200', fecha_cotizacion: '2026-11-08' },
+      ],
+    });
+    expect(items).toEqual([
+      {
+        celular: '51929564362',
+        projectId: '12',
+        monto: 1500.5,
+        fecha: new Date('2026-11-08T15:15:00.000Z'),
+      },
+    ]);
+    expect(() => parseCotizacionesResponse({ status: 'error' })).toThrow();
+  });
+
+  it('picks the oldest quotation inside the 7-day window, not yet reported', () => {
+    const now = new Date('2026-11-11T12:00:00Z');
+    const day = 86_400_000;
+    const cot = (projectId: string, daysAgo: number, monto = 100) => ({
+      celular: '51929564362',
+      projectId,
+      monto,
+      fecha: new Date(now.getTime() - daysAgo * day),
+    });
+    const list = [cot('3', 1), cot('1', 9), cot('2', 4, 250)];
+    expect(pickCotizacion(list, new Set(), now)?.projectId).toBe('2');
+    expect(pickCotizacion(list, new Set(['2']), now)?.projectId).toBe('3');
+    expect(pickCotizacion(list, new Set(['2', '3']), now)).toBeNull();
+    expect(pickCotizacion([], new Set(), now)).toBeNull();
   });
 });
