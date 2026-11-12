@@ -89,9 +89,13 @@ export function buildClasificarPrompt(businessContext?: string | null): string {
       '  - "proveedor": ofrece productos o servicios a la empresa (vende, no compra), o busca alianzas, "socios estratégicos", ' +
       'convenios o una reunión o visita para presentar su empresa o sus proyectos. La empresa solo vende sus productos: ' +
       'eso no es un lead aunque mencione proyectos, salvo que pida cotizar productos concretos.\n' +
-      '  - "otro_tema": habla de otro tema y no quiere comprar ni cotizar.\n' +
+      '  - "otro_tema": habla claramente de algo sin relación con comprar (número equivocado, un trámite personal, ' +
+      'un tema ajeno a la empresa).\n' +
       '  - "extranjero": el número es extranjero Y el pedido no es para Perú (entrega o uso fuera de Perú).\n' +
       'Un número extranjero por sí solo NO basta: si el cliente pide para Perú (entrega, obra o empresa en Perú), es "lead". ' +
+      'También es "lead" quien solo saluda, toca una opción del menú o pregunta por la ubicación de la tienda, horarios, ' +
+      'catálogo, envíos, formas de pago o cómo comprar: es un posible cliente, aunque todavía no diga qué quiere. ' +
+      'La conversación puede tener uno o dos mensajes: con poca información, es "lead". ' +
       'Ante la duda, responde "lead". Con "lead" el motivo es cadena vacía.\n' +
       'Responde siempre llamando a la tool con `tipo` y `motivo`.',
     UNTRUSTED_CUSTOMER_CONTENT_GUARD,
