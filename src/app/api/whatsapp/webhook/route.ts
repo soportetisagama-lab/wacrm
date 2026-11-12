@@ -34,7 +34,7 @@ import {
   isAwaitingPhoneHandoff,
   loadHandoffDoneWithoutPhone,
 } from '@/lib/ai/awaiting-phone'
-import { numeroSeDerivara, programarDerivacionAuto } from '@/lib/derivacion-auto'
+import { esNumeroExtranjero, numeroSeDerivara, programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
@@ -2060,8 +2060,15 @@ async function processMessage(
   // Derivación automática apenas escribe el cliente (con celular), sin
   // esperar a que responda las preguntas del bot. derivarAuto respeta
   // horario/cola, cupo, MODO PRUEBA y una sola vez por conversación. Un
-  // chat que ya tiene asesor no se toca (soloSinAsesor).
-  if (!derivedFromPhone && numeroSeDerivara(promotedPhone ?? contactRecord.phone)) {
+  // chat que ya tiene asesor no se toca (soloSinAsesor). Un número
+  // extranjero espera a que el bot termine sus preguntas (se deriva en el
+  // traspaso), para que la IA decida bien entre asesor y ATC.
+  const telefonoDerivacion = promotedPhone ?? contactRecord.phone
+  if (
+    !derivedFromPhone &&
+    !esNumeroExtranjero(telefonoDerivacion) &&
+    numeroSeDerivara(telefonoDerivacion)
+  ) {
     programarDerivacionAuto(supabaseAdmin(), conversation.id, { soloSinAsesor: true })
   }
   // new_contact_created fires only when the webhook just auto-created the
