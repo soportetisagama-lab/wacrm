@@ -13,6 +13,7 @@ import {
   esNumeroExtranjero,
   celularDerivacion,
   conservarNotasDerivacion,
+  derivacionConfigurada,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -779,6 +780,42 @@ describe('derivación desde el webhook (soloSinAsesor)', () => {
       'asignada',
     )
   })
+
+  it('el perfil "@" (chat sin número) cuenta como sin asesor: deriva y asigna al asesor real', async () => {
+    const store = makeStore({
+      loadConversation: vi.fn(async () => ({
+        account_id: 'acc-1',
+        channel: 'whatsapp',
+        contact_id: 'ct-1',
+        assigned_agent_id: 'perfil-arroba',
+        status: 'open',
+      })),
+      esPerfilSinNumero: vi.fn(async (id: string) => id === 'perfil-arroba'),
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { soloSinAsesor: true })).toBe(
+      'asignada',
+    )
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+  })
+
+  it('un asesor real sigue sin tocarse aunque el store sepa de "@"', async () => {
+    const store = makeStore({
+      loadConversation: vi.fn(async () => ({
+        account_id: 'acc-1',
+        channel: 'whatsapp',
+        contact_id: 'ct-1',
+        assigned_agent_id: 'user-7',
+        status: 'open',
+      })),
+      esPerfilSinNumero: vi.fn(async (id: string) => id === 'perfil-arroba'),
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { soloSinAsesor: true })).toBe(
+      'con_asesor',
+    )
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
 })
 
 describe('conservarNotasDerivacion', () => {
@@ -794,5 +831,16 @@ describe('conservarNotasDerivacion', () => {
     expect(conservarNotasDerivacion('Otra cosa', 'R')).toBe('R')
     expect(conservarNotasDerivacion(null, 'R')).toBe('R')
     expect(conservarNotasDerivacion(NOTA_EN_ESPERA, 'R' + '\n' + NOTA_EN_ESPERA)).toBe('R' + '\n' + NOTA_EN_ESPERA)
+  })
+})
+
+describe('derivacionConfigurada', () => {
+  it('true con URL, secreto y línea', () => {
+    expect(derivacionConfigurada(ENV)).toBe(true)
+  })
+  it('false si falta cualquiera', () => {
+    expect(derivacionConfigurada({ ...ENV, url: '' })).toBe(false)
+    expect(derivacionConfigurada({ ...ENV, secret: undefined })).toBe(false)
+    expect(derivacionConfigurada({ ...ENV, linea: ' ' })).toBe(false)
   })
 })

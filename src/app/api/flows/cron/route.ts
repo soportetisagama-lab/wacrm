@@ -23,6 +23,7 @@ import { runMetaCapiSweepIfDue } from '@/lib/meta-capi/send'
 import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/memory'
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
+import { asesorReal } from '@/lib/conversations/perfil-sin-numero'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
 const XLR8_SYNC_EVERY_MS = 5 * 60_000
@@ -413,12 +414,13 @@ async function maybeSendInactivityNudge(
   if (!decision) return false
 
   // An advisor owns the chat: the follow-up is theirs to send, not the bot's.
+  // The "@" profile (no-phone chats) never writes: it doesn't count.
   const { data: conv } = await admin
     .from('conversations')
     .select('assigned_agent_id')
     .eq('id', run.conversation_id)
     .maybeSingle()
-  if (conv?.assigned_agent_id) return false
+  if (await asesorReal(admin, conv?.assigned_agent_id as string | null | undefined)) return false
 
   // Outside business hours a reminder reads odd (at night, on Sunday)
   // and by the next opening it's stale — mark this silence period as

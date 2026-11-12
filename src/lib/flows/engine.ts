@@ -83,6 +83,7 @@ import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import { canAssignAgentToConversation } from "@/lib/conversations/assignee-guard";
+import { asesorReal } from "@/lib/conversations/perfil-sin-numero";
 import { conservarNotasDerivacion, programarDerivacionAuto } from "@/lib/derivacion-auto";
 import {
   type CollectAiNodeConfig,
@@ -731,7 +732,14 @@ async function loadConversationGateInfo(
     console.error("[flows] loadConversationGateInfo error:", error.message);
     return null;
   }
-  return (data as ConversationGateInfo | null) ?? null;
+  const gate = (data as ConversationGateInfo | null) ?? null;
+  // The "@" profile (no-phone chats, lib/conversations/perfil-sin-numero)
+  // never writes: the flows treat its chats as unassigned, so the welcome
+  // and the phone ask keep running.
+  if (gate?.assigned_agent_id) {
+    return { ...gate, assigned_agent_id: await asesorReal(db, gate.assigned_agent_id) };
+  }
+  return gate;
 }
 
 type ConversationGateInfo = {
@@ -2995,10 +3003,11 @@ async function markConversationPendingHandoff(
   };
   // A Community Manager only owns Messenger/Instagram chats — the DB
   // trigger would reject the whole write, so hand off unassigned instead.
-  // Ya derivada a un asesor (derivación automática): no se le quita.
+  // Ya derivada a un asesor (derivación automática): no se le quita. El
+  // perfil "@" (chats sin número) cuenta como sin asesor.
   if (
     assignTo &&
-    !current?.assigned_agent_id &&
+    !(await asesorReal(db, current?.assigned_agent_id as string | null | undefined)) &&
     (await canAssignAgentToConversation(db, assignTo, conversationId))
   ) {
     update.assigned_agent_id = assignTo;
