@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { NOT_LEAD_REPLIED_SUMMARY } from '@/lib/ai/defaults'
+import { asesorReal } from './perfil-sin-numero'
 import {
   answersPendingQuestion,
   isAcknowledgement,
@@ -42,7 +43,8 @@ export async function routeAcknowledgement(args: {
       .select('assigned_agent_id, ai_handoff_summary')
       .eq('id', args.conversationId)
       .maybeSingle()
-    if (conv?.assigned_agent_id) return null
+    // The "@" profile (no-phone chats) never writes: it doesn't count.
+    if (await asesorReal(args.db, conv?.assigned_agent_id as string | null | undefined)) return null
 
     const { data: activeRuns } = await args.db
       .from('flow_runs')

@@ -34,7 +34,13 @@ import {
   isAwaitingPhoneHandoff,
   loadHandoffDoneWithoutPhone,
 } from '@/lib/ai/awaiting-phone'
-import { esNumeroExtranjero, numeroSeDerivara, programarDerivacionAuto } from '@/lib/derivacion-auto'
+import {
+  derivacionConfigurada,
+  esNumeroExtranjero,
+  numeroSeDerivara,
+  programarDerivacionAuto,
+} from '@/lib/derivacion-auto'
+import { asesorReal, asignarPerfilSinNumero } from '@/lib/conversations/perfil-sin-numero'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
@@ -578,7 +584,8 @@ async function handleCallsChange(value: WhatsAppWebhookEntry['changes'][number][
       outcome.contact.id,
     )
     const conversation = convResult?.conversation
-    const ringUserId: string | null = conversation?.assigned_agent_id ?? null
+    // The "@" profile (no-phone chats) can't answer: ring the team instead.
+    const ringUserId: string | null = await asesorReal(admin, conversation?.assigned_agent_id ?? null)
 
     const callAt = new Date().toISOString()
     const { data: inserted, error } = await admin.from('whatsapp_calls').upsert(
@@ -1606,6 +1613,22 @@ async function processMessage(
   }
   const promotedPhone = await promoteBsuidContactPhoneIfRequested(message, accountId, contactRecord)
 
+  // Sin número de teléfono (ni ahora ni en este mensaje) y sin asesor: al
+  // perfil "@" para que no quede "Sin asignar". Solo con DERIVACION_CON_IA,
+  // la derivación configurada y el perfil "@" existente
+  // (lib/conversations/perfil-sin-numero). "@" cuenta como sin asesor: la
+  // IA y los flujos siguen atendiendo y piden el número, y al llegar el
+  // número la derivación lo pasa a un asesor real.
+  if (
+    !contactRecord.phone &&
+    !promotedPhone &&
+    !contactOutcome.phoneJustPromoted &&
+    !conversation.assigned_agent_id &&
+    derivacionConfigurada()
+  ) {
+    await asignarPerfilSinNumero(supabaseAdmin(), { accountId, conversationId: conversation.id })
+  }
+
   // Either promotion path just resolved this contact's country for the
   // first time (resolveContactRequestReply's fast path already set
   // contactRecord.phone; the fallback above returns the phone it just
@@ -2060,7 +2083,8 @@ async function processMessage(
   // Derivación automática apenas escribe el cliente (con celular), sin
   // esperar a que responda las preguntas del bot. derivarAuto respeta
   // horario/cola, cupo, MODO PRUEBA y una sola vez por conversación. Un
-  // chat que ya tiene asesor no se toca (soloSinAsesor). Un número
+  // chat que ya tiene asesor no se toca (soloSinAsesor), salvo el perfil
+  // "@" de los chats sin número: al llegar el número se deriva. Un número
   // extranjero espera a que el bot termine sus preguntas (se deriva en el
   // traspaso), para que la IA decida bien entre asesor y ATC.
   const telefonoDerivacion = promotedPhone ?? contactRecord.phone
