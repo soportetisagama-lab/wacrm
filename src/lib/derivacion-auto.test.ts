@@ -7,6 +7,8 @@ import {
   dentroDeHorario,
   procesarColaDerivacion,
   NOTA_EN_COLA,
+  NOTA_EN_ESPERA,
+  NOTA_EN_TURNO,
   esNumeroExtranjero,
   celularDerivacion,
   type DerivacionStore,
@@ -25,6 +27,7 @@ const DENTRO = lima('2026-11-02T10:00')
 function makeStore(over: Partial<DerivacionStore> = {}, phone = '+51 926 843 129') {
   let claimed = false
   const queue = new Map<string, { at: Date; agente: string | null }>()
+  const notas = new Map<string, string[]>()
   const store: DerivacionStore = {
     loadConversation: vi.fn(async () => ({
       account_id: 'acc-1',
@@ -38,11 +41,18 @@ function makeStore(over: Partial<DerivacionStore> = {}, phone = '+51 926 843 129
       queue.set(id, { at, agente })
       return true
     }),
+    requeue: vi.fn(async (id: string, at: Date, agente: string | null) => {
+      claimed = false
+      queue.set(id, { at, agente })
+      return true
+    }),
+    hasPendingQueue: vi.fn(async (exclude: string) => [...queue.keys()].some((id) => id !== exclude)),
+    saveClasificacion: vi.fn(async () => undefined),
     listQueue: vi.fn(async (limit: number) =>
       [...queue.entries()]
         .sort((a, b) => a[1].at.getTime() - b[1].at.getTime())
         .slice(0, limit)
-        .map(([id]) => id),
+        .map(([id, { at }]) => ({ id, at })),
     ),
     dequeue: vi.fn(async (id: string) => {
       const item = queue.get(id)
@@ -59,10 +69,14 @@ function makeStore(over: Partial<DerivacionStore> = {}, phone = '+51 926 843 129
     loadAdId: vi.fn(async () => '120210000000001'),
     findAgentByXlr8: vi.fn(async (_acc: string, id: number) => (id === 42 ? 'user-42' : null)),
     assign: vi.fn(async () => true),
-    appendNote: vi.fn(async () => undefined),
+    // Como el store real: no repite una línea que ya está en la nota.
+    appendNote: vi.fn(async (id: string, line: string) => {
+      const actual = notas.get(id) ?? []
+      if (!actual.includes(line)) notas.set(id, [...actual, line])
+    }),
     ...over,
   }
-  return store
+  return Object.assign(store, { notas, colaIds: async () => (await store.listQueue(100)).map((c) => c.id) })
 }
 
 function okFetch(body: unknown, status = 200) {
@@ -158,6 +172,7 @@ describe('llamada y mapeo de asesor', () => {
       conversation_id: 'conv-1',
       destino: 'ASESOR',
       motivo_atc: '',
+      historico: false,
     })
     expect(store.findAgentByXlr8).toHaveBeenCalledWith('acc-1', 42)
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
@@ -181,14 +196,18 @@ describe('llamada y mapeo de asesor', () => {
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
   })
 
-  it('ok:false del PHP no asigna', async () => {
-    const store = makeStore()
-    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const fetchFn = okFetch({ ok: false, motivo: 'sin_asesor' })
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('rechazada')
-    expect(store.findAgentByXlr8).not.toHaveBeenCalled()
-    expect(store.assign).not.toHaveBeenCalled()
-    err.mockRestore()
+  it('ok:false del PHP (otro motivo) no asigna ni vuelve a la cola', async () => {
+    for (const motivo of ['sin_atc', 'fuera_de_prueba', 'duplicado']) {
+      const store = makeStore()
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const fetchFn = okFetch({ ok: false, motivo })
+      expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('rechazada')
+      expect(store.findAgentByXlr8).not.toHaveBeenCalled()
+      expect(store.assign).not.toHaveBeenCalled()
+      expect(store.requeue).not.toHaveBeenCalled()
+      expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('ya_derivada')
+      err.mockRestore()
+    }
   })
 })
 
@@ -271,6 +290,7 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-09T07:59') })).toEqual({
       derivadas: 0,
       descartadas: 0,
+      enEspera: 0,
     })
     expect(store.listQueue).not.toHaveBeenCalled()
     expect(fetchFn).not.toHaveBeenCalled()
@@ -278,10 +298,11 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-09T08:00') })).toEqual({
       derivadas: 1,
       descartadas: 0,
+      enEspera: 0,
     })
     expect(fetchFn).toHaveBeenCalledTimes(1)
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
-    expect(await store.listQueue(10)).toEqual([])
+    expect(await store.colaIds()).toEqual([])
   })
 
   it('13:20 espera y se deriva a las 14:00', async () => {
@@ -313,6 +334,7 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })).toEqual({
       derivadas: 0,
       descartadas: 0,
+      enEspera: 0,
     })
     expect(fetchFn).not.toHaveBeenCalled()
   })
@@ -332,6 +354,7 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })).toEqual({
       derivadas: 1,
       descartadas: 0,
+      enEspera: 0,
     })
     expect(fetchFn).toHaveBeenCalledTimes(1)
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
@@ -352,6 +375,7 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })).toEqual({
       derivadas: 0,
       descartadas: 1,
+      enEspera: 0,
     })
     expect(fetchFn).not.toHaveBeenCalled()
   })
@@ -371,9 +395,10 @@ describe('cola de derivación', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })).toEqual({
       derivadas: 0,
       descartadas: 1,
+      enEspera: 0,
     })
     expect(fetchFn).not.toHaveBeenCalled()
-    expect(await store.listQueue(10)).toEqual([])
+    expect(await store.colaIds()).toEqual([])
   })
 
   it('si ya no está pending/open, sale de la cola sin derivar', async () => {
@@ -399,7 +424,7 @@ describe('cola de derivación', () => {
     const env = { url: ENV.url, secret: ENV.secret }
     await procesarColaDerivacion({ store, env, fetchFn: okFetch({}), now: DENTRO })
     expect(store.dequeue).not.toHaveBeenCalled()
-    expect(await store.listQueue(10)).toEqual(['conv-1'])
+    expect(await store.colaIds()).toEqual(['conv-1'])
     expect(err).toHaveBeenCalled()
     err.mockRestore()
   })
@@ -466,6 +491,7 @@ describe('clasificación lead / ATC', () => {
     expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-03T08:00'), clasificar })).toEqual({
       derivadas: 1,
       descartadas: 0,
+      enEspera: 0,
     })
     expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ATC', motivo_atc: 'Spam' })
   })
@@ -503,5 +529,160 @@ describe('número extranjero', () => {
     const fetchFn = okFetch({ ok: true, asesor_id: 42 })
     expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('no_es_prueba')
     expect(fetchFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('cupo lleno (en_espera)', () => {
+  const conv = (over: Record<string, unknown> = {}) => ({
+    account_id: 'acc-1',
+    channel: 'whatsapp',
+    contact_id: 'ct-1',
+    assigned_agent_id: null,
+    status: 'pending',
+    ...over,
+  })
+
+  it('traspaso en vivo con sin_asesor: deshace el reclamo y entra a la cola con now', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({ ok: false, motivo: 'sin_asesor' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('en_espera')
+    expect(store.requeue).toHaveBeenCalledWith('conv-1', DENTRO, null)
+    expect(store.appendNote).toHaveBeenCalledWith('conv-1', NOTA_EN_ESPERA)
+    expect(NOTA_EN_ESPERA).toBe('En espera: todos los asesores tienen el cupo lleno')
+    expect(store.assign).not.toHaveBeenCalled()
+    expect(await store.colaIds()).toEqual(['conv-1'])
+  })
+
+  it('HTTP 503 (ocupado) también vuelve a la cola, con o sin JSON', async () => {
+    for (const fetchFn of [
+      okFetch({ ok: false, motivo: 'ocupado' }, 503),
+      vi.fn(async () => new Response('Service Unavailable', { status: 503 })),
+    ]) {
+      const store = makeStore()
+      expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('en_espera')
+      expect(await store.colaIds()).toEqual(['conv-1'])
+    }
+  })
+
+  it('desde la cola vuelve con su hora original y la nota se escribe una sola vez', async () => {
+    const store = makeStore()
+    const llegada = lima('2026-11-02T07:30')
+    await store.enqueue('conv-1', llegada, null)
+    const fetchFn = okFetch({ ok: false, motivo: 'sin_asesor' })
+    for (const hora of ['10:00', '10:01', '10:02']) {
+      expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima(`2026-11-02T${hora}`) })).toEqual({
+        derivadas: 0,
+        descartadas: 0,
+        enEspera: 1,
+      })
+      expect(store.requeue).toHaveBeenLastCalledWith('conv-1', llegada, null)
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(3)
+    expect(store.notas.get('conv-1')).toEqual([NOTA_EN_ESPERA])
+
+    // Se libera un cupo: la siguiente pasada la deriva.
+    const ok = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await procesarColaDerivacion({ store, env: ENV, fetchFn: ok, now: lima('2026-11-02T10:03') })).toEqual({
+      derivadas: 1,
+      descartadas: 0,
+      enEspera: 0,
+    })
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+    expect(await store.colaIds()).toEqual([])
+  })
+
+  it('corta la pasada: no llama al PHP por las siguientes', async () => {
+    const store = makeStore({ claim: vi.fn(async () => true) })
+    await store.enqueue('a', lima('2026-11-02T07:00'), null)
+    await store.enqueue('b', lima('2026-11-02T07:10'), null)
+    await store.enqueue('c', lima('2026-11-02T07:20'), null)
+    const fetchFn = okFetch({ ok: false, motivo: 'sin_asesor' })
+    const clasificar = vi.fn<ClasificadorDerivacion>(async () => ({ tipo: 'lead', motivo: '' }))
+    expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO, clasificar })).toEqual({
+      derivadas: 0,
+      descartadas: 0,
+      enEspera: 1,
+    })
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(clasificar).toHaveBeenCalledTimes(1)
+    expect(await store.colaIds()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('reutiliza la clasificación guardada (no vuelve a llamar a la IA)', async () => {
+    const guardada: { valor: unknown } = { valor: null }
+    const store = makeStore({
+      loadConversation: vi.fn(async () => conv({ derivacion_clasificacion: guardada.valor })),
+      saveClasificacion: vi.fn(async (_id: string, c: Clasificacion) => {
+        guardada.valor = c
+      }),
+    })
+    const clasificar = vi.fn<ClasificadorDerivacion>(async () => ({ tipo: 'atc', motivo: 'proveedor' }))
+    const lleno = okFetch({ ok: false, motivo: 'sin_asesor' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn: lleno, now: DENTRO, clasificar })).toBe('en_espera')
+    expect(store.saveClasificacion).toHaveBeenCalledWith('conv-1', { tipo: 'atc', motivo: 'proveedor' })
+
+    const ok = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'ATC' })
+    await procesarColaDerivacion({ store, env: ENV, fetchFn: ok, now: lima('2026-11-02T10:01'), clasificar })
+    expect(clasificar).toHaveBeenCalledTimes(1)
+    const [, init] = ok.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toMatchObject({ destino: 'ATC', motivo_atc: 'Proveedor' })
+  })
+
+  it('si la IA falla no guarda la clasificación (se reintenta clasificar)', async () => {
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const clasificar = vi.fn<ClasificadorDerivacion>(async () => {
+      throw new Error('timeout')
+    })
+    await derivarAuto('conv-1', { store, env: ENV, fetchFn: okFetch({ ok: true, asesor_id: 42 }), now: DENTRO, clasificar })
+    expect(store.saveClasificacion).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
+})
+
+describe('orden estricto', () => {
+  it('con cola no vacía, el traspaso en vivo entra a la cola con now y no llama al PHP', async () => {
+    const store = makeStore({ claim: vi.fn(async () => true) })
+    await store.enqueue('antigua', lima('2026-11-02T07:00'), null)
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('nueva', { store, env: ENV, fetchFn, now: DENTRO })).toBe('en_cola')
+    expect(store.enqueue).toHaveBeenLastCalledWith('nueva', DENTRO, null)
+    expect(store.appendNote).toHaveBeenCalledWith('nueva', NOTA_EN_TURNO)
+    expect(fetchFn).not.toHaveBeenCalled()
+    expect(await store.colaIds()).toEqual(['antigua', 'nueva'])
+
+    await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-02T10:01') })
+    const ids = (fetchFn.mock.calls as unknown as [string, RequestInit][]).map(
+      ([, init]) => JSON.parse(init.body as string).conversation_id,
+    )
+    expect(ids).toEqual(['antigua', 'nueva'])
+  })
+
+  it('con la cola vacía se deriva directo como siempre', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('asignada')
+    expect(store.hasPendingQueue).toHaveBeenCalledWith('conv-1')
+    expect(store.enqueue).not.toHaveBeenCalled()
+  })
+})
+
+describe('histórico', () => {
+  it('derivacion_historica = true envía historico: true al PHP', async () => {
+    const store = makeStore({
+      loadConversation: vi.fn(async () => ({
+        account_id: 'acc-1',
+        channel: 'whatsapp',
+        contact_id: 'ct-1',
+        assigned_agent_id: null,
+        status: 'pending',
+        derivacion_historica: true,
+      })),
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    await store.enqueue('conv-1', lima('2026-11-01T09:00'), null)
+    await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toMatchObject({ conversation_id: 'conv-1', historico: true })
   })
 })
