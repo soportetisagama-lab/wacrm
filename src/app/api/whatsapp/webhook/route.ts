@@ -2057,6 +2057,13 @@ async function processMessage(
       automationTriggers.push('interactive_reply')
     }
   }
+  // Derivación automática apenas escribe el cliente (con celular), sin
+  // esperar a que responda las preguntas del bot. derivarAuto respeta
+  // horario/cola, cupo, MODO PRUEBA y una sola vez por conversación; al
+  // quedar asignada a un asesor, el bot deja de responder.
+  if (!derivedFromPhone && numeroSeDerivara(promotedPhone ?? contactRecord.phone)) {
+    programarDerivacionAuto(supabaseAdmin(), conversation.id)
+  }
   // new_contact_created fires only when the webhook just auto-created the
   // contact row. first_inbound_message fires whenever this is the contact's
   // first-ever customer-sent message — a superset that also catches
