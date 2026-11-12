@@ -27,8 +27,9 @@ import {
 // manual como antes. Nunca lanza ni bloquea la respuesta del bot.
 //
 // Cupo lleno: si el PHP responde `sin_asesor` (todos los asesores con
-// el cupo lleno) o HTTP 503 (`ocupado`), se deshace el reclamo y la
-// conversación vuelve a la cola sin perder su turno (resultado
+// el cupo lleno), HTTP 503 (`ocupado`) o HTTP 429 (el hosting limita
+// las peticiones; llega como página HTML, sin JSON), se deshace el
+// reclamo y la conversación vuelve a la cola sin perder su turno (resultado
 // 'en_espera'); la pasada de la cola se corta ahí. La clasificación se
 // guarda (`derivacion_clasificacion`, migración 096) para no volver a
 // llamar a la IA en cada reintento.
@@ -431,8 +432,9 @@ export async function derivarAuto(
         cache: 'no-store',
       })
       body = ((await res.json().catch(() => null)) ?? {}) as RespuestaPhp
-      // 503 = PHP ocupado (cupo lleno), con o sin cuerpo JSON.
-      if (res.status === 503) body = { ...body, ok: false, motivo: 'ocupado' }
+      // 503 = PHP ocupado (cupo lleno) y 429 = el hosting limita las
+      // peticiones (página HTML): ambos esperan en la cola, con o sin JSON.
+      if (res.status === 503 || res.status === 429) body = { ...body, ok: false, motivo: 'ocupado' }
       if (!res.ok && body.ok !== false) {
         console.error(LOG, `PHP respondió HTTP ${res.status}`, { conversationId })
         return 'error_php'
