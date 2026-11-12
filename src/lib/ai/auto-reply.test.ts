@@ -68,6 +68,16 @@ vi.mock('@/lib/conversations/human-activity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/conversations/human-activity')>()),
   assignedAdvisorHasReplied: h.assignedAdvisorHasReplied,
 }))
+// The "@" profile of no-phone chats (its own tests: perfil-sin-numero.test.ts).
+// Here: the user 'perfil-arroba', only with DERIVACION_CON_IA on.
+vi.mock('@/lib/conversations/perfil-sin-numero', () => {
+  const es = (id: string | null | undefined) =>
+    ['true', '1'].includes(process.env.DERIVACION_CON_IA ?? '') && id === 'perfil-arroba'
+  return {
+    esPerfilSinNumero: async (_db: unknown, id: string | null | undefined) => es(id),
+    asesorReal: async (_db: unknown, id: string | null | undefined) => (id && !es(id) ? id : null),
+  }
+})
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./business-info', () => ({ loadBusinessInfo: async () => null }))
@@ -302,7 +312,14 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   }
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 beforeEach(() => {
+  // DERIVACION_CON_IA on unless a test says otherwise ("DERIVACION_CON_IA
+  // apagado" below covers the old behavior).
+  vi.stubEnv('DERIVACION_CON_IA', 'true')
   h.state.conv = {
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
@@ -1997,5 +2014,76 @@ describe('held phone turn (./phone-ask), WhatsApp without a number and social al
     await runAutoReplyNow(ARGS)
     expect(sentTexts()[0]).toMatch(/audios/)
     expect(h.state.updatePayload?.ai_handoff_summary).toBe(held(1, 1))
+  })
+})
+
+describe('DERIVACION_CON_IA apagado: un chat con asesor es del asesor (como antes)', () => {
+  beforeEach(() => {
+    vi.stubEnv('DERIVACION_CON_IA', '')
+  })
+
+  it('chat asignado: la IA no responde y ni consulta si el asesor escribió', async () => {
+    h.state.conv = { assigned_agent_id: 'agent-9', ai_autoreply_disabled: false, ai_reply_count: 1, status: 'open' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.assignedAdvisorHasReplied).not.toHaveBeenCalled()
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('el perfil "@" también cuenta como asesor: la IA calla', async () => {
+    h.state.conv = { assigned_agent_id: 'perfil-arroba', ai_autoreply_disabled: false, ai_reply_count: 1, status: 'open' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('completeHandoffAwaitingPhone en un chat asignado: solo quita el marcador', async () => {
+    h.state.contactPhone = '51974710551'
+    h.state.conv = {
+      assigned_agent_id: 'agent-1',
+      ai_autoreply_disabled: false,
+      status: 'open',
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(false)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toEqual({ ai_handoff_summary: 'Nota para el asesor' })
+  })
+
+  it('sin asesor: la IA responde como siempre', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+})
+
+describe('DERIVACION_CON_IA encendido: el perfil "@" cuenta como sin asesor', () => {
+  it('la IA atiende el chat de "@" sin consultar si "@" escribió', async () => {
+    h.state.conv = { assigned_agent_id: 'perfil-arroba', ai_autoreply_disabled: false, ai_reply_count: 1, status: 'open' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.assignedAdvisorHasReplied).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('el traspaso asigna al asesor configurado en lugar de "@"', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.state.conv = { assigned_agent_id: 'perfil-arroba', ai_autoreply_disabled: false, ai_reply_count: 1, status: 'open' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.state.updatePayload).toMatchObject({ assigned_agent_id: 'agent-7', ai_autoreply_disabled: true })
+    expect(h.programarDerivacionAuto).toHaveBeenCalled()
+  })
+
+  it('llega el número de un traspaso en espera en un chat de "@": deriva y asigna al asesor real', async () => {
+    h.state.contactPhone = '51974710551'
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.state.conv = {
+      assigned_agent_id: 'perfil-arroba',
+      ai_autoreply_disabled: false,
+      status: 'open',
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(true)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', assigned_agent_id: 'agent-7' })
+    expect(h.programarDerivacionAuto).toHaveBeenCalled()
   })
 })

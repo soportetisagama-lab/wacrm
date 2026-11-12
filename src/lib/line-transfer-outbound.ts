@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { engineSendText } from "@/lib/flows/meta-send";
 import { TRANSFER_NOTICE_PREFIX } from "@/lib/line-transfer";
+import { asesorReal } from "@/lib/conversations/perfil-sin-numero";
 
 /**
  * Source side of "Derivar a otra línea", AFTER the transfer: the chat the
@@ -141,7 +142,8 @@ export async function routeInboundAfterOutboundTransfer(args: {
       .select("assigned_agent_id")
       .eq("id", args.conversationId)
       .maybeSingle();
-    if (conv?.assigned_agent_id) return null;
+    // The "@" profile (no-phone chats) never writes: it doesn't count.
+    if (await asesorReal(args.db, conv?.assigned_agent_id as string | null | undefined)) return null;
 
     const noticeAt = await findRecentTransferNotice(args.db, args.conversationId);
     if (!noticeAt) return null;

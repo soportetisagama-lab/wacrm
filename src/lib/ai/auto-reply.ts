@@ -6,6 +6,8 @@ import {
 } from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
+import { asesorReal, esPerfilSinNumero } from '@/lib/conversations/perfil-sin-numero'
+import { derivacionConIaActiva } from '@/lib/derivacion-con-ia'
 import { conservarNotasDerivacion, programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { AiError, type AiConfig, type GenerateResult } from './types'
 import { loadAiConfig } from './config'
@@ -296,12 +298,14 @@ async function markNeedsHuman(
   }
   // Only set the assignee when a target is configured AND the thread
   // isn't already owned — never stomp an existing human assignment.
+  // The "@" profile (no-phone chats, ../conversations/perfil-sin-numero)
+  // counts as unowned.
   // A Community Manager only owns Messenger/Instagram chats — the DB
   // trigger would reject the whole write, so skip the assignee instead.
   if (
     args.config.handoffAgentId &&
-    !args.assignedAgentId &&
-    !current?.assigned_agent_id &&
+    !(await asesorReal(db, args.assignedAgentId)) &&
+    !(await asesorReal(db, current?.assigned_agent_id as string | null | undefined)) &&
     (await canAssignAgentToConversation(db, args.config.handoffAgentId, args.conversationId))
   ) {
     update.assigned_agent_id = args.config.handoffAgentId
@@ -431,7 +435,11 @@ function heldClosingText(options: HeldHandoffOptions | undefined, now: Date = ne
  * keeps that advisor), or someone paused the AI by hand ("Take over",
  * isManualAiPause). An assigned chat whose advisor hasn't written yet —
  * routed by a handoff, the XLR8 derivation or by hand — is still served
- * by the AI (questions, info, never prices). False when unassigned.
+ * by the AI (questions, info, never prices). False when unassigned or
+ * assigned to the "@" profile (no-phone chats: it never writes).
+ *
+ * Only with DERIVACION_CON_IA on (../derivacion-con-ia). Off: any
+ * assignee owns the thread, as before.
  */
 async function advisorOwnsThread(
   db: ReturnType<typeof supabaseAdmin>,
@@ -439,7 +447,9 @@ async function advisorOwnsThread(
   conv: { assigned_agent_id?: string | null; ai_autoreply_disabled?: boolean | null; status?: string | null },
 ): Promise<boolean> {
   if (!conv.assigned_agent_id) return false
+  if (!derivacionConIaActiva()) return true
   if (isManualAiPause(conv)) return true
+  if (await esPerfilSinNumero(db, conv.assigned_agent_id)) return false
   return assignedAdvisorHasReplied(db, conversationId, conv.assigned_agent_id)
 }
 
@@ -470,7 +480,8 @@ export async function completeHandoffAwaitingPhone(args: {
     const held = parseAwaitingPhone(marker)
     if (!conv || !held || !marker) return false
     // Paused, or the assigned advisor already wrote: only the marker goes.
-    // Assigned but not answered yet → hand off as usual (never reassigned).
+    // Assigned but not answered yet → hand off as usual (never reassigned;
+    // the "@" profile counts as unassigned, so a real advisor takes it).
     if (conv.ai_autoreply_disabled || (await advisorOwnsThread(db, args.conversationId, conv))) {
       await swapHeldMarker(db, args.conversationId, marker, held.summary)
       return false
@@ -479,7 +490,7 @@ export async function completeHandoffAwaitingPhone(args: {
     await handOffToHuman(db, {
       ...args,
       config,
-      assignedAgentId: (conv.assigned_agent_id as string | null | undefined) ?? null,
+      assignedAgentId: await asesorReal(db, conv.assigned_agent_id as string | null | undefined),
       summary: held.summary,
       notifyCustomer: true,
       brief: Boolean(config) && !isAiKeyPaused(config?.apiKey ?? ''),
