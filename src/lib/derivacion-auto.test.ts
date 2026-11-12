@@ -222,23 +222,29 @@ describe('llamada y mapeo de asesor', () => {
 })
 
 describe('HORARIO_DERIVACION', () => {
-  it('lunes a viernes 08:00–17:00 sin el almuerzo 13:00–14:00', () => {
+  it('lunes a jueves 08:00–17:00 sin el almuerzo 12:45–14:00', () => {
     expect(dentroDeHorario(lima('2026-11-02T07:59'))).toBe(false)
     expect(dentroDeHorario(lima('2026-11-02T08:00'))).toBe(true)
-    expect(dentroDeHorario(lima('2026-11-02T12:59'))).toBe(true)
-    expect(dentroDeHorario(lima('2026-11-02T13:00'))).toBe(false)
+    expect(dentroDeHorario(lima('2026-11-02T12:44'))).toBe(true)
+    expect(dentroDeHorario(lima('2026-11-02T12:45'))).toBe(false)
     expect(dentroDeHorario(lima('2026-11-02T13:59'))).toBe(false)
     expect(dentroDeHorario(lima('2026-11-02T14:00'))).toBe(true)
     expect(dentroDeHorario(lima('2026-11-02T16:59'))).toBe(true)
     expect(dentroDeHorario(lima('2026-11-02T17:00'))).toBe(false)
-    expect(dentroDeHorario(lima('2026-11-06T16:59'))).toBe(true) // viernes
+    expect(dentroDeHorario(lima('2026-11-05T17:00'))).toBe(false) // jueves
   })
 
-  it('sábado 08:00–12:00', () => {
+  it('viernes 08:00–17:30', () => {
+    expect(dentroDeHorario(lima('2026-11-06T12:45'))).toBe(false)
+    expect(dentroDeHorario(lima('2026-11-06T17:29'))).toBe(true)
+    expect(dentroDeHorario(lima('2026-11-06T17:30'))).toBe(false)
+  })
+
+  it('sábado 08:00–12:30', () => {
     expect(dentroDeHorario(lima('2026-11-07T07:59'))).toBe(false)
     expect(dentroDeHorario(lima('2026-11-07T08:00'))).toBe(true)
-    expect(dentroDeHorario(lima('2026-11-07T11:59'))).toBe(true)
-    expect(dentroDeHorario(lima('2026-11-07T12:00'))).toBe(false)
+    expect(dentroDeHorario(lima('2026-11-07T12:29'))).toBe(true)
+    expect(dentroDeHorario(lima('2026-11-07T12:30'))).toBe(false)
   })
 
   it('domingo nunca', () => {

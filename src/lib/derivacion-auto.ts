@@ -98,8 +98,8 @@ export interface HorarioDerivacion {
 
 /**
  * Horario en que se deriva automáticamente (hora de Lima):
- * L–V 08:00–17:00, sábado 08:00–12:00, almuerzo 13:00–14:00 excluido
- * todos los días, domingo no se deriva.
+ * L–J 08:00–17:00, viernes 08:00–17:30, sábado 08:00–12:30, almuerzo
+ * 12:45–14:00 excluido todos los días, domingo no se deriva.
  */
 export const HORARIO_DERIVACION: HorarioDerivacion = {
   zonaHoraria: 'America/Lima',
@@ -109,10 +109,10 @@ export const HORARIO_DERIVACION: HorarioDerivacion = {
     2: ['08:00', '17:00'],
     3: ['08:00', '17:00'],
     4: ['08:00', '17:00'],
-    5: ['08:00', '17:00'],
-    6: ['08:00', '12:00'],
+    5: ['08:00', '17:30'],
+    6: ['08:00', '12:30'],
   },
-  almuerzo: ['13:00', '14:00'],
+  almuerzo: ['12:45', '14:00'],
 }
 
 const DIAS: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
