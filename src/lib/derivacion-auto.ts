@@ -39,11 +39,11 @@ import {
 // ============================================================
 
 /**
- * MODO PRUEBA: solo estos celulares se derivan automáticamente.
- * Cualquier otro número no hace nada. Para abrirlo a todos los leads,
- * quitar este filtro en `debeDerivarCelular`.
+ * MODO PRUEBA: con la lista vacía se deriva a todos los clientes.
+ * Para volver al modo prueba, agrega aquí los celulares permitidos:
+ * solo esos se derivarán y cualquier otro número no hará nada.
  */
-export const NUMEROS_PRUEBA: readonly string[] = ['51926843129', '926843129']
+export const NUMEROS_PRUEBA: readonly string[] = []
 
 /** Tiempo máximo de la llamada al PHP. */
 export const DERIVAR_TIMEOUT_MS = 8_000
@@ -140,13 +140,14 @@ export function celularDerivacion(phone: string | null | undefined): string | nu
   return digits.length >= 9 && digits.length <= 15 ? digits : null
 }
 
-/** True cuando el celular está permitido por el MODO PRUEBA. */
+/** True cuando el celular está permitido (lista vacía = todos). */
 export function debeDerivarCelular(
   phone: string | null | undefined,
   numerosPrueba: readonly string[] = NUMEROS_PRUEBA,
 ): boolean {
   const digits = (phone ?? '').replace(/\D/g, '')
   if (!digits) return false
+  if (numerosPrueba.length === 0) return true
   const nueve = celularNueveDigitos(digits)
   return numerosPrueba.includes(digits) || (nueve !== null && numerosPrueba.includes(nueve))
 }

@@ -22,6 +22,9 @@ function lima(isoLocal: string): Date {
 
 const DENTRO = lima('2026-11-02T10:00')
 
+/** Lista explícita para probar el modo prueba (la de producción está vacía). */
+const PRUEBA = ['51926843129', '926843129']
+
 function makeStore(over: Partial<DerivacionStore> = {}, phone = '+51 926 843 129') {
   let claimed = false
   const queue = new Map<string, { at: Date; agente: string | null }>()
@@ -77,19 +80,25 @@ describe('número de prueba', () => {
     expect(celularNueveDigitos('+1 202 555 0100')).toBeNull()
   })
 
-  it('solo deja pasar los NUMEROS_PRUEBA', () => {
-    expect(NUMEROS_PRUEBA).toEqual(['51926843129', '926843129'])
+  it('lista vacía deja pasar a todos; con lista explícita sigue filtrando', () => {
+    expect(NUMEROS_PRUEBA).toEqual([])
     expect(debeDerivarCelular('51926843129')).toBe(true)
-    expect(debeDerivarCelular('926843129')).toBe(true)
-    expect(debeDerivarCelular('+51 926 843 129')).toBe(true)
-    expect(debeDerivarCelular('51999888777')).toBe(false)
+    expect(debeDerivarCelular('51999888777')).toBe(true)
+    expect(debeDerivarCelular('+1 202 555 0100')).toBe(true)
     expect(debeDerivarCelular(null)).toBe(false)
+    expect(debeDerivarCelular('')).toBe(false)
+    const lista = ['51926843129', '926843129']
+    expect(debeDerivarCelular('51926843129', lista)).toBe(true)
+    expect(debeDerivarCelular('926843129', lista)).toBe(true)
+    expect(debeDerivarCelular('+51 926 843 129', lista)).toBe(true)
+    expect(debeDerivarCelular('51999888777', lista)).toBe(false)
+    expect(debeDerivarCelular(null, lista)).toBe(false)
   })
 
   it('otro número no reclama ni llama al PHP', async () => {
     const store = makeStore({}, '51999888777')
     const fetchFn = okFetch({ ok: true, asesor_id: 42 })
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('no_es_prueba')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: PRUEBA })).toBe('no_es_prueba')
     expect(store.claim).not.toHaveBeenCalled()
     expect(fetchFn).not.toHaveBeenCalled()
   })
@@ -243,7 +252,7 @@ describe('fuera de horario', () => {
   it('el número que no es de prueba no entra en la cola', async () => {
     const store = makeStore({}, '51999888777')
     const now = lima('2026-11-08T20:00')
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn: okFetch({}), now })).toBe('no_es_prueba')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn: okFetch({}), now, numerosPrueba: PRUEBA })).toBe('no_es_prueba')
     expect(store.enqueue).not.toHaveBeenCalled()
   })
 
@@ -501,7 +510,7 @@ describe('número extranjero', () => {
   it('el modo prueba sigue cerrado a otros números extranjeros', async () => {
     const store = makeStore({}, '+1 202 555 0100')
     const fetchFn = okFetch({ ok: true, asesor_id: 42 })
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('no_es_prueba')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: PRUEBA })).toBe('no_es_prueba')
     expect(fetchFn).not.toHaveBeenCalled()
   })
 })
