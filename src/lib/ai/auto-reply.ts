@@ -2,7 +2,7 @@ import { supabaseAdmin } from './admin-client'
 import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
-import { programarDerivacionAuto } from '@/lib/derivacion-auto'
+import { conservarNotasDerivacion, programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { AiError, type AiConfig, type GenerateResult } from './types'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
@@ -273,7 +273,7 @@ async function markNeedsHuman(
   // the inbox + unread badge (see lib/conversations/attention.ts).
   const { data: current } = await db
     .from('conversations')
-    .select('unread_count')
+    .select('unread_count, assigned_agent_id, ai_handoff_summary')
     .eq('id', args.conversationId)
     .maybeSingle()
   const update: Record<string, unknown> = {
@@ -287,7 +287,8 @@ async function markNeedsHuman(
     // since `status` would still read 'open'.
     status: 'pending',
     ai_autoreply_disabled: true,
-    ai_handoff_summary: args.summary,
+    // Conserva las notas de la derivación automática (asesor XLR8, cola).
+    ai_handoff_summary: conservarNotasDerivacion(current?.ai_handoff_summary, args.summary),
   }
   // Only set the assignee when a target is configured AND the thread
   // isn't already owned — never stomp an existing human assignment.
@@ -296,6 +297,7 @@ async function markNeedsHuman(
   if (
     args.config.handoffAgentId &&
     !args.assignedAgentId &&
+    !current?.assigned_agent_id &&
     (await canAssignAgentToConversation(db, args.config.handoffAgentId, args.conversationId))
   ) {
     update.assigned_agent_id = args.config.handoffAgentId
