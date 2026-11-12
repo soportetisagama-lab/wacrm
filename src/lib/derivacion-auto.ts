@@ -76,6 +76,27 @@ export const NOTA_EN_TURNO = 'En cola: se derivará automáticamente por orden d
 /** Nota interna (una sola vez) cuando el PHP no tiene asesor con cupo libre. */
 export const NOTA_EN_ESPERA = 'En espera: todos los asesores tienen el cupo lleno'
 
+/**
+ * Las notas de la derivación (asesor de XLR8, cola, espera) viven en
+ * `ai_handoff_summary`. Un traspaso posterior (flujo o IA) reescribe ese
+ * resumen: esto le agrega las líneas de derivación que ya había, para
+ * que el asesor no las pierda.
+ */
+export function conservarNotasDerivacion(anterior: string | null | undefined, nuevo: string): string {
+  const notas = (anterior ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l.startsWith('Derivado automáticamente') ||
+        l === NOTA_EN_COLA ||
+        l === NOTA_EN_TURNO ||
+        l === NOTA_EN_ESPERA,
+    )
+    .filter((l) => !nuevo.includes(l))
+  return notas.length ? [nuevo, ...notas].filter(Boolean).join('\n') : nuevo
+}
+
 /** Motivos del PHP que significan "reintentar más tarde" (cupo lleno). */
 const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado']
 
@@ -289,6 +310,7 @@ export type DerivacionResultado =
   | 'rechazada'
   | 'asignada'
   | 'sin_usuario'
+  | 'con_asesor'
 
 interface RespuestaPhp {
   ok?: unknown
@@ -314,6 +336,11 @@ export interface DerivacionDeps {
 export interface DerivarOpciones {
   /** Viene de la cola: hora original de entrada (su turno si vuelve a esperar). */
   desdeCola?: { at: Date }
+  /**
+   * Viene del webhook (cualquier mensaje entrante): no toca chats que
+   * ya tienen asesor, para no reasignar conversaciones atendidas.
+   */
+  soloSinAsesor?: boolean
 }
 
 /** Clasificación guardada en la conversación, o null si no hay o no es válida. */
@@ -368,6 +395,7 @@ export async function derivarAuto(
     const conv = await store.loadConversation(conversationId)
     if (!conv) return 'sin_conversacion'
     if ((conv.channel ?? 'whatsapp') !== 'whatsapp') return 'no_whatsapp'
+    if (opciones.soloSinAsesor && conv.assigned_agent_id) return 'con_asesor'
 
     const contact = await store.loadContact(conv.contact_id)
     const celular = celularDerivacion(contact?.phone)
@@ -760,10 +788,18 @@ export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = ne
  * cron) para no retrasar al bot. Sin las variables de entorno no hace
  * nada. Fuera de un request (tests, scripts) corre suelta.
  */
-export function programarDerivacionAuto(db: SupabaseClient, conversationId: string): void {
+export function programarDerivacionAuto(
+  db: SupabaseClient,
+  conversationId: string,
+  opciones: DerivarOpciones = {},
+): void {
   if (!envListo(derivacionEnv())) return
   const task = () =>
-    derivarAuto(conversationId, { store: supabaseDerivacionStore(db), clasificar: clasificadorOpenAi(db) }).then(
+    derivarAuto(
+      conversationId,
+      { store: supabaseDerivacionStore(db), clasificar: clasificadorOpenAi(db) },
+      opciones,
+    ).then(
       () => undefined,
       (err: unknown) => console.error(LOG, err),
     )

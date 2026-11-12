@@ -12,6 +12,7 @@ import {
   NOTA_EN_TURNO,
   esNumeroExtranjero,
   celularDerivacion,
+  conservarNotasDerivacion,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -759,5 +760,48 @@ describe('numeroSeDerivara (número que llega tras el traspaso)', () => {
   it('false: sin número o con un celular inválido', () => {
     expect(numeroSeDerivara(null, env, prueba)).toBe(false)
     expect(numeroSeDerivara('12345', env, ['12345'])).toBe(false)
+  })
+})
+
+describe('derivación desde el webhook (soloSinAsesor)', () => {
+  it('no toca un chat que ya tiene asesor', async () => {
+    const store = makeStore({
+      loadConversation: vi.fn(async () => ({
+        account_id: 'acc-1',
+        channel: 'whatsapp',
+        contact_id: 'ct-1',
+        assigned_agent_id: 'user-7',
+        status: 'open',
+      })),
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { soloSinAsesor: true })).toBe(
+      'con_asesor',
+    )
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('sin asesor deriva normal', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { soloSinAsesor: true })).toBe(
+      'asignada',
+    )
+  })
+})
+
+describe('conservarNotasDerivacion', () => {
+  it('agrega al resumen nuevo las notas de derivación que había', () => {
+    const anterior = 'Hola' + '\n' + 'Derivado automáticamente a Luis (XLR8)'
+    expect(conservarNotasDerivacion(anterior, 'Resumen del bot')).toBe(
+      'Resumen del bot' + '\n' + 'Derivado automáticamente a Luis (XLR8)',
+    )
+    expect(conservarNotasDerivacion(NOTA_EN_COLA, 'R')).toBe('R' + '\n' + NOTA_EN_COLA)
+  })
+
+  it('no repite ni agrega otras líneas', () => {
+    expect(conservarNotasDerivacion('Otra cosa', 'R')).toBe('R')
+    expect(conservarNotasDerivacion(null, 'R')).toBe('R')
+    expect(conservarNotasDerivacion(NOTA_EN_ESPERA, 'R' + '\n' + NOTA_EN_ESPERA)).toBe('R' + '\n' + NOTA_EN_ESPERA)
   })
 })

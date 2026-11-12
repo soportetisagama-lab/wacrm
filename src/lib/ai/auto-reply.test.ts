@@ -59,7 +59,10 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
-vi.mock('@/lib/derivacion-auto', () => ({ programarDerivacionAuto: h.programarDerivacionAuto }))
+vi.mock('@/lib/derivacion-auto', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/derivacion-auto')>()),
+  programarDerivacionAuto: h.programarDerivacionAuto,
+}))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./business-info', () => ({ loadBusinessInfo: async () => null }))
