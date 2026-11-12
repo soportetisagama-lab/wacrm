@@ -26,6 +26,21 @@ import {
 // llamar): si el PHP falla no se reintenta, queda para derivación
 // manual como antes. Nunca lanza ni bloquea la respuesta del bot.
 //
+// Cupo lleno: si el PHP responde `sin_asesor` (todos los asesores con
+// el cupo lleno) o HTTP 503 (`ocupado`), se deshace el reclamo y la
+// conversación vuelve a la cola sin perder su turno (resultado
+// 'en_espera'); la pasada de la cola se corta ahí. La clasificación se
+// guarda (`derivacion_clasificacion`, migración 096) para no volver a
+// llamar a la IA en cada reintento.
+//
+// Orden estricto: dentro de horario, si ya hay conversaciones en cola,
+// un traspaso nuevo entra a la cola en vez de derivarse directo, para
+// respetar el orden de llegada.
+//
+// Histórico (`derivacion_historica`, migración 096): conversaciones
+// cargadas a mano a la cola (supabase/manual/derivacion_historica_semana.sql);
+// el JSON al PHP lleva `historico: true`.
+//
 // Horario laboral (HORARIO_DERIVACION, hora de Lima): fuera de horario
 // la conversación no se deriva todavía; queda en cola
 // (`conversations.derivacion_pendiente_at`, migración 089) y el cron de
@@ -53,6 +68,18 @@ const USER_AGENT = 'wacrm/1.0'
 
 /** Nota interna cuando el traspaso queda en cola fuera de horario. */
 export const NOTA_EN_COLA = 'Se derivará automáticamente al abrir el horario'
+
+/** Nota interna cuando el traspaso espera su turno detrás de la cola. */
+export const NOTA_EN_TURNO = 'En cola: se derivará automáticamente por orden de llegada'
+
+/** Nota interna (una sola vez) cuando el PHP no tiene asesor con cupo libre. */
+export const NOTA_EN_ESPERA = 'En espera: todos los asesores tienen el cupo lleno'
+
+/** Motivos del PHP que significan "reintentar más tarde" (cupo lleno). */
+const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado']
+
+/** Estados en que una conversación de la cola todavía se deriva. */
+const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
 
 /** Conversaciones de la cola que se procesan como máximo por pasada del cron. */
 export const COLA_LIMITE_POR_PASADA = 10
@@ -181,6 +208,16 @@ export interface ConversacionDerivacion {
   contact_id: string
   assigned_agent_id?: string | null
   status?: string | null
+  /** Cargada a la cola a mano (migración 096): el PHP recibe `historico: true`. */
+  derivacion_historica?: boolean | null
+  /** Clasificación guardada en un intento anterior (migración 096). */
+  derivacion_clasificacion?: unknown
+}
+
+/** Conversación en cola con su hora de entrada (su turno). */
+export interface ColaItem {
+  id: string
+  at: Date
 }
 
 /** Acceso a datos que usa la derivación (inyectable en los tests). */
@@ -195,12 +232,21 @@ export interface DerivacionStore {
   findAgentByXlr8(accountId: string, xlr8UserId: number): Promise<string | null>
   /** Asigna la conversación; false si no se pudo. */
   assign(conversationId: string, userId: string): Promise<boolean>
-  /** Agrega una línea a la nota interna del traspaso. */
+  /** Agrega una línea a la nota interna del traspaso; no la repite si ya está. */
   appendNote(conversationId: string, line: string): Promise<void>
   /** Pone la conversación en cola (fuera de horario); false si ya estaba, ya se derivó o falla. */
   enqueue(conversationId: string, at: Date, agente: string | null): Promise<boolean>
-  /** IDs en cola, la más antigua primero. */
-  listQueue(limit: number): Promise<string[]>
+  /**
+   * Cupo lleno: deshace el reclamo (`derivado_auto_at = null`) y la deja
+   * en cola con la hora `at`; false si falla.
+   */
+  requeue(conversationId: string, at: Date, agente: string | null): Promise<boolean>
+  /** True si hay otra conversación en cola todavía derivable (pending/open). */
+  hasPendingQueue(excludeConversationId: string): Promise<boolean>
+  /** Guarda la clasificación para reutilizarla en los reintentos. */
+  saveClasificacion(conversationId: string, clasificacion: Clasificacion): Promise<void>
+  /** Conversaciones en cola, la más antigua primero. */
+  listQueue(limit: number): Promise<ColaItem[]>
   /**
    * Saca de la cola y devuelve el asesor que tenía al encolar; null si
    * otro proceso ya la sacó (idempotencia).
@@ -213,6 +259,7 @@ export type DerivacionResultado =
   | 'sin_linea'
   | 'en_cola'
   | 'ya_en_cola'
+  | 'en_espera'
   | 'sin_conversacion'
   | 'no_whatsapp'
   | 'sin_celular'
@@ -243,18 +290,36 @@ export interface DerivacionDeps {
   numerosPrueba?: readonly string[]
 }
 
+/** Opciones internas de derivarAuto. */
+export interface DerivarOpciones {
+  /** Viene de la cola: hora original de entrada (su turno si vuelve a esperar). */
+  desdeCola?: { at: Date }
+}
+
+/** Clasificación guardada en la conversación, o null si no hay o no es válida. */
+export function clasificacionGuardada(valor: unknown): Clasificacion | null {
+  if (!valor || typeof valor !== 'object') return null
+  const { tipo, motivo } = valor as { tipo?: unknown; motivo?: unknown }
+  if (tipo === 'lead') return CLASIFICACION_LEAD
+  if (tipo === 'atc' && typeof motivo === 'string' && Object.hasOwn(MOTIVO_ATC_TEXTO, motivo)) {
+    return { tipo: 'atc', motivo: motivo as keyof typeof MOTIVO_ATC_TEXTO }
+  }
+  return null
+}
+
+/** Clasifica; `confiable` es false si no hay clasificador o falló (entonces no se guarda). */
 async function clasificarSeguro(
   deps: DerivacionDeps,
   input: Parameters<ClasificadorDerivacion>[0],
-): Promise<Clasificacion> {
-  if (!deps.clasificar) return CLASIFICACION_LEAD
+): Promise<{ clasificacion: Clasificacion; confiable: boolean }> {
+  if (!deps.clasificar) return { clasificacion: CLASIFICACION_LEAD, confiable: false }
   try {
-    return await deps.clasificar(input)
+    return { clasificacion: await deps.clasificar(input), confiable: true }
   } catch (err) {
     console.error(LOG, 'clasificación falló; va como lead:', err instanceof Error ? err.message : err, {
       conversationId: input.conversationId,
     })
-    return CLASIFICACION_LEAD
+    return { clasificacion: CLASIFICACION_LEAD, confiable: false }
   }
 }
 
@@ -264,7 +329,11 @@ async function clasificarSeguro(
  * Nunca lanza: cualquier error se registra y la conversación queda
  * para derivación manual.
  */
-export async function derivarAuto(conversationId: string, deps: DerivacionDeps): Promise<DerivacionResultado> {
+export async function derivarAuto(
+  conversationId: string,
+  deps: DerivacionDeps,
+  opciones: DerivarOpciones = {},
+): Promise<DerivacionResultado> {
   const env = deps.env ?? derivacionEnv()
   if (!envListo(env)) return 'sin_env'
   const linea = lineaDe(env)
@@ -293,16 +362,30 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
       return 'en_cola'
     }
 
+    // Orden estricto: si ya hay conversaciones esperando en la cola, el
+    // traspaso en vivo entra detrás de ellas (la cola las deriva en orden).
+    if (!opciones.desdeCola && (await store.hasPendingQueue(conversationId))) {
+      if (!(await store.enqueue(conversationId, now, conv.assigned_agent_id ?? null))) return 'ya_en_cola'
+      await store.appendNote(conversationId, NOTA_EN_TURNO)
+      return 'en_cola'
+    }
+
     // Reclamada ANTES de llamar: una sola llamada por conversación,
     // aunque el PHP falle o dos traspasos coincidan.
     if (!(await store.claim(conversationId))) return 'ya_derivada'
 
     const codigoAnuncio = await store.loadAdId(conversationId).catch(() => '')
-    const clasificacion = await clasificarSeguro(deps, {
-      accountId: conv.account_id,
-      conversationId,
-      numeroExtranjero: esNumeroExtranjero(contact?.phone),
-    })
+    // Reintento tras cupo lleno: reutiliza la clasificación guardada.
+    let clasificacion = clasificacionGuardada(conv.derivacion_clasificacion)
+    if (!clasificacion) {
+      const r = await clasificarSeguro(deps, {
+        accountId: conv.account_id,
+        conversationId,
+        numeroExtranjero: esNumeroExtranjero(contact?.phone),
+      })
+      clasificacion = r.clasificacion
+      if (r.confiable) await store.saveClasificacion(conversationId, clasificacion).catch(() => undefined)
+    }
     const motivoAtc = clasificacion.tipo === 'atc' ? MOTIVO_ATC_TEXTO[clasificacion.motivo] : ''
     let body: RespuestaPhp
     try {
@@ -323,11 +406,14 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
           conversation_id: conversationId,
           destino: clasificacion.tipo === 'atc' ? 'ATC' : 'ASESOR',
           motivo_atc: motivoAtc,
+          historico: conv.derivacion_historica === true,
         }),
         signal: AbortSignal.timeout(DERIVAR_TIMEOUT_MS),
         cache: 'no-store',
       })
       body = ((await res.json().catch(() => null)) ?? {}) as RespuestaPhp
+      // 503 = PHP ocupado (cupo lleno), con o sin cuerpo JSON.
+      if (res.status === 503) body = { ...body, ok: false, motivo: 'ocupado' }
       if (!res.ok && body.ok !== false) {
         console.error(LOG, `PHP respondió HTTP ${res.status}`, { conversationId })
         return 'error_php'
@@ -340,6 +426,20 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
     // `duplicado` con asesor_id: el lead ya tenía asesor en XLR8, se le
     // asigna igual. Cualquier otro ok:false queda para derivación manual.
     const duplicadoConAsesor = body.motivo === 'duplicado' && body.asesor_id != null && body.asesor_id !== ''
+
+    // Cupo lleno: vuelve a la cola con su turno (la hora original si
+    // venía de la cola; ahora si fue un traspaso en vivo).
+    if (body.ok !== true && typeof body.motivo === 'string' && MOTIVOS_EN_ESPERA.includes(body.motivo)) {
+      const turno = opciones.desdeCola?.at ?? now
+      if (!(await store.requeue(conversationId, turno, conv.assigned_agent_id ?? null))) {
+        console.error(LOG, 'cupo lleno y no se pudo volver a la cola; queda para derivación manual', {
+          conversationId,
+        })
+        return 'rechazada'
+      }
+      await store.appendNote(conversationId, NOTA_EN_ESPERA)
+      return 'en_espera'
+    }
     if (body.ok !== true && !duplicadoConAsesor) {
       console.error(LOG, 'PHP no derivó:', typeof body.motivo === 'string' ? body.motivo : 'sin motivo', {
         conversationId,
@@ -379,11 +479,15 @@ export async function derivarAuto(conversationId: string, deps: DerivacionDeps):
 export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
   return {
     async loadConversation(id) {
-      const { data, error } = await db
+      const base = 'account_id, channel, contact_id, assigned_agent_id, status'
+      const full = await db
         .from('conversations')
-        .select('account_id, channel, contact_id, assigned_agent_id, status')
+        .select(`${base}, derivacion_historica, derivacion_clasificacion`)
         .eq('id', id)
         .maybeSingle()
+      if (!full.error) return (full.data as ConversacionDerivacion | null) ?? null
+      // Sin la migración 096 las columnas nuevas no existen: sigue sin ellas.
+      const { data, error } = await db.from('conversations').select(base).eq('id', id).maybeSingle()
       if (error) throw new Error(`conversación: ${error.message}`)
       return (data as ConversacionDerivacion | null) ?? null
     },
@@ -472,10 +576,50 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
       }
       return (data ?? []).length > 0
     },
-    async listQueue(limit) {
+    async requeue(conversationId, at, agente) {
+      const { data, error } = await db
+        .from('conversations')
+        .update({
+          derivado_auto_at: null,
+          derivacion_pendiente_at: at.toISOString(),
+          derivacion_pendiente_agente: agente,
+        })
+        .eq('id', conversationId)
+        .select('id')
+      if (error) {
+        console.error(LOG, 'no se pudo volver a poner en cola:', error.message, { conversationId })
+        return false
+      }
+      return (data ?? []).length > 0
+    },
+    async hasPendingQueue(excludeConversationId) {
       const { data, error } = await db
         .from('conversations')
         .select('id')
+        .not('derivacion_pendiente_at', 'is', null)
+        .is('derivado_auto_at', null)
+        .in('status', [...ESTADOS_DERIVABLES])
+        .neq('id', excludeConversationId)
+        .limit(1)
+      if (error) {
+        // Ante la duda se deriva directo, como antes.
+        console.error(LOG, 'no se pudo revisar la cola:', error.message)
+        return false
+      }
+      return (data ?? []).length > 0
+    },
+    async saveClasificacion(conversationId, clasificacion) {
+      const { error } = await db
+        .from('conversations')
+        .update({ derivacion_clasificacion: clasificacion })
+        .eq('id', conversationId)
+      // Sin la migración 096 no se guarda: se reclasifica en el reintento.
+      if (error) console.error(LOG, 'no se pudo guardar la clasificación:', error.message, { conversationId })
+    },
+    async listQueue(limit) {
+      const { data, error } = await db
+        .from('conversations')
+        .select('id, derivacion_pendiente_at')
         .not('derivacion_pendiente_at', 'is', null)
         .is('derivado_auto_at', null)
         .order('derivacion_pendiente_at', { ascending: true })
@@ -484,7 +628,10 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         console.error(LOG, 'no se pudo leer la cola:', error.message)
         return []
       }
-      return ((data ?? []) as { id: string }[]).map((r) => r.id)
+      return ((data ?? []) as { id: string; derivacion_pendiente_at: string }[]).map((r) => ({
+        id: r.id,
+        at: new Date(r.derivacion_pendiente_at),
+      }))
     },
     async dequeue(conversationId) {
       const { data, error } = await db
@@ -510,9 +657,9 @@ export interface ColaResultado {
   derivadas: number
   /** Sacadas sin derivar: ya tomadas por un asesor, cerradas o inexistentes. */
   descartadas: number
+  /** Devueltas a la cola por cupo lleno (corta la pasada). */
+  enEspera: number
 }
-
-const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
 
 /**
  * Procesa la cola de fuera de horario, la más antigua primero. Solo
@@ -520,23 +667,25 @@ const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
  * intacta. Cada conversación se saca de la cola al reclamarla
  * (`dequeue`): dos pasadas simultáneas no la derivan dos veces. Si el
  * asesor asignado cambió desde que se encoló (alguien la tomó en el
- * CRM) o ya no está pending/open, sale sin derivar.
+ * CRM) o ya no está pending/open, sale sin derivar. Si el PHP responde
+ * cupo lleno, la conversación vuelve a la cola con su hora original y
+ * la pasada se corta.
  * Nunca lanza.
  */
 export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: number }): Promise<ColaResultado> {
-  const res: ColaResultado = { derivadas: 0, descartadas: 0 }
+  const res: ColaResultado = { derivadas: 0, descartadas: 0, enEspera: 0 }
   const env = deps.env ?? derivacionEnv()
   const now = deps.now ?? new Date()
   if (!envListo(env) || !dentroDeHorario(now, deps.horario)) return res
   const { store } = deps
   try {
-    const ids = await store.listQueue(deps.limite ?? COLA_LIMITE_POR_PASADA)
-    if (!ids.length) return res
+    const items = await store.listQueue(deps.limite ?? COLA_LIMITE_POR_PASADA)
+    if (!items.length) return res
     if (!lineaDe(env)) {
-      console.error(LOG, `falta XLR8_LINEA: ${ids.length} conversación(es) siguen en cola sin derivar`)
+      console.error(LOG, `falta XLR8_LINEA: ${items.length} conversación(es) siguen en cola sin derivar`)
       return res
     }
-    for (const id of ids) {
+    for (const { id, at } of items) {
       try {
         const sacada = await store.dequeue(id)
         if (!sacada) continue
@@ -548,7 +697,13 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
           res.descartadas++
           continue
         }
-        await derivarAuto(id, { ...deps, env, now })
+        const r = await derivarAuto(id, { ...deps, env, now }, { desdeCola: { at } })
+        if (r === 'en_espera') {
+          // Cupo lleno: las siguientes también fallarían. Se reintenta en
+          // la próxima pasada, la más antigua primero.
+          res.enEspera++
+          break
+        }
         res.derivadas++
       } catch (err) {
         console.error(LOG, 'cola:', err instanceof Error ? err.message : err, { conversationId: id })
