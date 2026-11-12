@@ -221,6 +221,25 @@ function lineaDe(env: DerivacionEnv): string | null {
   return env.linea?.trim() || null
 }
 
+/**
+ * Pura: true cuando derivarAuto intentaría derivar este número (variables
+ * configuradas, línea definida, celular válido y permitido por el MODO
+ * PRUEBA). Horario, cola y cupo no cuentan: esos casos igual se derivan
+ * después. La usa el webhook antes de prometer la derivación.
+ */
+export function numeroSeDerivara(
+  phone: string | null | undefined,
+  env: DerivacionEnv = derivacionEnv(),
+  numerosPrueba: readonly string[] = NUMEROS_PRUEBA,
+): boolean {
+  return (
+    envListo(env) &&
+    lineaDe(env) !== null &&
+    celularDerivacion(phone) !== null &&
+    debeDerivarCelular(phone, numerosPrueba)
+  )
+}
+
 export interface ConversacionDerivacion {
   account_id: string
   channel: string | null
