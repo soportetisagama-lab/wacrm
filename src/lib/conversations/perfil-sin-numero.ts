@@ -36,7 +36,7 @@ async function cargarPerfiles(db: SupabaseClient): Promise<PerfilSinNumero[]> {
     const { data, error } = await db
       .from('profiles')
       .select('user_id, account_id, full_name')
-      .ilike('full_name', `%${NOMBRE_PERFIL_SIN_NUMERO}%`)
+      .eq('full_name', NOMBRE_PERFIL_SIN_NUMERO)
       .limit(100)
     if (error) {
       console.error('[perfil-sin-numero] no se pudo leer el perfil "@":', error.message)
