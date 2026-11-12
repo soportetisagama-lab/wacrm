@@ -470,6 +470,7 @@ export interface Broadcast {
    * or free text). NULL = nobody is tagged. Added in migration 090.
    */
   reply_tag_id?: string | null;
+  sent_tag_id?: string | null;
   created_at: string;
 }
 

@@ -113,6 +113,7 @@ export function Step4ScheduleSend({
           placeholder={t('scheduleSend.broadcastNamePlaceholder')}
           className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
         />
+        <p className="mt-1.5 text-xs text-muted-foreground">{t('scheduleSend.broadcastNameHint')}</p>
       </div>
 
       {/* Reply tag (optional) */}

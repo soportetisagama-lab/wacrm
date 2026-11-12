@@ -1148,6 +1148,7 @@
         "subtitle": "브로드캐스트 이름을 입력하고 전송을 확인하세요.",
         "broadcastName": "브로드캐스트 이름",
         "broadcastNamePlaceholder": "예: 여름 프로모션",
+        "broadcastNameHint": "메시지를 받은 모든 연락처에 이 이름의 태그가 붙습니다. 브로드캐스트에서만 보입니다.",
         "summary": "요약",
         "template": "템플릿:",
         "audience": "대상:",
