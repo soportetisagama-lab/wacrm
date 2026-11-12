@@ -1144,6 +1144,7 @@
         "subtitle": "Ponle un nombre a tu difusión y confirma el envío.",
         "broadcastName": "Nombre de la difusión",
         "broadcastNamePlaceholder": "p. ej., Promo de verano",
+        "broadcastNameHint": "Todos los contactos a los que llegue el mensaje reciben una etiqueta con este nombre. Solo se ve en Difusiones.",
         "summary": "Resumen",
         "template": "Plantilla:",
         "audience": "Audiencia:",

@@ -1144,6 +1144,7 @@
         "subtitle": "Give your broadcast a name and confirm sending.",
         "broadcastName": "Broadcast Name",
         "broadcastNamePlaceholder": "e.g., Summer Promo",
+        "broadcastNameHint": "Every contact the message reaches gets a tag with this name. Only visible in Broadcasts.",
         "summary": "Summary",
         "template": "Template:",
         "audience": "Audience:",
