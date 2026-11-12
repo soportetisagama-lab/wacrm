@@ -1,5 +1,9 @@
 import { supabaseAdmin } from './admin-client'
-import { hasRecentHumanReply } from '@/lib/conversations/human-activity'
+import {
+  assignedAdvisorHasReplied,
+  hasRecentHumanReply,
+  isManualAiPause,
+} from '@/lib/conversations/human-activity'
 import { attentionFields } from '@/lib/conversations/attention'
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
 import { conservarNotasDerivacion, programarDerivacionAuto } from '@/lib/derivacion-auto'
@@ -423,6 +427,24 @@ function heldClosingText(options: HeldHandoffOptions | undefined, now: Date = ne
 }
 
 /**
+ * An assigned chat the AI must leave alone: the advisor already wrote in
+ * it (assignedAdvisorHasReplied — from then on, for as long as the chat
+ * keeps that advisor), or someone paused the AI by hand ("Take over",
+ * isManualAiPause). An assigned chat whose advisor hasn't written yet —
+ * routed by a handoff, the XLR8 derivation or by hand — is still served
+ * by the AI (questions, info, never prices). False when unassigned.
+ */
+async function advisorOwnsThread(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+  conv: { assigned_agent_id?: string | null; ai_autoreply_disabled?: boolean | null; status?: string | null },
+): Promise<boolean> {
+  if (!conv.assigned_agent_id) return false
+  if (isManualAiPause(conv)) return true
+  return assignedAdvisorHasReplied(db, conversationId, conv.assigned_agent_id)
+}
+
+/**
  * The number of a contact whose handoff was on hold (./awaiting-phone)
  * just arrived — called by the webhook after storing the message that
  * carried it. Hands off for real: closing line (the flow's own text when
@@ -442,13 +464,15 @@ export async function completeHandoffAwaitingPhone(args: {
     const db = supabaseAdmin()
     const { data: conv } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary, status')
       .eq('id', args.conversationId)
       .maybeSingle()
     const marker = (conv?.ai_handoff_summary as string | null | undefined) ?? null
     const held = parseAwaitingPhone(marker)
     if (!conv || !held || !marker) return false
-    if (conv.assigned_agent_id || conv.ai_autoreply_disabled) {
+    // Paused, or the assigned advisor already wrote: only the marker goes.
+    // Assigned but not answered yet → hand off as usual (never reassigned).
+    if (conv.ai_autoreply_disabled || (await advisorOwnsThread(db, args.conversationId, conv))) {
       await swapHeldMarker(db, args.conversationId, marker, held.summary)
       return false
     }
@@ -456,7 +480,7 @@ export async function completeHandoffAwaitingPhone(args: {
     await handOffToHuman(db, {
       ...args,
       config,
-      assignedAgentId: null,
+      assignedAgentId: (conv.assigned_agent_id as string | null | undefined) ?? null,
       summary: held.summary,
       notifyCustomer: true,
       brief: Boolean(config) && !isAiKeyPaused(config?.apiKey ?? ''),
@@ -646,8 +670,9 @@ async function loadContactForReply(
  *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
- *   - a human agent is assigned (they own the thread)
- *   - auto-reply was disabled for this conversation (prior handoff)
+ *   - the assigned advisor already wrote, or the AI was paused by hand
+ *     (advisorOwnsThread — an assigned chat nobody answered yet is served)
+ *   - the reply cap was hit after a handoff (ai_autoreply_disabled)
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
  *
@@ -710,11 +735,14 @@ export async function runAutoReplyNow(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_handoff_summary')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_handoff_summary, status')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
-    if (conv.assigned_agent_id) return // a human owns this thread
+    // Assigned (handoff, XLR8 derivation or by hand): the AI keeps serving
+    // the customer until the advisor writes; then it stays quiet for good
+    // while the chat keeps that advisor. A manual pause also wins.
+    if (await advisorOwnsThread(db, conversationId, conv)) return
     // Closed as spam earlier (see handleSpamLoop): stays quiet, no advisor.
     if (conv.ai_autoreply_disabled && conv.ai_handoff_summary?.startsWith(SPAM_SUMMARY_PREFIX)) {
       return
@@ -828,7 +856,7 @@ export async function runAutoReplyNow(
     }
 
     // `ai_autoreply_disabled` alone is no longer sticky forever once
-    // nobody has actually claimed the thread (assigned_agent_id null,
+    // no advisor has actually answered the thread (advisorOwnsThread,
     // checked above) — a model-decided handoff or a Flow handoff mid-
     // conversation must not silence the bot permanently if no agent
     // ever picks it up. The one case that must still stay blocked is
@@ -1419,7 +1447,7 @@ export async function dispatchInboundToAiReply(
 /**
  * Transcribe a voice note before it joins the burst — only when the
  * account opted in and the bot could answer this thread at all (auto-
- * reply on, AI not paused, nobody assigned, reply cap not reached), so
+ * reply on, AI not paused, no advisor answering it, reply cap not reached), so
  * a chat the bot won't answer never spends on it.
  */
 async function transcribeBeforeBurst(
@@ -1435,10 +1463,10 @@ async function transcribeBeforeBurst(
     if (isAiKeyPaused(config.apiKey)) return null
     const { data: conv } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_reply_count')
+      .select('assigned_agent_id, ai_reply_count, ai_autoreply_disabled, status')
       .eq('id', args.conversationId)
       .maybeSingle()
-    if (conv?.assigned_agent_id) return null
+    if (conv && (await advisorOwnsThread(db, args.conversationId, conv))) return null
     if ((conv?.ai_reply_count ?? 0) >= config.autoReplyMaxPerConversation) return null
     return await transcribeInboundAudio(db, {
       accountId: args.accountId,

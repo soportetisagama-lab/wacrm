@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   downloadMedia: vi.fn(),
   decrypt: vi.fn(),
   programarDerivacionAuto: vi.fn(),
+  assignedAdvisorHasReplied: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -62,6 +63,10 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('@/lib/derivacion-auto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/derivacion-auto')>()),
   programarDerivacionAuto: h.programarDerivacionAuto,
+}))
+vi.mock('@/lib/conversations/human-activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/conversations/human-activity')>()),
+  assignedAdvisorHasReplied: h.assignedAdvisorHasReplied,
 }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
@@ -309,6 +314,9 @@ beforeEach(() => {
     ai_reply_count: 1,
   }
   h.state.autoResponders = []
+  // The assigned advisor hasn't written yet unless a test says so.
+  h.assignedAdvisorHasReplied.mockReset()
+  h.assignedAdvisorHasReplied.mockResolvedValue(false)
   h.state.profileRole = null
   h.state.swapWins = true
   h.state.swaps = []
@@ -427,13 +435,83 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('skips when a human agent is assigned', async () => {
+  it('skips once the assigned advisor has written in the chat', async () => {
+    h.assignedAdvisorHasReplied.mockResolvedValue(true)
     h.state.conv = {
       assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: false,
       ai_reply_count: 0,
     }
     await dispatchInboundToAiReply(ARGS)
+    expect(h.assignedAdvisorHasReplied).toHaveBeenCalledWith(expect.anything(), 'conv-1', 'agent-9')
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('keeps answering an assigned chat (derivation / by hand) until the advisor writes', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      status: 'open',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('keeps answering a handed-off chat (pending, paused by the handoff) whose advisor has not written', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: true,
+      ai_reply_count: 1,
+      status: 'pending',
+      ai_handoff_summary: 'Nota para el asesor',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello!' }))
+  })
+
+  it('assigned and already handed off: a new handoff only refreshes the note — no closing line, no reassignment', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: true,
+      ai_reply_count: 1,
+      status: 'pending',
+      ai_handoff_summary: 'Nota anterior',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_autoreply_disabled: true })
+    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('assigned, not handed off yet: the handoff sends the closing once and keeps the assignee', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: false,
+      ai_reply_count: 1,
+      status: 'open',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.engineSendText.mock.calls[0][0].text).toMatch(/asesor/)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('assigned: the reply cap still blocks after a handoff', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: true,
+      ai_reply_count: 3,
+      status: 'pending',
+    }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
@@ -464,13 +542,15 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.generateReply).not.toHaveBeenCalled()
   })
 
-  it('still blocks unconditionally once a human agent has actually claimed the thread, regardless of ai_reply_count', async () => {
+  it('blocks an assigned chat paused by hand ("Take over": paused, not pending), regardless of ai_reply_count', async () => {
     h.state.conv = {
       assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: true,
       ai_reply_count: 0,
+      status: 'open',
     }
     await dispatchInboundToAiReply(ARGS)
+    expect(h.assignedAdvisorHasReplied).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
@@ -1662,7 +1742,23 @@ describe('completeHandoffAwaitingPhone (webhook, the number just arrived)', () =
     expect(h.state.updatePayload).toBeNull()
   })
 
-  it('a human already owns the chat: only clears the marker', async () => {
+  it('assigned but the advisor has not written: hands off without reassigning', async () => {
+    h.state.contactPhone = '51974710551'
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
+    h.state.conv = {
+      assigned_agent_id: 'agent-1',
+      ai_autoreply_disabled: false,
+      status: 'open',
+      ai_handoff_summary: awaitingPhoneSummary(1, 'Nota para el asesor'),
+    }
+    await expect(completeHandoffAwaitingPhone(ARGS)).resolves.toBe(true)
+    expect(h.engineSendText).toHaveBeenCalledTimes(1)
+    expect(h.state.updatePayload).toMatchObject({ status: 'pending', ai_handoff_summary: 'Nota para el asesor' })
+    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('the assigned advisor already wrote: only clears the marker', async () => {
+    h.assignedAdvisorHasReplied.mockResolvedValue(true)
     h.state.conv = {
       assigned_agent_id: 'agent-1',
       ai_autoreply_disabled: false,
