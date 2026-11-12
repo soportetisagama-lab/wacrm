@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import { resolveRecipient, toRecipientTarget } from '@/lib/whatsapp/recipient'
 import { canUseWhatsAppCalls } from '@/lib/auth/roles'
+import { CALL_PERMISSION_MESSAGE, CALL_PERMISSION_TEXT } from '@/lib/conversations/human-activity'
 
 // Outbound WhatsApp calls (migrations 071 + 073). One route, three steps
 // the call button walks through:
@@ -21,8 +22,9 @@ import { canUseWhatsAppCalls } from '@/lib/auth/roles'
 
 type Body = { action?: string; contactId?: string; sdp?: string }
 
-const PERMISSION_TEXT =
-  'Hola 👋 ¿Nos permites llamarte por WhatsApp para atenderte mejor?'
+// Stored as CALL_PERMISSION_MESSAGE: the AI's "advisor already wrote"
+// check (lib/conversations/human-activity.ts) skips this canned prompt.
+const PERMISSION_TEXT = CALL_PERMISSION_TEXT
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body
@@ -105,14 +107,14 @@ export async function POST(request: Request) {
           sender_type: 'agent',
           sender_id: user.id,
           content_type: 'text',
-          content_text: `📞 ${PERMISSION_TEXT}`,
+          content_text: CALL_PERMISSION_MESSAGE,
           message_id: messageId,
           status: 'sent',
         })
         await admin
           .from('conversations')
           .update({
-            last_message_text: `📞 ${PERMISSION_TEXT}`,
+            last_message_text: CALL_PERMISSION_MESSAGE,
             last_message_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })

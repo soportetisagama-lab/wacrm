@@ -58,7 +58,7 @@ export async function POST(request: Request, { params }: Params) {
     // Confirm the conversation is in the caller's account before writing.
     const { data: conv, error: convErr } = await supabase
       .from('conversations')
-      .select('id, ai_handoff_summary')
+      .select('id, ai_handoff_summary, status')
       .eq('id', conversationId)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -77,6 +77,12 @@ export async function POST(request: Request, { params }: Params) {
 
     if (paused) {
       if (assignToMe) update.assigned_agent_id = userId
+      // 'pending' + paused reads as a handoff still waiting for its advisor,
+      // where the AI keeps serving the customer until the advisor writes
+      // (lib/conversations/human-activity.ts isManualAiPause). Taking over
+      // must silence it right away, so the chat leaves 'pending' — the same
+      // status the advisor's first send would set.
+      if (conv.status === 'pending') update.status = 'open'
       // A handoff on hold for the customer's number (lib/ai/awaiting-phone.ts)
       // ends here: keep only the note, so the banner never shows the marker.
       const held = parseAwaitingPhone(conv.ai_handoff_summary as string | null)
