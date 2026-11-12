@@ -2,6 +2,7 @@ import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { canAssignAgentToConversation } from '@/lib/conversations/assignee-guard'
+import { esPerfilSinNumero } from '@/lib/conversations/perfil-sin-numero'
 import {
   CLASIFICACION_LEAD,
   MOTIVO_ATC_TEXTO,
@@ -224,6 +225,11 @@ function lineaDe(env: DerivacionEnv): string | null {
   return env.linea?.trim() || null
 }
 
+/** True cuando la derivación automática está configurada en la línea (URL, secreto y XLR8_LINEA). */
+export function derivacionConfigurada(env: DerivacionEnv = derivacionEnv()): boolean {
+  return envListo(env) && lineaDe(env) !== null
+}
+
 /**
  * Pura: true cuando derivarAuto intentaría derivar este número (variables
  * configuradas, línea definida, celular válido y permitido por el MODO
@@ -271,6 +277,12 @@ export interface DerivacionStore {
   loadAdId(conversationId: string): Promise<string>
   /** user_id del perfil con ese ID XLR8 en la cuenta, o null. */
   findAgentByXlr8(accountId: string, xlr8UserId: number): Promise<string | null>
+  /**
+   * True si el asesor asignado es el perfil "@" de los chats sin número
+   * (lib/conversations/perfil-sin-numero): cuenta como sin asesor. Sin
+   * implementar = nunca.
+   */
+  esPerfilSinNumero?(userId: string): Promise<boolean>
   /** Asigna la conversación; false si no se pudo. */
   assign(conversationId: string, userId: string): Promise<boolean>
   /** Agrega una línea a la nota interna del traspaso; no la repite si ya está. */
@@ -338,7 +350,8 @@ export interface DerivarOpciones {
   desdeCola?: { at: Date }
   /**
    * Viene del webhook (cualquier mensaje entrante): no toca chats que
-   * ya tienen asesor, para no reasignar conversaciones atendidas.
+   * ya tienen asesor, para no reasignar conversaciones atendidas. El
+   * perfil "@" (chats sin número) cuenta como sin asesor.
    */
   soloSinAsesor?: boolean
 }
@@ -395,7 +408,13 @@ export async function derivarAuto(
     const conv = await store.loadConversation(conversationId)
     if (!conv) return 'sin_conversacion'
     if ((conv.channel ?? 'whatsapp') !== 'whatsapp') return 'no_whatsapp'
-    if (opciones.soloSinAsesor && conv.assigned_agent_id) return 'con_asesor'
+    if (
+      opciones.soloSinAsesor &&
+      conv.assigned_agent_id &&
+      !(await store.esPerfilSinNumero?.(conv.assigned_agent_id))
+    ) {
+      return 'con_asesor'
+    }
 
     const contact = await store.loadContact(conv.contact_id)
     const celular = celularDerivacion(contact?.phone)
@@ -583,6 +602,9 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         return null
       }
       return (data as { user_id?: string } | null)?.user_id ?? null
+    },
+    esPerfilSinNumero(userId) {
+      return esPerfilSinNumero(db, userId)
     },
     async assign(conversationId, userId) {
       if (!(await canAssignAgentToConversation(db, userId, conversationId))) return false
