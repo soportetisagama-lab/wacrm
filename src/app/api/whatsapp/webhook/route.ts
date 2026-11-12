@@ -34,7 +34,7 @@ import {
   isAwaitingPhoneHandoff,
   loadHandoffDoneWithoutPhone,
 } from '@/lib/ai/awaiting-phone'
-import { programarDerivacionAuto } from '@/lib/derivacion-auto'
+import { numeroSeDerivara, programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
@@ -1626,9 +1626,11 @@ async function processMessage(
   // The handoff already went through without the number (give-up after
   // MAX_PHONE_ASKS): don't replay the welcome — derive it to XLR8 now
   // (lib/derivacion-auto.ts keeps its schedule/queue, quota, strict
-  // order, test mode and once-per-conversation rules).
+  // order, test mode and once-per-conversation rules). Only when the
+  // number will really be derived (env set, MODO PRUEBA allows it) —
+  // otherwise the welcome restarts as before.
   const derivedFromPhone =
-    phoneJustKnown && !handoffAwaitingPhone
+    phoneJustKnown && !handoffAwaitingPhone && numeroSeDerivara(promotedPhone ?? contactRecord.phone)
       ? await loadHandoffDoneWithoutPhone(supabaseAdmin(), conversation.id)
       : false
   if (derivedFromPhone) {

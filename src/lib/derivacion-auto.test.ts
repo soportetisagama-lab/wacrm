@@ -3,6 +3,7 @@ import {
   NUMEROS_PRUEBA,
   celularNueveDigitos,
   debeDerivarCelular,
+  numeroSeDerivara,
   derivarAuto,
   dentroDeHorario,
   procesarColaDerivacion,
@@ -693,5 +694,30 @@ describe('histórico', () => {
     await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })
     const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
     expect(JSON.parse(init.body as string)).toMatchObject({ conversation_id: 'conv-1', historico: true })
+  })
+})
+
+describe('numeroSeDerivara (número que llega tras el traspaso)', () => {
+  const env = { url: 'https://x.test/derivar', secret: 's', linea: 'INOX' }
+  const prueba = ['51926843129', '926843129']
+
+  it('true: variables configuradas y número permitido por el MODO PRUEBA', () => {
+    expect(numeroSeDerivara('51926843129', env, prueba)).toBe(true)
+    expect(numeroSeDerivara('+51 926 843 129', env, prueba)).toBe(true)
+  })
+
+  it('false: el MODO PRUEBA no permite el número (se reinicia la bienvenida)', () => {
+    expect(numeroSeDerivara('51999888777', env, prueba)).toBe(false)
+  })
+
+  it('false: faltan DERIVAR_AUTO_URL, DERIVAR_AUTO_SECRET o XLR8_LINEA', () => {
+    expect(numeroSeDerivara('51926843129', { ...env, url: '' }, prueba)).toBe(false)
+    expect(numeroSeDerivara('51926843129', { ...env, secret: undefined }, prueba)).toBe(false)
+    expect(numeroSeDerivara('51926843129', { ...env, linea: ' ' }, prueba)).toBe(false)
+  })
+
+  it('false: sin número o con un celular inválido', () => {
+    expect(numeroSeDerivara(null, env, prueba)).toBe(false)
+    expect(numeroSeDerivara('12345', env, ['12345'])).toBe(false)
   })
 })
