@@ -64,4 +64,6 @@ SET derivacion_pendiente_at = cand.llegada,
 FROM candidatas cand
 WHERE c.id = cand.id
   AND c.derivado_auto_at IS NULL
-  AND c.derivacion_pendiente_at IS NULL;
+  AND c.derivacion_pendiente_at IS NULL
+  AND c.assigned_agent_id IS NULL
+  AND c.status IN ('pending', 'open');
