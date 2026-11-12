@@ -28,7 +28,13 @@ import {
 import { engineSendText } from '@/lib/flows/meta-send'
 import { restartWelcomeAfterPhoneKnown } from '@/lib/flows/welcome'
 import { completeHandoffAwaitingPhone, dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
-import { ASK_PHONE_TEXT, isAwaitingPhoneHandoff } from '@/lib/ai/awaiting-phone'
+import {
+  ASK_PHONE_TEXT,
+  appendPhoneAfterHandoffNote,
+  isAwaitingPhoneHandoff,
+  loadHandoffDoneWithoutPhone,
+} from '@/lib/ai/awaiting-phone'
+import { programarDerivacionAuto } from '@/lib/derivacion-auto'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
 import { routeAcknowledgement } from '@/lib/conversations/acknowledgement'
 import { persistInboundImage } from '@/lib/ai/inbound-image'
@@ -1617,8 +1623,20 @@ async function processMessage(
   const handoffAwaitingPhone = phoneJustKnown
     ? await isAwaitingPhoneHandoff(supabaseAdmin(), conversation.id)
     : false
-  const welcomeStartedFromPhone =
+  // The handoff already went through without the number (give-up after
+  // MAX_PHONE_ASKS): don't replay the welcome — derive it to XLR8 now
+  // (lib/derivacion-auto.ts keeps its schedule/queue, quota, strict
+  // order, test mode and once-per-conversation rules).
+  const derivedFromPhone =
     phoneJustKnown && !handoffAwaitingPhone
+      ? await loadHandoffDoneWithoutPhone(supabaseAdmin(), conversation.id)
+      : false
+  if (derivedFromPhone) {
+    await appendPhoneAfterHandoffNote(supabaseAdmin(), conversation.id)
+    programarDerivacionAuto(supabaseAdmin(), conversation.id)
+  }
+  const welcomeStartedFromPhone =
+    phoneJustKnown && !handoffAwaitingPhone && !derivedFromPhone
       ? await dispatchWelcomeAfterPhoneKnown(accountId, contactRecord.id, conversation.id)
       : false
 
@@ -1883,7 +1901,7 @@ async function processMessage(
         configOwnerUserId,
       })
     : false
-  const phoneMessageConsumed = welcomeStartedFromPhone || handoffDoneFromPhone
+  const phoneMessageConsumed = welcomeStartedFromPhone || handoffDoneFromPhone || derivedFromPhone
 
   // Template quick-reply buttons (Meta `type: 'button'`) carry no
   // active flow_run and can't match a Flow entry trigger (text/keyword
