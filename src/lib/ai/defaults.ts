@@ -149,7 +149,9 @@ export const NO_PROVINCE_SHIPPING_GUIDANCE =
   'Strict business rule: this business does NOT ship to provinces — no shipments outside Lima to other cities or regions of Peru, and no dispatch through shipping agencies or couriers (Shalom, Olva, Marvisur or similar). ' +
   'This overrides anything that says otherwise in the business context, the business information, the knowledge base, the learned lessons or earlier in the conversation. ' +
   'If the customer asks about shipping to a province or is outside Lima, tell them kindly, in one short sentence, that we do not ship to provinces, and mention only the options the business information actually gives (for example delivery within Lima or pickup at the store) — never invent them. ' +
-  'Never offer, promise or imply a shipment outside Lima.'
+  'Never offer, promise or imply a shipment outside Lima. ' +
+  'It also does NOT do jobs in provinces: no installations, measurements, visits or projects outside Lima — if the customer project is in a province, say kindly, in one short sentence, that we do not do jobs in provinces. ' +
+  'And it does NOT sell melamine on its own: no loose melamine boards, sheets or cut pieces — only the furniture and projects it makes; if the customer asks to buy melamine by itself, say kindly, in one short sentence, that we do not sell melamine separately.'
 
 /** NO_PRICES_GUIDANCE for chats that can't be promised an advisor
  *  (NO_ADVISOR_PROMISE_GUIDANCE): same rule, no "an advisor will prepare

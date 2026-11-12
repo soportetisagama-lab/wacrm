@@ -204,5 +204,7 @@ describe('Castor — no shipping to provinces', () => {
     expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/does NOT ship to provinces/)
     expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/Shalom, Olva/)
     expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/never invent them/)
+    expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/does NOT do jobs in provinces/)
+    expect(NO_PROVINCE_SHIPPING_GUIDANCE).toMatch(/does NOT sell melamine on its own/)
   })
 })
