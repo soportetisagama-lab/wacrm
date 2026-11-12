@@ -4,6 +4,7 @@ import { buildConversationContext } from './context'
 import { logAiUsage } from './usage'
 import { NEUTRAL_SPANISH_GUIDANCE, UNTRUSTED_CUSTOMER_CONTENT_GUARD } from './defaults'
 import { textOf, type AiConfig, type AiUsage, type ChatMessage } from './types'
+import { conservarNotasDerivacion } from '@/lib/derivacion-auto'
 
 // ============================================================
 // Advisor brief ("ficha") written when the bot hands a chat off.
@@ -112,13 +113,28 @@ export async function writeHandoffBrief(
     model: args.config.model,
     usage: result.usage,
   })
+  // Conserva las notas de la derivación automática (asesor XLR8, cola)
+  // que ya estaban en el resumen.
+  let anterior: string | null = null
+  try {
+    const { data } = await db
+      .from('conversations')
+      .select('ai_handoff_summary')
+      .eq('id', args.conversationId)
+      .maybeSingle()
+    anterior = (data as { ai_handoff_summary?: string | null } | null)?.ai_handoff_summary ?? null
+  } catch {
+    anterior = null
+  }
   const { error } = await db
     .from('conversations')
     .update({
-      ai_handoff_summary:
+      ai_handoff_summary: conservarNotasDerivacion(
+        anterior,
         args.appendNote && !result.brief.includes(args.appendNote)
           ? `${result.brief}\n${args.appendNote}`
           : result.brief,
+      ),
     })
     .eq('id', args.conversationId)
   if (error) console.error('[ai handoff brief] handoff brief save failed:', error.message)
