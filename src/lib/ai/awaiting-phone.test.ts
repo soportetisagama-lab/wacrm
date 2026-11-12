@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { ASK_PHONE_TEXT, MAX_PHONE_ASKS, awaitingPhoneSummary, parseAwaitingPhone } from './awaiting-phone'
+import {
+  ASK_PHONE_TEXT,
+  MAX_PHONE_ASKS,
+  awaitingPhoneSummary,
+  handoffDoneWithoutPhone,
+  parseAwaitingPhone,
+} from './awaiting-phone'
 
 describe('awaitingPhoneSummary / parseAwaitingPhone', () => {
   it('round-trips the ask count and the advisor note', () => {
@@ -42,5 +48,41 @@ describe('awaitingPhoneSummary / parseAwaitingPhone', () => {
   it('caps at 3 asks and asks in neutral Spanish', () => {
     expect(MAX_PHONE_ASKS).toBe(3)
     expect(ASK_PHONE_TEXT).toBe('Para ayudarte mejor, ¿nos compartes tu número de celular?')
+  })
+})
+
+describe('handoffDoneWithoutPhone', () => {
+  const note = '🤖 El asistente derivó la conversación.'
+
+  it('is true after a give-up handoff (pending, bot off, no held marker)', () => {
+    expect(handoffDoneWithoutPhone({ status: 'pending', ai_autoreply_disabled: true, ai_handoff_summary: note })).toBe(true)
+    expect(handoffDoneWithoutPhone({ status: 'pending', ai_autoreply_disabled: true, ai_handoff_summary: null })).toBe(true)
+  })
+
+  it('is false while the handoff is still on hold for the number', () => {
+    expect(
+      handoffDoneWithoutPhone({
+        status: 'pending',
+        ai_autoreply_disabled: true,
+        ai_handoff_summary: awaitingPhoneSummary(MAX_PHONE_ASKS, note),
+      }),
+    ).toBe(false)
+  })
+
+  it('is false for a welcome stopped at its phone gate (no handoff yet)', () => {
+    expect(handoffDoneWithoutPhone({ status: 'open', ai_autoreply_disabled: false, ai_handoff_summary: null })).toBe(false)
+  })
+
+  it('is false for a manual pause or the spam close (status stays open)', () => {
+    expect(handoffDoneWithoutPhone({ status: 'open', ai_autoreply_disabled: true, ai_handoff_summary: null })).toBe(false)
+    expect(
+      handoffDoneWithoutPhone({ status: 'open', ai_autoreply_disabled: true, ai_handoff_summary: '🚫 Posible spam: x' }),
+    ).toBe(false)
+  })
+
+  it('is false for pending with the bot still on, closed chats or a missing row', () => {
+    expect(handoffDoneWithoutPhone({ status: 'pending', ai_autoreply_disabled: false })).toBe(false)
+    expect(handoffDoneWithoutPhone({ status: 'closed', ai_autoreply_disabled: true })).toBe(false)
+    expect(handoffDoneWithoutPhone(null)).toBe(false)
   })
 })

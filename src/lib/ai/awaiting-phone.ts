@@ -203,6 +203,68 @@ export async function isAwaitingPhoneHandoff(
   return parseAwaitingPhone(await loadHandoffSummary(db, conversationId)) !== null
 }
 
+/** Internal note left when the number arrives after a give-up handoff. */
+export const PHONE_AFTER_HANDOFF_NOTE = 'Número recibido: se deriva automáticamente'
+
+/**
+ * Pure: the conversation already went through its handoff without the
+ * number (MAX_PHONE_ASKS unanswered → 'give_up'). Both handoff writers
+ * (markConversationPendingHandoff in lib/flows/engine.ts and the
+ * assistant's handoff in lib/ai/auto-reply.ts) set `status: 'pending'`
+ * and `ai_autoreply_disabled: true` in the same update, and the give-up
+ * clears the held marker. A manual pause or the spam close only set
+ * `ai_autoreply_disabled` (status stays open), and a welcome that stopped
+ * at its phone gate never handed off — none of those match.
+ */
+export function handoffDoneWithoutPhone(
+  conv: { status?: string | null; ai_autoreply_disabled?: boolean | null; ai_handoff_summary?: string | null } | null | undefined,
+): boolean {
+  if (!conv) return false
+  return (
+    conv.status === 'pending' &&
+    conv.ai_autoreply_disabled === true &&
+    parseAwaitingPhone(conv.ai_handoff_summary) === null
+  )
+}
+
+/** handoffDoneWithoutPhone for a conversation id; false when it can't be read. */
+export async function loadHandoffDoneWithoutPhone(
+  db: SupabaseClient,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('conversations')
+      .select('status, ai_autoreply_disabled, ai_handoff_summary')
+      .eq('id', conversationId)
+      .maybeSingle()
+    if (error) return false
+    return handoffDoneWithoutPhone(data)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Leave PHONE_AFTER_HANDOFF_NOTE on the advisor note (`ai_handoff_summary`,
+ * the same place lib/derivacion-auto.ts writes its queue notes). Never throws.
+ */
+export async function appendPhoneAfterHandoffNote(
+  db: SupabaseClient,
+  conversationId: string,
+): Promise<void> {
+  try {
+    const current = ((await loadHandoffSummary(db, conversationId)) ?? '').trim()
+    if (current.includes(PHONE_AFTER_HANDOFF_NOTE)) return
+    await db
+      .from('conversations')
+      .update({ ai_handoff_summary: current ? `${current}\n${PHONE_AFTER_HANDOFF_NOTE}` : PHONE_AFTER_HANDOFF_NOTE })
+      .eq('id', conversationId)
+  } catch (err) {
+    console.error('[ai awaiting phone] note after handoff failed:', err)
+  }
+}
+
 /**
  * Atomically replace the exact held marker `expected` with `next` (plus
  * any `extra` columns). True only for the caller whose UPDATE matched —
