@@ -605,6 +605,40 @@ describe('cupo lleno (en_espera)', () => {
     }
   })
 
+  it('HTTP 429 con cuerpo HTML (límite del hosting) vuelve a la cola y no queda reclamada', async () => {
+    const store = makeStore()
+    const fetchFn = vi.fn(
+      async () =>
+        new Response('<html><body><h1>429 Too Many Requests</h1></body></html>', {
+          status: 429,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    )
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('en_espera')
+    expect(store.requeue).toHaveBeenCalledWith('conv-1', DENTRO, null)
+    expect(store.appendNote).toHaveBeenCalledWith('conv-1', NOTA_EN_ESPERA)
+    expect(store.assign).not.toHaveBeenCalled()
+    expect(await store.colaIds()).toEqual(['conv-1'])
+  })
+
+  it('HTTP 429 desde la cola: conserva su hora, nota una sola vez y corta la pasada', async () => {
+    const store = makeStore()
+    const llegada = lima('2026-11-02T07:30')
+    await store.enqueue('conv-1', llegada, null)
+    await store.enqueue('conv-2', lima('2026-11-02T07:40'), null)
+    const fetchFn = vi.fn(async () => new Response('<html>Too Many Requests</html>', { status: 429 }))
+    for (const hora of ['10:00', '10:01']) {
+      expect(await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima(`2026-11-02T${hora}`) })).toEqual({
+        derivadas: 0,
+        descartadas: 0,
+        enEspera: 1,
+      })
+      expect(store.requeue).toHaveBeenLastCalledWith('conv-1', llegada, null)
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+    expect(store.notas.get('conv-1')).toEqual([NOTA_EN_ESPERA])
+  })
+
   it('desde la cola vuelve con su hora original y la nota se escribe una sola vez', async () => {
     const store = makeStore()
     const llegada = lima('2026-11-02T07:30')
