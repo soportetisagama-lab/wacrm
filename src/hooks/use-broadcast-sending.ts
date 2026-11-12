@@ -408,6 +408,24 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         }
       }
 
+      // ── Step 1c: Tag with the broadcast's own name (097) ──────────
+      // Every contact the message reaches gets it (DB trigger on
+      // broadcast_recipients). Best effort: a failure here never blocks
+      // the send.
+      let sentTagId: string | null = null;
+      const sentTagName = normalizeReplyTagName(payload.name);
+      if (sentTagName) {
+        try {
+          sentTagId = await resolveReplyTagId(supabase, {
+            accountId,
+            userId: user.id,
+            name: sentTagName,
+          });
+        } catch (err) {
+          console.error('[broadcast] no se pudo preparar la etiqueta de la difusión:', errText(err));
+        }
+      }
+
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
       const { data: broadcast, error: broadcastError } = await supabase
@@ -439,6 +457,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           },
           // Only sent when set, so broadcasts keep working before 090.
           ...(replyTagId ? { reply_tag_id: replyTagId } : {}),
+          // Only sent when set (needs migration 097).
+          ...(sentTagId ? { sent_tag_id: sentTagId } : {}),
           status: 'sending',
           total_recipients: contacts.length,
           sent_count: 0,
