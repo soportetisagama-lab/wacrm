@@ -2059,10 +2059,10 @@ async function processMessage(
   }
   // Derivación automática apenas escribe el cliente (con celular), sin
   // esperar a que responda las preguntas del bot. derivarAuto respeta
-  // horario/cola, cupo, MODO PRUEBA y una sola vez por conversación; al
-  // quedar asignada a un asesor, el bot deja de responder.
+  // horario/cola, cupo, MODO PRUEBA y una sola vez por conversación. Un
+  // chat que ya tiene asesor no se toca (soloSinAsesor).
   if (!derivedFromPhone && numeroSeDerivara(promotedPhone ?? contactRecord.phone)) {
-    programarDerivacionAuto(supabaseAdmin(), conversation.id)
+    programarDerivacionAuto(supabaseAdmin(), conversation.id, { soloSinAsesor: true })
   }
   // new_contact_created fires only when the webhook just auto-created the
   // contact row. first_inbound_message fires whenever this is the contact's
