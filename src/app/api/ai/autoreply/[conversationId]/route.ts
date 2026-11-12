@@ -3,6 +3,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { canResumeAi } from '@/lib/auth/roles'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { parseAwaitingPhone } from '@/lib/ai/awaiting-phone'
+import { derivacionConIaActiva } from '@/lib/derivacion-con-ia'
 
 type Params = { params: Promise<{ conversationId: string }> }
 
@@ -82,7 +83,7 @@ export async function POST(request: Request, { params }: Params) {
       // (lib/conversations/human-activity.ts isManualAiPause). Taking over
       // must silence it right away, so the chat leaves 'pending' — the same
       // status the advisor's first send would set.
-      if (conv.status === 'pending') update.status = 'open'
+      if (derivacionConIaActiva() && conv.status === 'pending') update.status = 'open'
       // A handoff on hold for the customer's number (lib/ai/awaiting-phone.ts)
       // ends here: keep only the note, so the banner never shows the marker.
       const held = parseAwaitingPhone(conv.ai_handoff_summary as string | null)
