@@ -83,7 +83,7 @@ import { isAiKeyPaused, isAiOutOfServiceError } from "@/lib/ai/availability";
 import { notifyAdminsAiUnavailable } from "@/lib/ai/availability-notify";
 import { attentionFields } from "@/lib/conversations/attention";
 import { canAssignAgentToConversation } from "@/lib/conversations/assignee-guard";
-import { programarDerivacionAuto } from "@/lib/derivacion-auto";
+import { conservarNotasDerivacion, programarDerivacionAuto } from "@/lib/derivacion-auto";
 import {
   type CollectAiNodeConfig,
   type CollectInputNodeConfig,
@@ -3057,7 +3057,7 @@ async function markConversationPendingHandoff(
   // the inbox + unread badge (see lib/conversations/attention.ts).
   const { data: current } = await db
     .from("conversations")
-    .select("unread_count, account_id, contact_id")
+    .select("unread_count, account_id, contact_id, assigned_agent_id, ai_handoff_summary")
     .eq("id", conversationId)
     .maybeSingle();
   // Instagram / Messenger: the number the customer typed, for the team.
@@ -3069,12 +3069,21 @@ async function markConversationPendingHandoff(
     ...attentionFields(current?.unread_count),
     status: "pending",
     ai_autoreply_disabled: true,
-    ai_handoff_summary: phoneNote && !summary.includes(phoneNote) ? `${summary}\n${phoneNote}` : summary,
+    // Conserva las notas de la derivación automática (asesor XLR8, cola).
+    ai_handoff_summary: conservarNotasDerivacion(
+      current?.ai_handoff_summary as string | null | undefined,
+      phoneNote && !summary.includes(phoneNote) ? `${summary}\n${phoneNote}` : summary,
+    ),
     updated_at: new Date().toISOString(),
   };
   // A Community Manager only owns Messenger/Instagram chats — the DB
   // trigger would reject the whole write, so hand off unassigned instead.
-  if (assignTo && (await canAssignAgentToConversation(db, assignTo, conversationId))) {
+  // Ya derivada a un asesor (derivación automática): no se le quita.
+  if (
+    assignTo &&
+    !current?.assigned_agent_id &&
+    (await canAssignAgentToConversation(db, assignTo, conversationId))
+  ) {
     update.assigned_agent_id = assignTo;
   }
   await db.from("conversations").update(update).eq("id", conversationId);
