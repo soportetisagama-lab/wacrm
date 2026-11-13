@@ -853,3 +853,78 @@ describe('derivacionConfigurada', () => {
     expect(derivacionConfigurada({ ...ENV, linea: ' ' })).toBe(false)
   })
 })
+
+describe('cliente con asesor en XLR8 (regla de los 30 días)', () => {
+  it('menos de 30 días: chat a su asesor con nota de cliente registrado', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({
+      ok: false,
+      motivo: 'duplicado',
+      asesor_id: 42,
+      asesor_nombre: 'Pedro',
+      fecha_registro: '01/01/2026',
+      cliente_de_asesor: true,
+    })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('asignada')
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+    expect(store.notas.get('conv-1')).toEqual(['Cliente ya registrado en XLR8 el 01/01/2026; se mantiene con Pedro'])
+  })
+
+  it('30 días o más: lead nuevo para su mismo asesor', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({
+      ok: true,
+      asesor_id: 42,
+      asesor_nombre: 'Pedro',
+      mismo_asesor: true,
+      fecha_registro: '01/01/2026',
+    })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('asignada')
+    expect(store.notas.get('conv-1')).toEqual([
+      'Derivado automáticamente a Pedro (XLR8): su cliente, último registro el 01/01/2026',
+    ])
+  })
+
+  it('cupo de su asesor lleno: chat asignado ya, lead en cola sin frenar a las demás', async () => {
+    const marcar = vi.fn(async () => undefined)
+    const store = makeStore({ marcarEsperaAsesor: marcar })
+    const fetchFn = okFetch({ ok: false, motivo: 'cupo_asesor', asesor_id: 42, asesor_nombre: 'Pedro' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('espera_asesor')
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+    expect(marcar).toHaveBeenCalledWith('conv-1', { tipo: 'lead', motivo: '' })
+    expect(store.requeue).toHaveBeenCalledWith('conv-1', DENTRO, 'user-42')
+    expect(store.notas.get('conv-1')).toEqual([
+      'En espera: cliente de Pedro; el lead de XLR8 se registra cuando libere un cupo',
+    ])
+  })
+
+  it('la cola sigue con las demás cuando una espera a su asesor', async () => {
+    const store = makeStore()
+    store.loadConversation = vi.fn(async (id: string) => ({
+      account_id: 'acc-1',
+      channel: 'whatsapp',
+      contact_id: 'ct-1',
+      assigned_agent_id: id === 'conv-a' ? 'user-42' : null,
+      status: 'pending',
+    }))
+    store.claim = vi.fn(async () => true)
+    await store.requeue('conv-a', lima('2026-11-02T08:00'), 'user-42')
+    await store.requeue('conv-b', lima('2026-11-02T08:30'), null)
+    const fetchFn = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const id = JSON.parse(String(init?.body)).conversation_id
+      const body =
+        id === 'conv-a'
+          ? { ok: false, motivo: 'cupo_asesor', asesor_id: 42, asesor_nombre: 'Pedro' }
+          : { ok: true, asesor_id: 42, asesor_nombre: 'Luis' }
+      return new Response(JSON.stringify(body), { status: 200 })
+    })
+    const r = await procesarColaDerivacion({ store, env: ENV, fetchFn, now: DENTRO })
+    expect(r).toEqual({ derivadas: 1, descartadas: 0, enEspera: 1 })
+    expect(await store.colaIds()).toEqual(['conv-a'])
+  })
+
+  it('las notas nuevas se conservan en un traspaso posterior', () => {
+    const anterior = 'Cliente ya registrado en XLR8 el 01/01/2026; se mantiene con Pedro'
+    expect(conservarNotasDerivacion(anterior, 'Resumen nuevo')).toBe(`Resumen nuevo\n${anterior}`)
+  })
+})
