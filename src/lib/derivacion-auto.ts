@@ -77,6 +77,24 @@ export const NOTA_EN_TURNO = 'En cola: se derivará automáticamente por orden d
 /** Nota interna (una sola vez) cuando el PHP no tiene asesor con cupo libre. */
 export const NOTA_EN_ESPERA = 'En espera: todos los asesores tienen el cupo lleno'
 
+/** Inicio de la nota cuando el cliente ya tenía asesor en XLR8 (menos de 30 días). */
+export const NOTA_CLIENTE_REGISTRADO = 'Cliente ya registrado en XLR8'
+
+/** Inicio de la nota cuando el cliente espera cupo de su mismo asesor. */
+export const NOTA_ESPERA_ASESOR = 'En espera: cliente de'
+
+/** Nota: cliente con asesor en XLR8 (menos de 30 días), se queda con él. */
+export function notaClienteRegistrado(nombre: string, fecha: string): string {
+  return fecha
+    ? `${NOTA_CLIENTE_REGISTRADO} el ${fecha}; se mantiene con ${nombre}`
+    : `${NOTA_CLIENTE_REGISTRADO}; se mantiene con ${nombre}`
+}
+
+/** Nota: su mismo asesor tiene el cupo lleno; el chat ya es suyo y el lead espera. */
+export function notaEsperaAsesor(nombre: string): string {
+  return `${NOTA_ESPERA_ASESOR} ${nombre}; el lead de XLR8 se registra cuando libere un cupo`
+}
+
 /**
  * Las notas de la derivación (asesor de XLR8, cola, espera) viven en
  * `ai_handoff_summary`. Un traspaso posterior (flujo o IA) reescribe ese
@@ -90,6 +108,8 @@ export function conservarNotasDerivacion(anterior: string | null | undefined, nu
     .filter(
       (l) =>
         l.startsWith('Derivado automáticamente') ||
+        l.startsWith(NOTA_CLIENTE_REGISTRADO) ||
+        l.startsWith(NOTA_ESPERA_ASESOR) ||
         l === NOTA_EN_COLA ||
         l === NOTA_EN_TURNO ||
         l === NOTA_EN_ESPERA,
@@ -297,6 +317,11 @@ export interface DerivacionStore {
   hasPendingQueue(excludeConversationId: string): Promise<boolean>
   /** Guarda la clasificación para reutilizarla en los reintentos. */
   saveClasificacion(conversationId: string, clasificacion: Clasificacion): Promise<void>
+  /**
+   * Guarda la clasificación con la marca `espera_asesor` (espera cupo de
+   * su mismo asesor): esa conversación no frena a las demás de la cola.
+   */
+  marcarEsperaAsesor?(conversationId: string, clasificacion: Clasificacion): Promise<void>
   /** Conversaciones en cola, la más antigua primero. */
   listQueue(limit: number): Promise<ColaItem[]>
   /**
@@ -312,6 +337,7 @@ export type DerivacionResultado =
   | 'en_cola'
   | 'ya_en_cola'
   | 'en_espera'
+  | 'espera_asesor'
   | 'sin_conversacion'
   | 'no_whatsapp'
   | 'sin_celular'
@@ -328,6 +354,33 @@ interface RespuestaPhp {
   asesor_id?: unknown
   asesor_nombre?: unknown
   motivo?: unknown
+  /** Fecha (dd/mm/aaaa) del último registro del cliente en XLR8. */
+  fecha_registro?: unknown
+  /** El cliente ya tenía este asesor (regla de los 30 días). */
+  cliente_de_asesor?: unknown
+  /** Lead nuevo para su mismo asesor (30 días o más). */
+  mismo_asesor?: unknown
+}
+
+/** Asesor de la respuesta del PHP: nombre para la nota y usuario del CRM. */
+async function asesorDeRespuesta(
+  store: DerivacionStore,
+  accountId: string,
+  body: RespuestaPhp,
+): Promise<{ nombre: string; userId: string | null }> {
+  const asesorId = Number(body.asesor_id)
+  const asesorNombre = typeof body.asesor_nombre === 'string' ? body.asesor_nombre.trim() : ''
+  const nombre = asesorNombre || (Number.isInteger(asesorId) ? `asesor ${asesorId}` : 'un asesor')
+  const userId = Number.isInteger(asesorId) && asesorId > 0 ? await store.findAgentByXlr8(accountId, asesorId) : null
+  return { nombre, userId }
+}
+
+function fechaRegistro(body: RespuestaPhp): string {
+  return typeof body.fecha_registro === 'string' ? body.fecha_registro.trim() : ''
+}
+
+function tieneMarcaEsperaAsesor(valor: unknown): boolean {
+  return !!valor && typeof valor === 'object' && (valor as { espera_asesor?: unknown }).espera_asesor === true
 }
 
 export interface DerivacionDeps {
@@ -496,7 +549,35 @@ export async function derivarAuto(
 
     // Cupo lleno: vuelve a la cola con su turno (la hora original si
     // venía de la cola; ahora si fue un traspaso en vivo).
+    // Cliente de un asesor con el cupo lleno (regla de los 30 días): el
+    // chat se le asigna ya y el lead de XLR8 espera en la cola hasta que
+    // libere un cupo, sin frenar a las demás conversaciones.
+    if (body.ok !== true && body.motivo === 'cupo_asesor') {
+      const { nombre, userId } = await asesorDeRespuesta(store, conv.account_id, body)
+      const asignado =
+        !!userId && (conv.assigned_agent_id === userId || (await store.assign(conversationId, userId)))
+      if (!asignado) {
+        console.error(LOG, 'cupo de su asesor lleno y sin usuario del CRM para asignarle el chat', { conversationId })
+        await store.appendNote(conversationId, `${notaEsperaAsesor(nombre)}. Sin usuario del CRM con ese ID XLR8.`)
+        return 'sin_usuario'
+      }
+      await store.marcarEsperaAsesor?.(conversationId, clasificacion).catch(() => undefined)
+      if (!(await store.requeue(conversationId, opciones.desdeCola?.at ?? now, userId))) {
+        console.error(LOG, 'cupo de su asesor lleno y no se pudo volver a la cola; queda para derivación manual', {
+          conversationId,
+        })
+        return 'rechazada'
+      }
+      await store.appendNote(conversationId, notaEsperaAsesor(nombre))
+      return 'espera_asesor'
+    }
+
     if (body.ok !== true && typeof body.motivo === 'string' && MOTIVOS_EN_ESPERA.includes(body.motivo)) {
+      // Ya no espera a su asesor (p. ej. dejó de estar ACTIVO): vuelve a
+      // esperar en orden con las demás.
+      if (tieneMarcaEsperaAsesor(conv.derivacion_clasificacion)) {
+        await store.saveClasificacion(conversationId, clasificacion).catch(() => undefined)
+      }
       const turno = opciones.desdeCola?.at ?? now
       if (!(await store.requeue(conversationId, turno, conv.assigned_agent_id ?? null))) {
         console.error(LOG, 'cupo lleno y no se pudo volver a la cola; queda para derivación manual', {
@@ -514,16 +595,16 @@ export async function derivarAuto(
       return 'rechazada'
     }
 
-    const asesorId = Number(body.asesor_id)
-    const asesorNombre = typeof body.asesor_nombre === 'string' ? body.asesor_nombre.trim() : ''
-    const nombre = asesorNombre || (Number.isInteger(asesorId) ? `asesor ${asesorId}` : 'un asesor')
-    const userId = Number.isInteger(asesorId) && asesorId > 0
-      ? await store.findAgentByXlr8(conv.account_id, asesorId)
-      : null
+    const { nombre, userId } = await asesorDeRespuesta(store, conv.account_id, body)
+    const fecha = fechaRegistro(body)
 
     const nota = motivoAtc
       ? `Derivado automáticamente a ATC (${motivoAtc})`
-      : `Derivado automáticamente a ${nombre} (XLR8)`
+      : duplicadoConAsesor && body.cliente_de_asesor === true
+        ? notaClienteRegistrado(nombre, fecha)
+        : body.mismo_asesor === true
+          ? `Derivado automáticamente a ${nombre} (XLR8): su cliente${fecha ? `, último registro el ${fecha}` : ''}`
+          : `Derivado automáticamente a ${nombre} (XLR8)`
     if (userId && (await store.assign(conversationId, userId))) {
       await store.appendNote(conversationId, nota)
       return 'asignada'
@@ -669,6 +750,8 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         .not('derivacion_pendiente_at', 'is', null)
         .is('derivado_auto_at', null)
         .in('status', [...ESTADOS_DERIVABLES])
+        // Las que esperan cupo de su mismo asesor no frenan a las demás.
+        .is('derivacion_clasificacion->>espera_asesor', null)
         .neq('id', excludeConversationId)
         .limit(1)
       if (error) {
@@ -677,6 +760,13 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         return false
       }
       return (data ?? []).length > 0
+    },
+    async marcarEsperaAsesor(conversationId, clasificacion) {
+      const { error } = await db
+        .from('conversations')
+        .update({ derivacion_clasificacion: { ...clasificacion, espera_asesor: true } })
+        .eq('id', conversationId)
+      if (error) console.error(LOG, 'no se pudo marcar la espera de su asesor:', error.message, { conversationId })
     },
     async saveClasificacion(conversationId, clasificacion) {
       const { error } = await db
@@ -727,7 +817,7 @@ export interface ColaResultado {
   derivadas: number
   /** Sacadas sin derivar: ya tomadas por un asesor, cerradas o inexistentes. */
   descartadas: number
-  /** Devueltas a la cola por cupo lleno (corta la pasada). */
+  /** Devueltas a la cola por cupo lleno (corta la pasada) o por cupo de su asesor (no la corta). */
   enEspera: number
 }
 
@@ -773,6 +863,11 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
           // la próxima pasada, la más antigua primero.
           res.enEspera++
           break
+        }
+        if (r === 'espera_asesor') {
+          // Espera cupo de su mismo asesor: las demás siguen.
+          res.enEspera++
+          continue
         }
         res.derivadas++
       } catch (err) {
