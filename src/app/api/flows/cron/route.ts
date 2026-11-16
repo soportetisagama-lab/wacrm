@@ -23,6 +23,7 @@ import { runMetaCapiSweepIfDue } from '@/lib/meta-capi/send'
 import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/memory'
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
+import { runAperturaCierreSiToca } from '@/lib/xlr8/apertura-cierre'
 import { asesorReal } from '@/lib/conversations/perfil-sin-numero'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
@@ -133,6 +134,10 @@ async function runFlowsCron(): Promise<Response> {
   // quedaron en cola fuera de horario se derivan al abrir el horario,
   // el más antiguo primero. Fire-and-forget; never throws.
   void runColaDerivacionSiToca(admin, now)
+
+  // Apertura (07:55) y cierre (17:30 / sáb 13:00) para apertura_cierre.php
+  // en XLR8 (lib/xlr8/apertura-cierre.ts). Fire-and-forget; never throws.
+  void runAperturaCierreSiToca(admin, now)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
