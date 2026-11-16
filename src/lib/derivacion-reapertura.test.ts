@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { configReapertura, notaReapertura, tocaReapertura, ventanaCerrada } from './derivacion-reapertura'
 
 function lima(isoLocal: string): Date {
@@ -14,7 +14,14 @@ describe('tocaReapertura', () => {
   })
   it('martes normal no; día después de feriado sí', () => {
     expect(tocaReapertura(lima('2026-11-17T07:05'), sinFeriados)).toBeNull()
-    expect(tocaReapertura(lima('2026-12-10T07:05'))).toBe('2026-12-10') // 8 y 9 dic feriados
+    const diciembre = (f: string) => f === '2026-12-08' || f === '2026-12-09'
+    expect(tocaReapertura(lima('2026-12-10T07:05'), diciembre)).toBe('2026-12-10')
+  })
+  it('por defecto los feriados cuentan solo si pausan la derivación', () => {
+    expect(tocaReapertura(lima('2026-12-10T07:05'))).toBeNull()
+    vi.stubEnv('FERIADOS_PAUSAN_DERIVACION', '1')
+    expect(tocaReapertura(lima('2026-12-10T07:05'))).toBe('2026-12-10')
+    vi.unstubAllEnvs()
   })
   it('lunes feriado no envía; el martes sí', () => {
     const feriado = (f: string) => f === '2026-11-16'

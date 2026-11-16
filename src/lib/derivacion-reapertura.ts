@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { HORARIO_DERIVACION, NOTA_PLANTILLA_REAPERTURA } from '@/lib/derivacion-auto'
-import { diaAnterior, esFeriado, fechaLima } from '@/lib/feriados-peru'
+import { diaAnterior, fechaLima } from '@/lib/feriados-peru'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { sendTemplateToPhone } from '@/lib/whatsapp/send-template-to-phone'
 import type { MessageTemplate } from '@/types'
@@ -55,9 +55,13 @@ function diaSinDerivacion(fecha: string, feriado: (f: string) => boolean): boole
 /**
  * Pura: fecha de Lima si ahora toca enviar (07:00–07:29 de un día con
  * derivación cuyo día anterior no tuvo: lunes o día después de feriado),
- * o null.
+ * o null. Por defecto los feriados cuentan solo si pausan la derivación
+ * (FERIADOS_PAUSAN_DERIVACION=1): si no, ese día sí se derivó.
  */
-export function tocaReapertura(now: Date, feriado: (f: string) => boolean = (f) => esFeriado(f)): string | null {
+export function tocaReapertura(
+  now: Date,
+  feriado: (f: string) => boolean = (f) => HORARIO_DERIVACION.esFeriado?.(f) ?? false,
+): string | null {
   const lima = new Date(now.getTime() - 5 * 60 * 60_000)
   const minuto = lima.getUTCHours() * 60 + lima.getUTCMinutes()
   if (minuto < DESDE_MIN || minuto >= HASTA_MIN) return null
@@ -162,10 +166,15 @@ export async function enviarReaperturas(
         status: 'sent',
       })
       const resumen = (conv.ai_handoff_summary ?? '').trim()
-      await db
+      const { error: errNota } = await db
         .from('conversations')
         .update({ ai_handoff_summary: resumen ? `${resumen}\n${nota}` : nota })
         .eq('id', conv.id)
+      if (errNota) {
+        // Sin la nota podría reenviarse en otra pasada: cuenta como fallo.
+        res.fallidos++
+        console.error(LOG, 'enviada, pero no se guardó la nota:', errNota.message, { conversationId: conv.id })
+      }
     } catch (err) {
       res.fallidos++
       console.error(LOG, err instanceof Error ? err.message : err, { conversationId: conv.id })
@@ -206,7 +215,12 @@ async function cargarCredenciales(
   return { phoneNumberId: c.phone_number_id, accessToken, template: (tpl as MessageTemplate | null) ?? undefined }
 }
 
-const g = globalThis as { __wacrmReapertura?: { corriendo: boolean; hecha: string | null } }
+/** Pasadas como máximo por día cuando hay fallos (p. ej. plantilla aún no aprobada). */
+export const REAPERTURA_MAX_PASADAS = 3
+
+const g = globalThis as {
+  __wacrmReapertura?: { corriendo: boolean; hecha: string | null; pasadas: Record<string, number> }
+}
 
 /** Entrada del cron de flujos (cada minuto). Apagada sin REAPERTURA_PLANTILLA=1. Nunca lanza. */
 export async function runReaperturaSiToca(db: SupabaseClient, now: Date = new Date()): Promise<void> {
@@ -214,14 +228,16 @@ export async function runReaperturaSiToca(db: SupabaseClient, now: Date = new Da
   if (!cfg.activa) return
   const fecha = tocaReapertura(now)
   if (!fecha) return
-  const s = (g.__wacrmReapertura ??= { corriendo: false, hecha: null })
+  const s = (g.__wacrmReapertura ??= { corriendo: false, hecha: null, pasadas: {} })
   if (s.corriendo || s.hecha === fecha) return
   s.corriendo = true
   try {
     const r = await enviarReaperturas(db, fecha, now, cfg)
     console.log(LOG, fecha, r)
-    // Con fallos se reintenta en la próxima pasada (la nota evita repetir).
-    if (r.fallidos === 0) s.hecha = fecha
+    // Con fallos se reintenta en la próxima pasada (la nota evita repetir),
+    // hasta REAPERTURA_MAX_PASADAS por día.
+    s.pasadas = { [fecha]: (s.pasadas[fecha] ?? 0) + 1 }
+    if (r.fallidos === 0 || s.pasadas[fecha] >= REAPERTURA_MAX_PASADAS) s.hecha = fecha
   } catch (err) {
     console.error(LOG, err)
   } finally {
