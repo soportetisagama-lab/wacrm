@@ -24,6 +24,7 @@ import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/me
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
 import { runAperturaCierreSiToca } from '@/lib/xlr8/apertura-cierre'
+import { runReaperturaSiToca } from '@/lib/derivacion-reapertura'
 import { asesorReal } from '@/lib/conversations/perfil-sin-numero'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
@@ -138,6 +139,11 @@ async function runFlowsCron(): Promise<Response> {
   // Apertura (07:55) y cierre (17:30 / sáb 13:00) para apertura_cierre.php
   // en XLR8 (lib/xlr8/apertura-cierre.ts). Fire-and-forget; never throws.
   void runAperturaCierreSiToca(admin, now)
+
+  // Plantilla de reapertura (lunes / día después de feriado, 07:00) a los
+  // chats en cola con la ventana de 24 h cerrada (lib/derivacion-reapertura.ts).
+  // Apagada sin REAPERTURA_PLANTILLA=1. Fire-and-forget; never throws.
+  void runReaperturaSiToca(admin, now)
 
   // Pull all currently-active runs along with their parent flow's
   // fallback_policy and the contact's nudge opt-out flag. Both are
