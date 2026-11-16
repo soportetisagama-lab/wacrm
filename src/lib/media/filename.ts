@@ -49,6 +49,14 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.presentationml.presentation":
     "pptx",
   "text/plain": "txt",
+  "image/vnd.dwg": "dwg",
+  "application/acad": "dwg",
+  "application/x-dwg": "dwg",
+  "image/vnd.dxf": "dxf",
+  "application/dxf": "dxf",
+  "application/zip": "zip",
+  "application/x-rar-compressed": "rar",
+  "application/vnd.rar": "rar",
 };
 
 /** Longest filename we'll produce, extension included. */
@@ -128,6 +136,8 @@ export function basenameFromUrl(url: string): string {
 export interface MediaFilenameInput {
   content_type: ContentType;
   content_text?: string;
+  /** Original filename of a document, as WhatsApp sent it. */
+  filename?: string | null;
   media_url?: string;
   created_at: string;
 }
@@ -141,6 +151,18 @@ export function mediaFilename(
   message: MediaFilenameInput,
   mimeType?: string | null,
 ): string {
+  // 0. The document's original filename (WhatsApp sends it apart from the
+  //    caption). Keeps unusual types like .dwg instead of falling to .bin.
+  //    If it has no extension, the MIME type's is added when known.
+  if (message.filename) {
+    const own = sanitizeFilename(message.filename);
+    if (own) {
+      if (hasExtension(own)) return own;
+      const ext = extensionForMime(mimeType);
+      return ext === "bin" ? own : sanitizeFilename(`${own}.${ext}`);
+    }
+  }
+
   // 1. A document's own filename, when the sender didn't replace it with a
   //    caption. Restricted to documents on purpose: an image caption like
   //    "is this the right invoice.pdf" is prose, not a filename.
