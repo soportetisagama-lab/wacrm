@@ -8,7 +8,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //     del cliente sin leer y sin asesor asignado (la misma definición de
 //     /api/leads/pending). Industrial no envía apertura.
 //   - Cierre: de lunes a viernes a las 17:30 y el sábado a las 13:00
-//     avisa al PHP para que guarde la copia del flotante de la línea.
+//     avisa al PHP para que guarde la copia del flotante de la línea, con
+//     la cantidad de chats sin derivar en ese momento ("leads que no se
+//     derivaron"; si no se puede contar, el cierre va sin ella).
 //     Feriados incluidos.
 //
 // Va montado en el cron de flujos (cada minuto). Dentro de cada ventana
@@ -99,7 +101,16 @@ export async function enviarTarea(tarea: TareaApertura, fecha: string, deps: Ape
   if (!url || !secret || !linea) return false
   try {
     const body: Record<string, unknown> = { accion: tarea, linea, fecha }
-    if (tarea === 'apertura') body.cantidad = await deps.contarSinDerivar()
+    if (tarea === 'apertura') {
+      body.cantidad = await deps.contarSinDerivar()
+    } else {
+      // El cierre no depende del conteo: si falla, se envía sin cantidad.
+      try {
+        body.cantidad = await deps.contarSinDerivar()
+      } catch (err) {
+        console.error(`${LOG} cierre ${fecha}: no se pudo contar sin derivar:`, err instanceof Error ? err.message : err)
+      }
+    }
     const res = await (deps.fetchImpl ?? fetch)(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Apertura-Secret': secret },
