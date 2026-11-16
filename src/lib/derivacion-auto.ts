@@ -10,6 +10,7 @@ import {
   type Clasificacion,
   type ClasificadorDerivacion,
 } from '@/lib/derivacion-clasificar'
+import { esFeriado, feriadosPausanDerivacion } from '@/lib/feriados-peru'
 
 // ============================================================
 // Derivación automática de leads de WhatsApp al sistema PHP XLR8.
@@ -83,6 +84,17 @@ export const NOTA_CLIENTE_REGISTRADO = 'Cliente ya registrado en XLR8'
 /** Inicio de la nota cuando el cliente espera cupo de su mismo asesor. */
 export const NOTA_ESPERA_ASESOR = 'En espera: cliente de'
 
+/** Inicio de la nota cuando el cliente es de un asesor apagado en la derivación automática. */
+export const NOTA_ALERTA_ATC = 'Alerta para ATC:'
+
+/** Nota: cliente de 30 días o más cuyo asesor está apagado; decide la ATC en XLR8. */
+export function notaAlertaAtc(nombre: string, fecha: string): string {
+  return `${NOTA_ALERTA_ATC} cliente de ${nombre}${fecha ? ` (último registro el ${fecha})` : ''}, que no está en la derivación automática. La ATC decide en XLR8 (Alertas de derivación).`
+}
+
+/** Inicio de la nota cuando se envió la plantilla de reapertura (lib/derivacion-reapertura.ts). */
+export const NOTA_PLANTILLA_REAPERTURA = 'Plantilla enviada 7:00'
+
 /** Nota: cliente con asesor en XLR8 (menos de 30 días), se queda con él. */
 export function notaClienteRegistrado(nombre: string, fecha: string): string {
   return fecha
@@ -110,6 +122,8 @@ export function conservarNotasDerivacion(anterior: string | null | undefined, nu
         l.startsWith('Derivado automáticamente') ||
         l.startsWith(NOTA_CLIENTE_REGISTRADO) ||
         l.startsWith(NOTA_ESPERA_ASESOR) ||
+        l.startsWith(NOTA_ALERTA_ATC) ||
+        l.startsWith(NOTA_PLANTILLA_REAPERTURA) ||
         l === NOTA_EN_COLA ||
         l === NOTA_EN_TURNO ||
         l === NOTA_EN_ESPERA,
@@ -136,6 +150,8 @@ export interface HorarioDerivacion {
   jornada: Readonly<Record<0 | 1 | 2 | 3 | 4 | 5 | 6, TramoHorario | null>>
   /** Pausa que se excluye todos los días. */
   almuerzo: TramoHorario | null
+  /** Fecha de Lima ("AAAA-MM-DD") que no se deriva, como un domingo. */
+  esFeriado?: (fecha: string) => boolean
 }
 
 /**
@@ -155,6 +171,8 @@ export const HORARIO_DERIVACION: HorarioDerivacion = {
     6: ['08:00', '12:30'],
   },
   almuerzo: ['12:45', '14:00'],
+  // Feriados de Perú (lib/feriados-peru.ts): solo con FERIADOS_PAUSAN_DERIVACION=1.
+  esFeriado: (fecha) => feriadosPausanDerivacion() && esFeriado(fecha),
 }
 
 const DIAS: Record<string, 0 | 1 | 2 | 3 | 4 | 5 | 6> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
@@ -173,6 +191,9 @@ export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: horario.zonaHoraria,
     weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
@@ -180,6 +201,7 @@ export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
   const dia = DIAS[get('weekday')]
   if (dia === undefined) return false
+  if (horario.esFeriado?.(`${get('year')}-${get('month')}-${get('day')}`)) return false
   const min = Number(get('hour')) * 60 + Number(get('minute'))
   return enTramo(min, horario.jornada[dia]) && !enTramo(min, horario.almuerzo)
 }
@@ -368,6 +390,7 @@ export type DerivacionResultado =
   | 'asignada'
   | 'sin_usuario'
   | 'con_asesor'
+  | 'alerta_atc'
 
 interface RespuestaPhp {
   ok?: unknown
@@ -590,6 +613,15 @@ export async function derivarAuto(
       }
       await store.appendNote(conversationId, notaEsperaAsesor(nombre))
       return 'espera_asesor'
+    }
+
+    // Cliente de 30 días o más cuyo asesor está apagado en la derivación
+    // automática: el PHP no crea lead y deja una alerta para la ATC. El
+    // chat queda sin asignar con la nota; no vuelve a la cola.
+    if (body.ok !== true && body.motivo === 'alerta_atc') {
+      const { nombre } = await asesorDeRespuesta(store, conv.account_id, body)
+      await store.appendNote(conversationId, notaAlertaAtc(nombre, fechaRegistro(body)))
+      return 'alerta_atc'
     }
 
     if (body.ok !== true && typeof body.motivo === 'string' && MOTIVOS_EN_ESPERA.includes(body.motivo)) {
