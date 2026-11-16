@@ -15,6 +15,9 @@ import {
   conservarNotasDerivacion,
   derivacionConfigurada,
   HORARIO_DERIVACION,
+  NOTA_ERROR_PHP,
+  REINTENTOS_PHP_MAX,
+  reiniciarReintentosPhp,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -152,16 +155,38 @@ describe('idempotencia', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 
-  it('si el PHP falla no reintenta', async () => {
+  it('si el PHP falla vuelve a la cola y se reintenta (hasta el tope)', async () => {
+    reiniciarReintentosPhp()
     const store = makeStore()
     const fetchFn = vi.fn(async (): Promise<Response> => {
       throw new Error('timeout')
     })
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('error_php')
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('ya_derivada')
-    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('reintento_php')
+    expect(await store.colaIds()).toEqual(['conv-1'])
     expect(store.assign).not.toHaveBeenCalled()
+    // Sigue fallando: reintenta hasta el tope y luego deja la nota.
+    for (let i = 1; i < REINTENTOS_PHP_MAX; i++) {
+      await store.dequeue('conv-1')
+      expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { desdeCola: { at: DENTRO } })).toBe('reintento_php')
+    }
+    await store.dequeue('conv-1')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { desdeCola: { at: DENTRO } })).toBe('error_php')
+    expect(store.notas.get('conv-1')).toContain(NOTA_ERROR_PHP)
+    expect(await store.colaIds()).toEqual([])
+    err.mockRestore()
+  })
+
+  it('HTTP 520 del XLR8: reintenta y luego deriva', async () => {
+    reiniciarReintentosPhp()
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const caido = vi.fn(async () => new Response('<html>520</html>', { status: 520 }))
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn: caido, now: DENTRO })).toBe('reintento_php')
+    await store.dequeue('conv-1')
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { desdeCola: { at: DENTRO } })).toBe('asignada')
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
     err.mockRestore()
   })
 })
