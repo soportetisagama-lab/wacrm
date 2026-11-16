@@ -14,6 +14,7 @@ import {
   celularDerivacion,
   conservarNotasDerivacion,
   derivacionConfigurada,
+  HORARIO_DERIVACION,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -199,6 +200,16 @@ describe('llamada y mapeo de asesor', () => {
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
   })
 
+  it('alerta_atc: no asigna, deja nota y no vuelve a la cola', async () => {
+    const store = makeStore()
+    const fetchFn = okFetch({ ok: false, motivo: 'alerta_atc', asesor_id: 42, asesor_nombre: 'Luis', fecha_registro: '01/09/2026' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('alerta_atc')
+    expect(store.assign).not.toHaveBeenCalled()
+    expect(store.requeue).not.toHaveBeenCalled()
+    expect(store.notas.get('conv-1')?.[0]).toContain('Alerta para ATC: cliente de Luis (último registro el 01/09/2026)')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('ya_derivada')
+  })
+
   it('ok:false del PHP (otro motivo) no asigna ni vuelve a la cola', async () => {
     for (const motivo of ['sin_atc', 'fuera_de_prueba', 'duplicado']) {
       const store = makeStore()
@@ -238,6 +249,17 @@ describe('HORARIO_DERIVACION', () => {
     expect(dentroDeHorario(lima('2026-11-07T08:00'))).toBe(true)
     expect(dentroDeHorario(lima('2026-11-07T12:29'))).toBe(true)
     expect(dentroDeHorario(lima('2026-11-07T12:30'))).toBe(false)
+  })
+
+  it('feriado como domingo solo con FERIADOS_PAUSAN_DERIVACION=1', () => {
+    // 2026-12-08 (martes) es feriado.
+    expect(dentroDeHorario(lima('2026-12-08T10:00'))).toBe(true)
+    vi.stubEnv('FERIADOS_PAUSAN_DERIVACION', '1')
+    expect(dentroDeHorario(lima('2026-12-08T10:00'))).toBe(false)
+    expect(dentroDeHorario(lima('2026-12-10T10:00'))).toBe(true)
+    vi.unstubAllEnvs()
+    const conFeriado = { ...HORARIO_DERIVACION, esFeriado: (f: string) => f === '2026-11-02' }
+    expect(dentroDeHorario(lima('2026-11-02T10:00'), conFeriado)).toBe(false)
   })
 
   it('domingo nunca', () => {
