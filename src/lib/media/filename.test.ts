@@ -188,4 +188,28 @@ describe("mediaFilename", () => {
       ),
     ).toBe("whatsapp-video.mp4");
   });
+
+  it("uses the document's original filename (e.g. a .dwg plan)", () => {
+    expect(
+      mediaFilename(
+        {
+          content_type: "document",
+          content_text: "Por favor revise este plano",
+          filename: "PLANO ARQ. REMODELACION CASA.dwg",
+          media_url: "/api/whatsapp/media/42",
+          created_at: AT,
+        },
+        "application/octet-stream",
+      ),
+    ).toBe("PLANO ARQ. REMODELACION CASA.dwg");
+  });
+
+  it("adds the MIME extension to an original filename without one", () => {
+    expect(
+      mediaFilename(
+        { content_type: "document", filename: "plano", media_url: "/api/whatsapp/media/42", created_at: AT },
+        "image/vnd.dwg",
+      ),
+    ).toBe("plano.dwg");
+  });
 });
