@@ -366,6 +366,8 @@ export type DerivacionResultado =
   | 'no_es_prueba'
   | 'ya_derivada'
   | 'error_php'
+  /** El PHP falló o no respondió: vuelve a la cola y se reintenta. */
+  | 'reintento_php'
   | 'rechazada'
   | 'asignada'
   | 'sin_usuario'
@@ -456,6 +458,49 @@ async function clasificarSeguro(
     })
     return { clasificacion: CLASIFICACION_LEAD, confiable: false }
   }
+}
+
+/**
+ * Reintentos por conversación cuando el PHP falla (XLR8 caído, HTTP 5xx/520
+ * o sin respuesta). Antes el chat quedaba reclamado y no se derivaba nunca.
+ * Reintentar es seguro: si el lead ya se creó, el PHP responde
+ * `duplicado` y el chat va a ese asesor. En memoria del proceso.
+ */
+export const REINTENTOS_PHP_MAX = 15
+const reintentosPhp = new Map<string, number>()
+
+/** Nota cuando se agotan los reintentos: queda para derivación manual. */
+export const NOTA_ERROR_PHP = 'No se pudo derivar: el XLR8 no respondió. Derívalo a mano.'
+
+/**
+ * El PHP falló: vuelve a la cola al final (no frena a los demás) para la
+ * próxima pasada. Tras REINTENTOS_PHP_MAX intentos deja la nota y queda
+ * para derivación manual ('error_php').
+ */
+async function reintentarTrasErrorPhp(
+  store: DerivacionStore,
+  conversationId: string,
+  agente: string | null,
+  now: Date,
+): Promise<DerivacionResultado> {
+  const n = (reintentosPhp.get(conversationId) ?? 0) + 1
+  if (n > REINTENTOS_PHP_MAX) {
+    reintentosPhp.delete(conversationId)
+    await store.appendNote(conversationId, NOTA_ERROR_PHP)
+    return 'error_php'
+  }
+  reintentosPhp.set(conversationId, n)
+  if (!(await store.requeue(conversationId, now, agente).catch(() => false))) {
+    console.error(LOG, 'el PHP falló y no se pudo volver a la cola; queda para derivación manual', { conversationId })
+    await store.appendNote(conversationId, NOTA_ERROR_PHP)
+    return 'error_php'
+  }
+  return 'reintento_php'
+}
+
+/** Solo para los tests: borra el contador de reintentos. */
+export function reiniciarReintentosPhp(): void {
+  reintentosPhp.clear()
 }
 
 /**
@@ -559,12 +604,13 @@ export async function derivarAuto(
       if (res.status === 503 || res.status === 429) body = { ...body, ok: false, motivo: 'ocupado' }
       if (!res.ok && body.ok !== false) {
         console.error(LOG, `PHP respondió HTTP ${res.status}`, { conversationId })
-        return 'error_php'
+        return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
       }
     } catch (err) {
       console.error(LOG, 'falló la llamada al PHP:', err instanceof Error ? err.message : err, { conversationId })
-      return 'error_php'
+      return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
     }
+    reintentosPhp.delete(conversationId)
 
     // `duplicado` con asesor_id: el lead ya tenía asesor en XLR8, se le
     // asigna igual. Cualquier otro ok:false queda para derivación manual.
@@ -893,6 +939,12 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
         if (r === 'en_espera') {
           // Cupo lleno: las siguientes también fallarían. Se reintenta en
           // la próxima pasada, la más antigua primero.
+          res.enEspera++
+          break
+        }
+        if (r === 'reintento_php') {
+          // El XLR8 no responde: las siguientes también fallarían. Vuelve a
+          // intentarse en la próxima pasada (quedó al final de la cola).
           res.enEspera++
           break
         }
