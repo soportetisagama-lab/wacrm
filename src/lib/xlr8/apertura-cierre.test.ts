@@ -64,12 +64,20 @@ describe('enviarTarea', () => {
     expect(JSON.parse(init.body as string)).toEqual({ accion: 'apertura', linea: 'INOX', fecha: '2026-11-16', cantidad: 7 })
   })
 
-  it('el cierre no cuenta chats', async () => {
+  it('el cierre envía los chats sin derivar (leads que no se derivaron)', async () => {
     const contar = vi.fn(async () => 3)
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, guardado: false, motivo: 'ya_existe' }), { status: 200 }))
     expect(await enviarTarea('cierre', '2026-11-16', { env, contarSinDerivar: contar, fetchImpl })).toBe(true)
-    expect(contar).not.toHaveBeenCalled()
+    expect(JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ accion: 'cierre', linea: 'INOX', fecha: '2026-11-16', cantidad: 3 })
+  })
+
+  it('si no se puede contar, el cierre va igual sin cantidad', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, guardado: true }), { status: 200 }))
+    const falla = async () => { throw new Error('db caída') }
+    expect(await enviarTarea('cierre', '2026-11-16', { env, contarSinDerivar: falla, fetchImpl })).toBe(true)
     expect(JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ accion: 'cierre', linea: 'INOX', fecha: '2026-11-16' })
+    err.mockRestore()
   })
 
   it('falla (y se reintenta) si el PHP no responde ok', async () => {
