@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { HORARIO_DERIVACION, NOTA_PLANTILLA_REAPERTURA } from '@/lib/derivacion-auto'
+import { HORARIO_DERIVACION, NOTA_PLANTILLA_COLA, NOTA_PLANTILLA_REAPERTURA } from '@/lib/derivacion-auto'
 import { diaAnterior, fechaLima } from '@/lib/feriados-peru'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { sendTemplateToPhone } from '@/lib/whatsapp/send-template-to-phone'
@@ -80,6 +80,113 @@ export function notaReapertura(fecha: string): string {
   return `${NOTA_PLANTILLA_REAPERTURA} (${fecha.slice(8, 10)}/${fecha.slice(5, 7)})`
 }
 
+/** Nota del día al enviarla desde la cola, p. ej. "Plantilla enviada antes de derivar (17/11)". */
+export function notaPlantillaCola(fecha: string): string {
+  return `${NOTA_PLANTILLA_COLA} (${fecha.slice(8, 10)}/${fecha.slice(5, 7)})`
+}
+
+type Credenciales = { phoneNumberId: string; accessToken: string; template?: MessageTemplate } | null
+type ResultadoEnvio = 'enviada' | 'omitida' | 'fallida'
+
+/**
+ * Envía la plantilla a un chat si su ventana de 24 h cerró y deja `nota`.
+ * Lanza solo en errores inesperados (el que llama los atrapa).
+ */
+async function enviarPlantillaSiCerrada(
+  db: SupabaseClient,
+  conv: ConvCola,
+  nota: string,
+  now: Date,
+  cfg: ConfigReapertura,
+  credenciales: Map<string, Credenciales>,
+): Promise<ResultadoEnvio> {
+  const { data: ultimo } = await db
+    .from('messages')
+    .select('created_at')
+    .eq('conversation_id', conv.id)
+    .eq('sender_type', 'customer')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const at = (ultimo as { created_at?: string } | null)?.created_at
+  if (!ventanaCerrada(at ? new Date(at) : null, now)) return 'omitida'
+
+  if (!credenciales.has(conv.account_id)) {
+    credenciales.set(conv.account_id, await cargarCredenciales(db, conv.account_id, cfg))
+  }
+  const cred = credenciales.get(conv.account_id)
+  if (!cred) return 'omitida'
+
+  const { data: contacto } = await db.from('contacts').select('phone').eq('id', conv.contact_id).maybeSingle()
+  const phone = (contacto as { phone?: string | null } | null)?.phone
+  if (!phone) return 'omitida'
+
+  const envio = await sendTemplateToPhone({
+    phoneNumberId: cred.phoneNumberId,
+    accessToken: cred.accessToken,
+    phone,
+    templateName: cfg.plantilla,
+    language: cfg.idioma,
+    template: cred.template,
+  })
+  if (envio.status !== 'sent') {
+    console.error(LOG, 'no se envió la plantilla:', envio.error, { conversationId: conv.id })
+    return 'fallida'
+  }
+  await db.from('messages').insert({
+    conversation_id: conv.id,
+    sender_type: 'bot',
+    content_type: 'template',
+    content_text: cred.template?.body_text ?? null,
+    template_name: cfg.plantilla,
+    message_id: envio.messageId,
+    status: 'sent',
+  })
+  const resumen = (conv.ai_handoff_summary ?? '').trim()
+  const { error: errNota } = await db
+    .from('conversations')
+    .update({ ai_handoff_summary: resumen ? `${resumen}
+${nota}` : nota })
+    .eq('id', conv.id)
+  if (errNota) {
+    // Sin la nota podría reenviarse en otra pasada: cuenta como fallo.
+    console.error(LOG, 'enviada, pero no se guardó la nota:', errNota.message, { conversationId: conv.id })
+    return 'fallida'
+  }
+  return 'enviada'
+}
+
+/**
+ * Para la cola de derivación: antes de derivar un chat de WhatsApp con la
+ * ventana de 24 h cerrada, le envía la plantilla (una vez por día), así
+ * el asesor puede escribirle. Apagado sin REAPERTURA_PLANTILLA=1.
+ */
+export function plantillaAntesDeDerivar(
+  db: SupabaseClient,
+  now: Date = new Date(),
+  cfg: ConfigReapertura = configReapertura(),
+): ((conversationId: string) => Promise<void>) | undefined {
+  if (!cfg.activa) return undefined
+  const fecha = fechaLima(now)
+  const credenciales = new Map<string, Credenciales>()
+  return async (conversationId) => {
+    try {
+      const { data } = await db
+        .from('conversations')
+        .select('id, account_id, contact_id, ai_handoff_summary, channel')
+        .eq('id', conversationId)
+        .maybeSingle()
+      const conv = data as (ConvCola & { channel?: string | null }) | null
+      if (!conv || (conv.channel ?? 'whatsapp') !== 'whatsapp') return
+      const resumen = conv.ai_handoff_summary ?? ''
+      if (resumen.includes(notaReapertura(fecha)) || resumen.includes(notaPlantillaCola(fecha))) return
+      await enviarPlantillaSiCerrada(db, conv, notaPlantillaCola(fecha), now, cfg, credenciales)
+    } catch (err) {
+      console.error(LOG, err instanceof Error ? err.message : err, { conversationId })
+    }
+  }
+}
+
 export interface ReaperturaResultado {
   revisados: number
   enviados: number
@@ -115,66 +222,15 @@ export async function enviarReaperturas(
     console.error(LOG, 'no se pudo leer la cola:', error.message)
     return res
   }
-  const credenciales = new Map<string, { phoneNumberId: string; accessToken: string; template?: MessageTemplate } | null>()
+  const credenciales = new Map<string, Credenciales>()
 
   for (const conv of (data ?? []) as ConvCola[]) {
     res.revisados++
     try {
       if ((conv.ai_handoff_summary ?? '').includes(nota)) continue
-      const { data: ultimo } = await db
-        .from('messages')
-        .select('created_at')
-        .eq('conversation_id', conv.id)
-        .eq('sender_type', 'customer')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      const at = (ultimo as { created_at?: string } | null)?.created_at
-      if (!ventanaCerrada(at ? new Date(at) : null, now)) continue
-
-      if (!credenciales.has(conv.account_id)) {
-        credenciales.set(conv.account_id, await cargarCredenciales(db, conv.account_id, cfg))
-      }
-      const cred = credenciales.get(conv.account_id)
-      if (!cred) continue
-
-      const { data: contacto } = await db.from('contacts').select('phone').eq('id', conv.contact_id).maybeSingle()
-      const phone = (contacto as { phone?: string | null } | null)?.phone
-      if (!phone) continue
-
-      const envio = await sendTemplateToPhone({
-        phoneNumberId: cred.phoneNumberId,
-        accessToken: cred.accessToken,
-        phone,
-        templateName: cfg.plantilla,
-        language: cfg.idioma,
-        template: cred.template,
-      })
-      if (envio.status !== 'sent') {
-        res.fallidos++
-        console.error(LOG, 'no se envió la plantilla:', envio.error, { conversationId: conv.id })
-        continue
-      }
-      res.enviados++
-      await db.from('messages').insert({
-        conversation_id: conv.id,
-        sender_type: 'bot',
-        content_type: 'template',
-        content_text: cred.template?.body_text ?? null,
-        template_name: cfg.plantilla,
-        message_id: envio.messageId,
-        status: 'sent',
-      })
-      const resumen = (conv.ai_handoff_summary ?? '').trim()
-      const { error: errNota } = await db
-        .from('conversations')
-        .update({ ai_handoff_summary: resumen ? `${resumen}\n${nota}` : nota })
-        .eq('id', conv.id)
-      if (errNota) {
-        // Sin la nota podría reenviarse en otra pasada: cuenta como fallo.
-        res.fallidos++
-        console.error(LOG, 'enviada, pero no se guardó la nota:', errNota.message, { conversationId: conv.id })
-      }
+      const r = await enviarPlantillaSiCerrada(db, conv, nota, now, cfg, credenciales)
+      if (r === 'enviada') res.enviados++
+      else if (r === 'fallida') res.fallidos++
     } catch (err) {
       res.fallidos++
       console.error(LOG, err instanceof Error ? err.message : err, { conversationId: conv.id })

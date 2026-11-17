@@ -98,6 +98,12 @@ export function notaAlertaAtc(nombre: string, fecha: string): string {
 /** Inicio de la nota cuando se envió la plantilla de reapertura (lib/derivacion-reapertura.ts). */
 export const NOTA_PLANTILLA_REAPERTURA = 'Plantilla enviada 7:00'
 
+/** Inicio de la nota cuando se envió la plantilla justo antes de derivar desde la cola. */
+export const NOTA_PLANTILLA_COLA = 'Plantilla enviada antes de derivar'
+
+/** Prefijo común de las notas de plantilla. */
+const NOTA_PLANTILLA_PREFIJO = 'Plantilla enviada'
+
 /** Nota: cliente con asesor en XLR8 (menos de 30 días), se queda con él. */
 export function notaClienteRegistrado(nombre: string, fecha: string): string {
   return fecha
@@ -126,7 +132,7 @@ export function conservarNotasDerivacion(anterior: string | null | undefined, nu
         l.startsWith(NOTA_CLIENTE_REGISTRADO) ||
         l.startsWith(NOTA_ESPERA_ASESOR) ||
         l.startsWith(NOTA_ALERTA_ATC) ||
-        l.startsWith(NOTA_PLANTILLA_REAPERTURA) ||
+        l.startsWith(NOTA_PLANTILLA_PREFIJO) ||
         l === NOTA_EN_COLA ||
         l === NOTA_EN_TURNO ||
         l === NOTA_EN_ESPERA,
@@ -377,6 +383,12 @@ export interface DerivacionStore {
   /** Conversaciones en cola, la más antigua primero. */
   listQueue(limit: number): Promise<ColaItem[]>
   /**
+   * Chats de WhatsApp en traspaso (pending), sin asesor, que nunca se
+   * reclamaron ni están en cola, con actividad desde `desde`. Con su
+   * último mensaje, para encolarlos con ese turno.
+   */
+  listSinCola?(desde: Date, limit: number): Promise<ColaItem[]>
+  /**
    * Saca de la cola y devuelve el asesor que tenía al encolar; null si
    * otro proceso ya la sacó (idempotencia).
    */
@@ -450,6 +462,11 @@ export interface DerivacionDeps {
   clasificar?: ClasificadorDerivacion
   /** Solo para los tests: reemplaza NUMEROS_PRUEBA. */
   numerosPrueba?: readonly string[]
+  /**
+   * Cola: se llama justo antes de derivar cada chat (p. ej. enviar la
+   * plantilla si la ventana de 24 h cerró). Sus errores se ignoran.
+   */
+  antesDeDerivar?: (conversationId: string) => Promise<void>
 }
 
 /** Opciones internas de derivarAuto. */
@@ -889,6 +906,27 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
       // Sin la migración 096 no se guarda: se reclasifica en el reintento.
       if (error) console.error(LOG, 'no se pudo guardar la clasificación:', error.message, { conversationId })
     },
+    async listSinCola(desde, limit) {
+      const { data, error } = await db
+        .from('conversations')
+        .select('id, last_message_at')
+        .eq('channel', 'whatsapp')
+        .eq('status', 'pending')
+        .is('assigned_agent_id', null)
+        .is('derivado_auto_at', null)
+        .is('derivacion_pendiente_at', null)
+        .gte('last_message_at', desde.toISOString())
+        .order('last_message_at', { ascending: true })
+        .limit(limit)
+      if (error) {
+        console.error(LOG, 'barrido: no se pudo leer:', error.message)
+        return []
+      }
+      return ((data ?? []) as { id: string; last_message_at: string | null }[]).map((r) => ({
+        id: r.id,
+        at: r.last_message_at ? new Date(r.last_message_at) : new Date(),
+      }))
+    },
     async listQueue(limit) {
       const { data, error } = await db
         .from('conversations')
@@ -970,6 +1008,7 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
           res.descartadas++
           continue
         }
+        if (deps.antesDeDerivar) await deps.antesDeDerivar(id).catch(() => undefined)
         const r = await derivarAuto(id, { ...deps, env, now }, { desdeCola: { at } })
         if (r === 'en_espera') {
           // Cupo lleno: las siguientes también fallarían. Se reintenta en
@@ -1006,15 +1045,55 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
 
 let colaEnCurso = false
 
+/** Barrido: días hacia atrás y cada cuánto corre. */
+export const BARRIDO_DIAS = 7
+const BARRIDO_CADA_MS = 10 * 60_000
+let ultimoBarrido = 0
+
+/**
+ * Barrido: chats en traspaso sin asesor que nunca entraron a la cola
+ * (p. ej. llegaron antes de activar la derivación o se perdió el
+ * traspaso) se encolan con su hora, para que ninguno quede sin derivar.
+ * Devuelve cuántos encoló. Nunca lanza.
+ */
+export async function barrerSinCola(store: DerivacionStore, now: Date): Promise<number> {
+  if (!store.listSinCola) return 0
+  let n = 0
+  try {
+    const items = await store.listSinCola(new Date(now.getTime() - BARRIDO_DIAS * 24 * 60 * 60_000), 100)
+    for (const { id, at } of items) {
+      if (await store.enqueue(id, at, null).catch(() => false)) n++
+    }
+    if (n) console.log(LOG, `barrido: ${n} chat(s) sin asesor vuelven a la cola`)
+  } catch (err) {
+    console.error(LOG, 'barrido:', err instanceof Error ? err.message : err)
+  }
+  return n
+}
+
 /**
  * Enganche del cron de flujos (cada minuto): procesa la cola si hay
  * variables, es horario y no hay otra pasada en curso. Nunca lanza.
  */
-export async function runColaDerivacionSiToca(db: SupabaseClient, now: Date = new Date()): Promise<void> {
+export async function runColaDerivacionSiToca(
+  db: SupabaseClient,
+  now: Date = new Date(),
+  antesDeDerivar?: (conversationId: string) => Promise<void>,
+): Promise<void> {
   if (colaEnCurso || !envListo(derivacionEnv()) || !horarioAbierto(now)) return
   colaEnCurso = true
   try {
-    await procesarColaDerivacion({ store: supabaseDerivacionStore(db), now, clasificar: clasificadorOpenAi(db) })
+    const store = supabaseDerivacionStore(db)
+    if (now.getTime() - ultimoBarrido >= BARRIDO_CADA_MS) {
+      ultimoBarrido = now.getTime()
+      await barrerSinCola(store, now)
+    }
+    await procesarColaDerivacion({
+      store,
+      now,
+      clasificar: clasificadorOpenAi(db),
+      antesDeDerivar,
+    })
   } catch (err) {
     console.error(LOG, err)
   } finally {
