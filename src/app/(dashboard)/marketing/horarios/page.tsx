@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Clock, Loader2, PhoneCall, TrendingDown, TrendingUp } from "lucide-react";
+import { Clock, Loader2, PhoneCall, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { canViewMarketing } from "@/lib/auth/roles";
@@ -26,6 +26,8 @@ type Preset = "7d" | "30d" | "90d" | "custom";
 const PRESET_DAYS: Record<Exclude<Preset, "custom">, number> = { "7d": 7, "30d": 30, "90d": 90 };
 const ALL = "";
 const DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+/** Cells with fewer marcaciones than this are shown faded: their % is not reliable. */
+const LOW_SAMPLE = 5;
 
 interface ApiResponse extends HorariosResumen {
   asesores: string[];
@@ -95,6 +97,26 @@ export default function HorariosContactoPage() {
   }, [data]);
   const hoursWithData = useMemo(
     () => (data?.horas ?? []).filter((h) => h.contestados + h.noContestados > 0).map((h) => h.hora),
+    [data],
+  );
+
+  // Weekdays with at least one marcación (Sunday is usually empty).
+  const daysWithData = useMemo(
+    () =>
+      DAYS.filter((d) =>
+        (data?.celdas ?? []).some((c) => c.dia === d && c.contestados + c.noContestados > 0),
+      ),
+    [data],
+  );
+  // Best day × hour slots to call: highest % among cells with enough data.
+  const topSlots = useMemo(
+    () =>
+      (data?.celdas ?? [])
+        .map((c) => ({ ...c, total: c.contestados + c.noContestados }))
+        .filter((c) => c.total >= MIN_MARCACIONES_RANKING)
+        .map((c) => ({ ...c, pct: pctContestados(c) }))
+        .sort((a, b) => b.pct - a.pct || b.total - a.total)
+        .slice(0, 3),
     [data],
   );
 
@@ -248,6 +270,43 @@ export default function HorariosContactoPage() {
             <p className="py-12 text-center text-sm text-muted-foreground">{t("empty")}</p>
           ) : (
             <>
+              {/* Best day × hour slots */}
+              <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Sparkles className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-tight text-foreground">{t("topTitle")}</h2>
+                    <p className="text-xs text-muted-foreground">{t("topDesc", { min: MIN_MARCACIONES_RANKING })}</p>
+                  </div>
+                </div>
+                {topSlots.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t("topEmpty")}</p>
+                ) : (
+                  <ol className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {topSlots.map((slot, i) => (
+                      <li
+                        key={`${slot.dia}-${slot.hora}`}
+                        className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5"
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {dayName(slot.dia)} · {hourLabel(slot.hora)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {t("rankSub", { pct: pctLabel(slot.pct), count: slot.total })}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
               {/* Heat map: hour rows × weekday columns */}
               <section className="rounded-xl border border-border bg-card shadow-sm">
                 <header className="border-b border-border px-5 py-4">
@@ -259,7 +318,7 @@ export default function HorariosContactoPage() {
                     <thead>
                       <tr className="text-muted-foreground">
                         <th className="w-14 text-left font-medium">{t("colHour")}</th>
-                        {DAYS.map((d) => (
+                        {daysWithData.map((d) => (
                           <th key={d} className="font-medium">
                             {dayName(d)}
                           </th>
@@ -270,10 +329,11 @@ export default function HorariosContactoPage() {
                       {hoursWithData.map((hora) => (
                         <tr key={hora}>
                           <td className="pr-2 text-muted-foreground tabular-nums">{hourLabel(hora)}</td>
-                          {DAYS.map((dia) => {
+                          {daysWithData.map((dia) => {
                             const c = cells.get(dia * 24 + hora);
                             const total = c ? c.contestados + c.noContestados : 0;
                             const pct = c && total > 0 ? pctContestados(c) : null;
+                            const low = pct !== null && total < LOW_SAMPLE;
                             const isSelected = selected?.dia === dia && selected.hora === hora;
                             return (
                               <td key={dia} className="p-0">
@@ -283,8 +343,9 @@ export default function HorariosContactoPage() {
                                   aria-label={cellText(dia, hora)}
                                   onClick={() => setSelected(isSelected ? null : { dia, hora })}
                                   className={cn(
-                                    "flex h-8 w-full items-center justify-center rounded-md tabular-nums transition-shadow",
+                                    "flex h-10 w-full flex-col items-center justify-center rounded-md leading-tight tabular-nums transition-shadow hover:ring-1 hover:ring-ring/50",
                                     pct === null ? "bg-muted/40 text-muted-foreground/60" : "text-foreground",
+                                    low && "border border-dashed border-border opacity-60",
                                     isSelected && "ring-2 ring-ring",
                                   )}
                                   style={
@@ -297,7 +358,12 @@ export default function HorariosContactoPage() {
                                         }
                                   }
                                 >
-                                  {pct === null ? "" : `${pctLabel(pct)}%`}
+                                  {pct !== null && (
+                                    <>
+                                      <span className="font-semibold">{pctLabel(pct)}%</span>
+                                      <span className="text-[10px] text-muted-foreground">{total}</span>
+                                    </>
+                                  )}
                                 </button>
                               </td>
                             );
@@ -308,7 +374,11 @@ export default function HorariosContactoPage() {
                   </table>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
                     <span className="min-h-4">{selected ? cellText(selected.dia, selected.hora) : ""}</span>
-                    <span className="flex items-center gap-2">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="mr-2 inline-flex items-center gap-1.5">
+                        <span className="h-2.5 w-4 rounded-sm border border-dashed border-border opacity-60" />
+                        {t("lowSample", { min: LOW_SAMPLE })}
+                      </span>
                       {t("legendLow")}
                       <span
                         className="h-2.5 w-24 rounded-full"
