@@ -111,6 +111,11 @@ export function notaClienteRegistrado(nombre: string, fecha: string): string {
     : `${NOTA_CLIENTE_REGISTRADO}; se mantiene con ${nombre}`
 }
 
+/** Nota: su mismo asesor está en no derivación o inactivo; el lead espera a que vuelva. */
+export function notaAsesorAusente(nombre: string): string {
+  return `En espera de su asesor ${nombre} (en no derivación o inactivo); se deriva cuando vuelva`
+}
+
 /** Nota: su mismo asesor tiene el cupo lleno; el chat ya es suyo y el lead espera. */
 export function notaEsperaAsesor(nombre: string): string {
   return `${NOTA_ESPERA_ASESOR} ${nombre}; el lead de XLR8 se registra cuando libere un cupo`
@@ -714,6 +719,15 @@ export async function derivarAuto(
       if (motivo === 'sin_atc') {
         const r = await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
         return r === 'reintento_php' ? 'espera_atc' : r
+      }
+      // Su mismo asesor está en no derivación (reunión…) o inactivo: el
+      // lead espera al final de la cola a que vuelva, sin frenar a los demás.
+      if (motivo === 'asesor_ausente') {
+        const r = await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
+        if (r !== 'reintento_php') return r
+        const { nombre } = await asesorDeRespuesta(store, conv.account_id, body)
+        await store.appendNote(conversationId, notaAsesorAusente(nombre))
+        return 'espera_atc'
       }
       // Respuesta rara (sin motivo, login, error): vuelve a la cola.
       return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
