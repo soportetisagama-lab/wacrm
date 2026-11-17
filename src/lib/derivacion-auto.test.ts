@@ -7,6 +7,7 @@ import {
   derivarAuto,
   dentroDeHorario,
   procesarColaDerivacion,
+  barrerSinCola,
   NOTA_EN_COLA,
   NOTA_EN_ESPERA,
   NOTA_EN_TURNO,
@@ -360,6 +361,37 @@ describe('fuera de horario', () => {
 })
 
 describe('cola de derivación', () => {
+  it('antesDeDerivar (plantilla) corre antes de llamar al PHP', async () => {
+    const store = makeStore()
+    await store.enqueue('conv-1', lima('2026-11-15T17:00'), null)
+    const orden: string[] = []
+    const fetchFn = vi.fn(async () => {
+      orden.push('php')
+      return new Response(JSON.stringify({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    const antesDeDerivar = vi.fn(async () => {
+      orden.push('plantilla')
+    })
+    const r = await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-17T10:00'), antesDeDerivar })
+    expect(r.derivadas).toBe(1)
+    expect(antesDeDerivar).toHaveBeenCalledWith('conv-1')
+    expect(orden).toEqual(['plantilla', 'php'])
+  })
+
+  it('barrido: encola los chats sin asesor que nunca entraron a la cola', async () => {
+    const store = makeStore()
+    const viejo = lima('2026-11-14T19:04')
+    store.listSinCola = vi.fn(async () => [{ id: 'conv-1', at: viejo }])
+    expect(await barrerSinCola(store, lima('2026-11-17T10:00'))).toBe(1)
+    expect(store.enqueue).toHaveBeenCalledWith('conv-1', viejo, null)
+    expect(await store.colaIds()).toEqual(['conv-1'])
+    // Ya en cola: no se duplica.
+    expect(await barrerSinCola(store, lima('2026-11-17T10:10'))).toBe(0)
+  })
+
   it('domingo 20:00 espera y se deriva el lunes a las 08:00', async () => {
     const store = makeStore()
     const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
