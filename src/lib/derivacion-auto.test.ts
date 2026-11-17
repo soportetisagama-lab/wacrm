@@ -413,6 +413,26 @@ describe('cola de derivación', () => {
     expect(await store.colaIds()).toEqual([])
   })
 
+  it('sin_atc vuelve al final y no frena al siguiente en la misma pasada', async () => {
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await store.enqueue('atc', lima('2026-11-09T07:00'), null)
+    await store.enqueue('normal', lima('2026-11-09T07:30'), null)
+    let n = 0
+    const fetchFn = vi.fn(async () => {
+      n++
+      return new Response(
+        JSON.stringify(n === 1 ? { ok: false, motivo: 'sin_atc' } : { ok: true, asesor_id: 42, asesor_nombre: 'Luis' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    const r = await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-09T09:00') })
+    expect(r.derivadas).toBe(1)
+    expect(store.assign).toHaveBeenCalledWith('normal', 'user-42')
+    expect(await store.colaIds()).toEqual(['atc'])
+    err.mockRestore()
+  })
+
   it('13:20 espera y se deriva a las 14:00', async () => {
     const store = makeStore()
     const fetchFn = okFetch({ ok: true, asesor_id: 42 })
