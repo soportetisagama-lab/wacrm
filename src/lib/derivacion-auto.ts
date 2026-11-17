@@ -63,8 +63,11 @@ import { esFeriado, feriadosPausanDerivacion } from '@/lib/feriados-peru'
  */
 export const NUMEROS_PRUEBA: readonly string[] = ['51926843129', '926843129']
 
-/** Tiempo máximo de la llamada al PHP. */
-export const DERIVAR_TIMEOUT_MS = 8_000
+/**
+ * Tiempo máximo de la llamada al PHP. Con 8 s el hosting lento cortaba
+ * la cola en cada pasada (timeout → reintento y fin de la pasada).
+ */
+export const DERIVAR_TIMEOUT_MS = 25_000
 
 const LOG = '[derivacion-auto]'
 const USER_AGENT = 'wacrm/1.0'
