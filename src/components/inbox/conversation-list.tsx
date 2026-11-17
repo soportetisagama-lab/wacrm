@@ -40,6 +40,8 @@ import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 
 /** Matches the DB trigger in migration 063 — kept in sync manually
  *  since there's no single source of truth shared between SQL and TS. */
+/** Chats shown first on the initial load, before the full list. */
+const RECENT_FIRST = 100;
 const MAX_PINNED_CONVERSATIONS = 3;
 
 /** Sentinel for the "assigned agent" filter's "no agent assigned yet"
@@ -281,9 +283,26 @@ export function ConversationList({
     const knownAtStart = new Set(conversationsRef.current.map((c) => c.id));
 
     (async () => {
+      // First load: the most recent chats first, so the list shows in a
+      // second while the full read (below) continues. Merged like any
+      // read; the full one replaces it when it lands.
+      if (!hasLoadedListRef.current) {
+        const { data: recent, error: recentErr } = await supabase
+          .from("conversations")
+          .select(CONVERSATION_SELECT)
+          .order("last_message_at", { ascending: false, nullsFirst: false })
+          .limit(RECENT_FIRST);
+        if (cancelled) return;
+        if (!recentErr && recent && recent.length) {
+          onConversationsLoadedRef.current(normalizeConversations(recent), knownAtStart);
+          setLoading(false);
+        }
+      }
+
       // Paged by id, not by last_message_at: a chat receiving a message
       // while this runs would jump to a page already read and be lost. The
       // on-screen order doesn't come from here, see `sorted` below.
+      // Several pages at once: each one is slow (row-level checks).
       const { rows, error } = await fetchAllPages(
         (from, to) =>
           supabase
@@ -291,7 +310,7 @@ export function ConversationList({
             .select(CONVERSATION_SELECT)
             .order("id")
             .range(from, to),
-        { isCancelled: () => cancelled },
+        { isCancelled: () => cancelled, concurrency: 4 },
       );
 
       if (cancelled) return;
