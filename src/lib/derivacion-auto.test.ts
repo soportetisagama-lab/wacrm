@@ -382,6 +382,28 @@ describe('cola de derivación', () => {
     expect(await store.colaIds()).toEqual([])
   })
 
+  it('excepción tras reclamar: vuelve a la cola con su asesor y luego se deriva', async () => {
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const base = store.loadConversation
+    store.loadConversation = vi.fn(async (id: string) => {
+      const c = await base(id)
+      return c ? { ...c, assigned_agent_id: 'user-9' } : c
+    })
+    const original = store.findAgentByXlr8
+    store.findAgentByXlr8 = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Luis' })
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: lima('2026-11-09T09:00') })).toBe('reintento_php')
+    expect(await store.colaIds()).toEqual(['conv-1'])
+    store.findAgentByXlr8 = original
+    const r = await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-09T09:01') })
+    expect(r.descartadas).toBe(0)
+    expect(r.derivadas).toBe(1)
+    err.mockRestore()
+  })
+
   it('sin_atc vuelve al final y no frena al siguiente en la misma pasada', async () => {
     const store = makeStore()
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
