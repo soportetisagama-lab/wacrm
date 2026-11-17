@@ -5,6 +5,20 @@ const rows = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => ({ id: `r${from + i}` }));
 
 describe("fetchAllPages", () => {
+  it("with concurrency asks for several pages at once and keeps their order", async () => {
+    const fetchPage = vi.fn(async (from: number) => {
+      const total = 7;
+      const count = Math.max(0, Math.min(2, total - from));
+      return { data: rows(from, count), error: null };
+    });
+
+    const result = await fetchAllPages(fetchPage, { pageSize: 2, concurrency: 3 });
+
+    expect(result.rows.map((r) => r.id)).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
+    expect(result.complete).toBe(true);
+    expect(fetchPage.mock.calls.map((c) => c[0])).toEqual([0, 2, 4, 6, 8, 10]);
+  });
+
   it("keeps reading until a page comes back short", async () => {
     const fetchPage = vi
       .fn()
