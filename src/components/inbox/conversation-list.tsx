@@ -38,10 +38,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { ConversationTagsDialog } from "./conversation-tags-dialog";
 import { withoutBroadcastTags } from "@/lib/tags/broadcast-tags";
 
-/** Matches the DB trigger in migration 063 — kept in sync manually
- *  since there's no single source of truth shared between SQL and TS. */
 /** Chats shown first on the initial load, before the full list. */
 const RECENT_FIRST = 100;
+/** Matches the DB trigger in migration 063 — kept in sync manually
+ *  since there's no single source of truth shared between SQL and TS. */
 const MAX_PINNED_CONVERSATIONS = 3;
 
 /** Sentinel for the "assigned agent" filter's "no agent assigned yet"
@@ -286,6 +286,7 @@ export function ConversationList({
       // First load: the most recent chats first, so the list shows in a
       // second while the full read (below) continues. Merged like any
       // read; the full one replaces it when it lands.
+      let quickShown = false;
       if (!hasLoadedListRef.current) {
         const { data: recent, error: recentErr } = await supabase
           .from("conversations")
@@ -295,6 +296,7 @@ export function ConversationList({
         if (cancelled) return;
         if (!recentErr && recent && recent.length) {
           onConversationsLoadedRef.current(normalizeConversations(recent), knownAtStart);
+          quickShown = true;
           setLoading(false);
         }
       }
@@ -326,6 +328,8 @@ export function ConversationList({
         // A first load keeps whatever pages arrived, better than an empty
         // list; a refetch keeps the list already on screen.
         if (rows.length === 0 || hasLoadedListRef.current) {
+          // Only the first 100 (quick load) on screen: say the rest failed.
+          if (!hasLoadedListRef.current && quickShown) toast.error(tRef.current("loadPartialFailed"));
           setLoading(false);
           return;
         }
