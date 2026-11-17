@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { canViewMessageUsage } from "@/lib/auth/roles";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { PageHero } from "@/components/layout/page-hero";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -270,15 +271,14 @@ export default function MessageUsagePage() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{t("pageTitle")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("pageDesc")}</p>
-      </div>
-
-      {/* Filters */}
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 sm:w-fit">
+    <div className="space-y-6">
+      {/* Header — boxed like Contactos; the period presets live on the right. */}
+      <PageHero
+        icon={MessageSquare}
+        title={t("pageTitle")}
+        subtitle={t("pageDesc")}
+        actions={
+        <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1">
           {(["today", "7d", "month", "lastMonth"] as Preset[]).map((pr) => (
             <button
               key={pr}
@@ -288,15 +288,21 @@ export default function MessageUsagePage() {
                 setRange(presetRange(pr));
               }}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                preset === pr ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                preset === pr
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-card hover:text-foreground",
               )}
             >
               {t(`preset_${pr}`)}
             </button>
           ))}
         </div>
+        }
+      />
 
+      {/* Filters */}
+      <div className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">{t("from")}</Label>
