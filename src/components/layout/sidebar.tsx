@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { useTotalUnread } from '@/hooks/use-total-unread';
@@ -13,6 +13,7 @@ import {
   Bell,
   Bot,
   Briefcase,
+  ChevronDown,
   Crown,
   GitBranch,
   Headphones,
@@ -227,6 +228,16 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
   // list would otherwise be empty — currently just Settings) agree.
   const visibleBottomNavItems = bottomNavItems.filter(isNavItemVisible);
 
+  // Groups with children (Marketing) open and close with a click. On a
+  // route change they go back to the default: open only if the current
+  // page is one of their children. Reset during render (not in an effect).
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [groupsPath, setGroupsPath] = useState(pathname);
+  if (groupsPath !== pathname) {
+    setGroupsPath(pathname);
+    setOpenGroups({});
+  }
+
   // Shared row renderer for both the main nav list and the bottom
   // (Settings) list — same active/hover/badge treatment either way.
   const renderNavItem = (item: NavItem) => {
@@ -249,12 +260,41 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
     const showNotificationBadge =
       item.href === '/notifications' && unreadNotifications > 0;
 
+    const isGroup = !!item.children && item.children.length > 0;
+    const groupOpen = isGroup && (openGroups[item.href] ?? childActive);
+    // In icon-only mode the children are hidden, so the group row keeps
+    // working as a link; otherwise it is a button that opens/closes them.
+    const iconOnly = collapsed ? 'lg:hidden' : 'lg:max-xl:hidden';
+    const RowTag = (isGroup ? 'button' : Link) as React.ElementType;
+
     return (
       <li key={item.href}>
-        <Link
-          href={item.href}
+        {isGroup && (
+          <Link
+            href={item.href}
+            title={t(item.labelKey as string)}
+            className={cn(
+              'mx-3 hidden items-center justify-center rounded-xl py-2.5',
+              collapsed ? 'lg:mx-2 lg:flex' : 'lg:max-xl:mx-2 lg:max-xl:flex',
+              isActive || childActive
+                ? 'bg-sidebar-primary text-white'
+                : 'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground'
+            )}
+          >
+            <item.icon className="h-[18px] w-[18px] shrink-0" />
+          </Link>
+        )}
+        <RowTag
+          {...(isGroup
+            ? {
+                type: 'button' as const,
+                'aria-expanded': groupOpen,
+                onClick: () => setOpenGroups((prev) => ({ ...prev, [item.href]: !groupOpen })),
+              }
+            : { href: item.href })}
           title={t(item.labelKey as string)}
           className={cn(
+            isGroup && cn('w-full text-left', iconOnly),
             'group relative mx-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium tracking-[0.08em] uppercase transition-colors duration-150 lg:py-2.5',
             isActive || childActive
               ? 'bg-sidebar-primary text-white shadow-[0_6px_14px_color-mix(in_oklab,var(--sidebar-primary)_35%,transparent)]'
@@ -305,9 +345,19 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
               {unreadNotifications > 9 ? '9+' : unreadNotifications}
             </span>
           )}
-        </Link>
-        {item.children && item.children.length > 0 && (
-          <ul className={cn('bg-[var(--sidebar-sub)]', collapsed ? 'lg:hidden' : 'lg:max-xl:hidden')}>
+          {isGroup && (
+            <ChevronDown
+              aria-hidden
+              className={cn(
+                'h-4 w-4 shrink-0 transition-transform duration-150',
+                groupOpen ? 'rotate-180' : '',
+                iconOnly
+              )}
+            />
+          )}
+        </RowTag>
+        {isGroup && groupOpen && item.children && (
+          <ul className={cn('bg-[var(--sidebar-sub)]', iconOnly)}>
             {item.children.map((child) => {
               const isChildActive =
                 pathname === child.href || pathname.startsWith(child.href);
