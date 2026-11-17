@@ -16,7 +16,6 @@ import {
   derivacionConfigurada,
   HORARIO_DERIVACION,
   NOTA_ERROR_PHP,
-  REINTENTOS_PHP_MAX,
   reiniciarReintentosPhp,
   type DerivacionStore,
 } from './derivacion-auto'
@@ -154,7 +153,7 @@ describe('idempotencia', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 
-  it('si el PHP falla vuelve a la cola y se reintenta (hasta el tope)', async () => {
+  it('si el PHP falla vuelve a la cola y se reintenta siempre', async () => {
     reiniciarReintentosPhp()
     const store = makeStore()
     const fetchFn = vi.fn(async (): Promise<Response> => {
@@ -164,15 +163,28 @@ describe('idempotencia', () => {
     expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('reintento_php')
     expect(await store.colaIds()).toEqual(['conv-1'])
     expect(store.assign).not.toHaveBeenCalled()
-    // Sigue fallando: reintenta hasta el tope y luego deja la nota.
-    for (let i = 1; i < REINTENTOS_PHP_MAX; i++) {
+    // Sigue fallando: nunca sale de la cola ni deja la nota de "a mano".
+    for (let i = 1; i < 30; i++) {
       await store.dequeue('conv-1')
       expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { desdeCola: { at: DENTRO } })).toBe('reintento_php')
     }
-    await store.dequeue('conv-1')
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO }, { desdeCola: { at: DENTRO } })).toBe('error_php')
-    expect(store.notas.get('conv-1')).toContain(NOTA_ERROR_PHP)
-    expect(await store.colaIds()).toEqual([])
+    expect(store.notas.get('conv-1') ?? []).not.toContain(NOTA_ERROR_PHP)
+    expect(await store.colaIds()).toEqual(['conv-1'])
+    err.mockRestore()
+  })
+
+  it('respuesta sin motivo o página de login: vuelve a la cola', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const fetchFn of [
+      okFetch({ ok: false }),
+      vi.fn(async () => new Response('<html>login</html>', { status: 200 })),
+      okFetch({ ok: false, motivo: 'no_autorizado' }),
+    ]) {
+      const store = makeStore()
+      expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO })).toBe('reintento_php')
+      expect(await store.colaIds()).toEqual(['conv-1'])
+      expect(store.assign).not.toHaveBeenCalled()
+    }
     err.mockRestore()
   })
 
@@ -245,7 +257,7 @@ describe('llamada y mapeo de asesor', () => {
   })
 
   it('ok:false del PHP (otro motivo) no asigna ni vuelve a la cola', async () => {
-    for (const motivo of ['sin_atc', 'fuera_de_prueba', 'duplicado']) {
+    for (const motivo of ['sin_celular', 'fuera_de_prueba', 'duplicado']) {
       const store = makeStore()
       const err = vi.spyOn(console, 'error').mockImplementation(() => {})
       const fetchFn = okFetch({ ok: false, motivo })
