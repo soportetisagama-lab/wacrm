@@ -24,7 +24,7 @@ import { MEMORY_SWEEP_EVERY_MS, runMemorySweepIfDue } from '@/lib/ai/learning/me
 import { runNightlyLearningIfDue } from '@/lib/ai/learning/nightly'
 import { runColaDerivacionSiToca } from '@/lib/derivacion-auto'
 import { runAperturaCierreSiToca } from '@/lib/xlr8/apertura-cierre'
-import { runReaperturaSiToca } from '@/lib/derivacion-reapertura'
+import { plantillaAntesDeDerivar, runReaperturaSiToca } from '@/lib/derivacion-reapertura'
 import { asesorReal } from '@/lib/conversations/perfil-sin-numero'
 
 /** xlr8 status → tag sync rides on this cron, at most every 5 min. */
@@ -134,7 +134,8 @@ async function runFlowsCron(): Promise<Response> {
   // Derivación automática (lib/derivacion-auto.ts): traspasos que
   // quedaron en cola fuera de horario se derivan al abrir el horario,
   // el más antiguo primero. Fire-and-forget; never throws.
-  void runColaDerivacionSiToca(admin, now)
+  // Si la ventana de 24 h cerró, primero la plantilla y luego deriva.
+  void runColaDerivacionSiToca(admin, now, plantillaAntesDeDerivar(admin, now))
 
   // Apertura (07:55) y cierre (17:30 / sáb 13:00) para apertura_cierre.php
   // en XLR8 (lib/xlr8/apertura-cierre.ts). Fire-and-forget; never throws.
