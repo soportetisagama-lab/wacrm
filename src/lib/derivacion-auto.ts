@@ -369,11 +369,12 @@ export interface DerivacionStore {
   /** Conversaciones en cola, la más antigua primero. */
   listQueue(limit: number): Promise<ColaItem[]>
   /**
-   * Chats de WhatsApp en traspaso (pending), sin asesor, que nunca se
-   * reclamaron ni están en cola, con actividad desde `desde`. Con su
-   * último mensaje, para encolarlos con ese turno.
+   * Chats de WhatsApp sin asesor, que nunca se reclamaron ni están en
+   * cola, con actividad desde `desde`: en traspaso (pending) o abiertos
+   * con la IA y sin movimiento desde `quietoDesde`. Con su último
+   * mensaje, para encolarlos con ese turno.
    */
-  listSinCola?(desde: Date, limit: number): Promise<ColaItem[]>
+  listSinCola?(desde: Date, limit: number, quietoDesde?: Date): Promise<ColaItem[]>
   /**
    * Saca de la cola y devuelve el asesor que tenía al encolar; null si
    * otro proceso ya la sacó (idempotencia).
@@ -901,12 +902,15 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
       // Sin la migración 096 no se guarda: se reclasifica en el reintento.
       if (error) console.error(LOG, 'no se pudo guardar la clasificación:', error.message, { conversationId })
     },
-    async listSinCola(desde, limit) {
+    async listSinCola(desde, limit, quietoDesde) {
+      const estados = quietoDesde
+        ? `status.eq.pending,and(status.eq.open,last_message_at.lt.${quietoDesde.toISOString()})`
+        : 'status.eq.pending'
       const { data, error } = await db
         .from('conversations')
         .select('id, last_message_at')
         .eq('channel', 'whatsapp')
-        .eq('status', 'pending')
+        .or(estados)
         .is('assigned_agent_id', null)
         .is('derivado_auto_at', null)
         .is('derivacion_pendiente_at', null)
@@ -1042,20 +1046,27 @@ let colaEnCurso = false
 
 /** Barrido: días hacia atrás y cada cuánto corre. */
 export const BARRIDO_DIAS = 7
+/** Chats abiertos con la IA sin asesor: se derivan tras estas horas sin movimiento. */
+export const BARRIDO_QUIETO_HORAS = 2
 const BARRIDO_CADA_MS = 10 * 60_000
 let ultimoBarrido = 0
 
 /**
- * Barrido: chats en traspaso sin asesor que nunca entraron a la cola
- * (p. ej. llegaron antes de activar la derivación o se perdió el
- * traspaso) se encolan con su hora, para que ninguno quede sin derivar.
+ * Barrido: chats sin asesor que nunca entraron a la cola se encolan con
+ * su hora, para que ninguno quede sin derivar: en traspaso (p. ej.
+ * llegaron antes de activar la derivación) o abiertos con la IA y sin
+ * movimiento hace BARRIDO_QUIETO_HORAS (el cliente no terminó el flujo).
  * Devuelve cuántos encoló. Nunca lanza.
  */
 export async function barrerSinCola(store: DerivacionStore, now: Date): Promise<number> {
   if (!store.listSinCola) return 0
   let n = 0
   try {
-    const items = await store.listSinCola(new Date(now.getTime() - BARRIDO_DIAS * 24 * 60 * 60_000), 100)
+    const items = await store.listSinCola(
+      new Date(now.getTime() - BARRIDO_DIAS * 24 * 60 * 60_000),
+      100,
+      new Date(now.getTime() - BARRIDO_QUIETO_HORAS * 60 * 60_000),
+    )
     for (const { id, at } of items) {
       if (await store.enqueue(id, at, null).catch(() => false)) n++
     }
