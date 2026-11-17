@@ -136,7 +136,14 @@ export function conservarNotasDerivacion(anterior: string | null | undefined, nu
 }
 
 /** Motivos del PHP que significan "reintentar más tarde" (cupo lleno). */
-const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado']
+const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado', 'sin_atc']
+
+/**
+ * Respuestas del PHP que no vuelven a la cola: no tiene sentido reintentar
+ * (sin celular, número fuera de la prueba, duplicado sin asesor). Cualquier
+ * otra respuesta rara (sin motivo, página de login, error) vuelve a la cola.
+ */
+const MOTIVOS_FINALES: readonly string[] = ['sin_celular', 'fuera_de_prueba', 'duplicado']
 
 /** Estados en que una conversación de la cola todavía se deriva. */
 const ESTADOS_DERIVABLES: readonly string[] = ['pending', 'open']
@@ -465,21 +472,18 @@ async function clasificarSeguro(
 }
 
 /**
- * Reintentos por conversación cuando el PHP falla (XLR8 caído, HTTP 5xx/520
- * o sin respuesta). Antes el chat quedaba reclamado y no se derivaba nunca.
+ * Cuando el PHP falla (XLR8 caído, HTTP 5xx/520, sin respuesta o respuesta
+ * rara) el chat vuelve a la cola y se reintenta siempre, sin tope.
  * Reintentar es seguro: si el lead ya se creó, el PHP responde
- * `duplicado` y el chat va a ese asesor. En memoria del proceso.
+ * `duplicado` y el chat va a ese asesor.
  */
-export const REINTENTOS_PHP_MAX = 15
-const reintentosPhp = new Map<string, number>()
 
-/** Nota cuando se agotan los reintentos: queda para derivación manual. */
+/** Nota solo si ni siquiera se pudo volver a la cola (falla de la base). */
 export const NOTA_ERROR_PHP = 'No se pudo derivar: el XLR8 no respondió. Derívalo a mano.'
 
 /**
  * El PHP falló: vuelve a la cola al final (no frena a los demás) para la
- * próxima pasada. Tras REINTENTOS_PHP_MAX intentos deja la nota y queda
- * para derivación manual ('error_php').
+ * próxima pasada.
  */
 async function reintentarTrasErrorPhp(
   store: DerivacionStore,
@@ -487,13 +491,6 @@ async function reintentarTrasErrorPhp(
   agente: string | null,
   now: Date,
 ): Promise<DerivacionResultado> {
-  const n = (reintentosPhp.get(conversationId) ?? 0) + 1
-  if (n > REINTENTOS_PHP_MAX) {
-    reintentosPhp.delete(conversationId)
-    await store.appendNote(conversationId, NOTA_ERROR_PHP)
-    return 'error_php'
-  }
-  reintentosPhp.set(conversationId, n)
   if (!(await store.requeue(conversationId, now, agente).catch(() => false))) {
     console.error(LOG, 'el PHP falló y no se pudo volver a la cola; queda para derivación manual', { conversationId })
     await store.appendNote(conversationId, NOTA_ERROR_PHP)
@@ -502,10 +499,8 @@ async function reintentarTrasErrorPhp(
   return 'reintento_php'
 }
 
-/** Solo para los tests: borra el contador de reintentos. */
-export function reiniciarReintentosPhp(): void {
-  reintentosPhp.clear()
-}
+/** Se conserva para los tests: ya no hay contador de reintentos. */
+export function reiniciarReintentosPhp(): void {}
 
 /**
  * Deriva la conversación al PHP si cumple todas las condiciones.
@@ -614,7 +609,6 @@ export async function derivarAuto(
       console.error(LOG, 'falló la llamada al PHP:', err instanceof Error ? err.message : err, { conversationId })
       return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
     }
-    reintentosPhp.delete(conversationId)
 
     // `duplicado` con asesor_id: el lead ya tenía asesor en XLR8, se le
     // asigna igual. Cualquier otro ok:false queda para derivación manual.
@@ -671,10 +665,11 @@ export async function derivarAuto(
       return 'en_espera'
     }
     if (body.ok !== true && !duplicadoConAsesor) {
-      console.error(LOG, 'PHP no derivó:', typeof body.motivo === 'string' ? body.motivo : 'sin motivo', {
-        conversationId,
-      })
-      return 'rechazada'
+      const motivo = typeof body.motivo === 'string' ? body.motivo : 'sin motivo'
+      console.error(LOG, 'PHP no derivó:', motivo, { conversationId })
+      if (MOTIVOS_FINALES.includes(motivo)) return 'rechazada'
+      // Respuesta rara (sin motivo, login, error): vuelve a la cola.
+      return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
     }
 
     const { nombre, userId } = await asesorDeRespuesta(store, conv.account_id, body)
