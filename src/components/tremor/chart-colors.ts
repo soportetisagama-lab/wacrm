@@ -39,7 +39,7 @@ export const chartColors = {
     text: "text-amber-500",
   },
   gray: {
-    bg: "bg-muted",
+    bg: "bg-muted-foreground",
     stroke: "stroke-muted-foreground",
     fill: "fill-muted-foreground",
     text: "text-muted-foreground",
