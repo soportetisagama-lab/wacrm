@@ -436,6 +436,32 @@ describe('cola de derivación', () => {
     err.mockRestore()
   })
 
+  it('asesor_ausente: espera a su asesor al final de la cola sin frenar al siguiente', async () => {
+    const store = makeStore()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await store.enqueue('suyo', lima('2026-11-09T07:00'), null)
+    await store.enqueue('normal', lima('2026-11-09T07:30'), null)
+    let n = 0
+    const fetchFn = vi.fn(async () => {
+      n++
+      return new Response(
+        JSON.stringify(
+          n === 1
+            ? { ok: false, motivo: 'asesor_ausente', asesor_id: 42, asesor_nombre: 'Miguel' }
+            : { ok: true, asesor_id: 42, asesor_nombre: 'Luis' },
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    const r = await procesarColaDerivacion({ store, env: ENV, fetchFn, now: lima('2026-11-09T09:00') })
+    expect(r.derivadas).toBe(1)
+    expect(store.assign).toHaveBeenCalledTimes(1)
+    expect(store.assign).toHaveBeenCalledWith('normal', 'user-42')
+    expect(await store.colaIds()).toEqual(['suyo'])
+    expect(store.notas.get('suyo')?.join(' ')).toContain('En espera de su asesor Miguel')
+    err.mockRestore()
+  })
+
   it('sin_atc vuelve al final y no frena al siguiente en la misma pasada', async () => {
     const store = makeStore()
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
