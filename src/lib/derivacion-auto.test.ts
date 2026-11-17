@@ -386,6 +386,8 @@ describe('cola de derivación', () => {
     const viejo = lima('2026-11-14T19:04')
     store.listSinCola = vi.fn(async () => [{ id: 'conv-1', at: viejo }])
     expect(await barrerSinCola(store, lima('2026-11-17T10:00'))).toBe(1)
+    // Abiertos con la IA: solo los quietos hace 2 h o más.
+    expect(store.listSinCola).toHaveBeenCalledWith(expect.any(Date), 100, lima('2026-11-17T08:00'))
     expect(store.enqueue).toHaveBeenCalledWith('conv-1', viejo, null)
     expect(await store.colaIds()).toEqual(['conv-1'])
     // Ya en cola: no se duplica.
