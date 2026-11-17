@@ -136,7 +136,7 @@ export function conservarNotasDerivacion(anterior: string | null | undefined, nu
 }
 
 /** Motivos del PHP que significan "reintentar más tarde" (cupo lleno). */
-const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado', 'sin_atc']
+const MOTIVOS_EN_ESPERA: readonly string[] = ['sin_asesor', 'ocupado']
 
 /**
  * Respuestas del PHP que no vuelven a la cola: no tiene sentido reintentar
@@ -379,6 +379,7 @@ export type DerivacionResultado =
   | 'error_php'
   /** El PHP falló o no respondió: vuelve a la cola y se reintenta. */
   | 'reintento_php'
+  | 'espera_atc'
   | 'rechazada'
   | 'asignada'
   | 'sin_usuario'
@@ -523,6 +524,7 @@ export async function derivarAuto(
   const { store } = deps
   const now = deps.now ?? new Date()
   const fetchFn = deps.fetchFn ?? fetch
+  let reclamada = false
   try {
     const conv = await store.loadConversation(conversationId)
     if (!conv) return 'sin_conversacion'
@@ -559,6 +561,7 @@ export async function derivarAuto(
     // Reclamada ANTES de llamar: una sola llamada por conversación,
     // aunque el PHP falle o dos traspasos coincidan.
     if (!(await store.claim(conversationId))) return 'ya_derivada'
+    reclamada = true
 
     const codigoAnuncio = await store.loadAdId(conversationId).catch(() => '')
     // Reintento tras cupo lleno: reutiliza la clasificación guardada.
@@ -668,6 +671,12 @@ export async function derivarAuto(
       const motivo = typeof body.motivo === 'string' ? body.motivo : 'sin motivo'
       console.error(LOG, 'PHP no derivó:', motivo, { conversationId })
       if (MOTIVOS_FINALES.includes(motivo)) return 'rechazada'
+      // Sin ATC configurada: vuelve al final de la cola sin frenar a los
+      // demás (la pasada sigue con el siguiente).
+      if (motivo === 'sin_atc') {
+        const r = await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
+        return r === 'reintento_php' ? 'espera_atc' : r
+      }
       // Respuesta rara (sin motivo, login, error): vuelve a la cola.
       return await reintentarTrasErrorPhp(store, conversationId, conv.assigned_agent_id ?? null, now)
     }
@@ -696,6 +705,8 @@ export async function derivarAuto(
     return 'sin_usuario'
   } catch (err) {
     console.error(LOG, err instanceof Error ? err.message : err, { conversationId })
+    // Ya reclamada: no se queda fuera de la cola.
+    if (reclamada) return await reintentarTrasErrorPhp(store, conversationId, null, now)
     return 'error_php'
   }
 }
@@ -946,6 +957,11 @@ export async function procesarColaDerivacion(deps: DerivacionDeps & { limite?: n
           // intentarse en la próxima pasada (quedó al final de la cola).
           res.enEspera++
           break
+        }
+        if (r === 'espera_atc') {
+          // Sin ATC configurada: volvió al final; las demás siguen.
+          res.enEspera++
+          continue
         }
         if (r === 'espera_asesor') {
           // Espera cupo de su mismo asesor: las demás siguen.
