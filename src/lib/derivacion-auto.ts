@@ -525,9 +525,11 @@ export async function derivarAuto(
   const now = deps.now ?? new Date()
   const fetchFn = deps.fetchFn ?? fetch
   let reclamada = false
+  let agente: string | null = null
   try {
     const conv = await store.loadConversation(conversationId)
     if (!conv) return 'sin_conversacion'
+    agente = conv.assigned_agent_id ?? null
     if ((conv.channel ?? 'whatsapp') !== 'whatsapp') return 'no_whatsapp'
     if (
       opciones.soloSinAsesor &&
@@ -706,7 +708,11 @@ export async function derivarAuto(
   } catch (err) {
     console.error(LOG, err instanceof Error ? err.message : err, { conversationId })
     // Ya reclamada: no se queda fuera de la cola.
-    if (reclamada) return await reintentarTrasErrorPhp(store, conversationId, null, now)
+    if (reclamada) {
+      return await reintentarTrasErrorPhp(store, conversationId, agente, now).catch(
+        (): DerivacionResultado => 'error_php',
+      )
+    }
     return 'error_php'
   }
 }
