@@ -13,6 +13,7 @@ import {
   type HorariosResumen,
 } from "@/lib/marketing/horarios";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { PageHero } from "@/components/layout/page-hero";
 import { BarChart } from "@/components/tremor/bar-chart";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -153,15 +154,14 @@ export default function HorariosContactoPage() {
     r ? t("rankSub", { pct: pctLabel(r.pct), count: r.total }) : t("rankEmpty");
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{t("pageTitle")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("pageDesc")}</p>
-      </div>
-
-      {/* Filters */}
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 sm:w-fit">
+    <div className="space-y-6">
+      {/* Header — boxed like Contactos; the period presets live on the right. */}
+      <PageHero
+        icon={Clock}
+        title={t("pageTitle")}
+        subtitle={t("pageDesc")}
+        actions={
+        <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1">
           {(["7d", "30d", "90d", "custom"] as Preset[]).map((pr) => (
             <button
               key={pr}
@@ -171,15 +171,21 @@ export default function HorariosContactoPage() {
                 if (pr !== "custom") setRange(presetRange(PRESET_DAYS[pr]));
               }}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                preset === pr ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                preset === pr
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-card hover:text-foreground",
               )}
             >
               {t(`preset_${pr}`)}
             </button>
           ))}
         </div>
+        }
+      />
 
+      {/* Filters */}
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">{t("from")}</Label>
@@ -271,7 +277,7 @@ export default function HorariosContactoPage() {
           ) : (
             <>
               {/* Best day × hour slots */}
-              <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
                 <div className="mb-3 flex items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Sparkles className="h-4 w-4" />
@@ -308,7 +314,7 @@ export default function HorariosContactoPage() {
               </section>
 
               {/* Heat map: hour rows × weekday columns */}
-              <section className="rounded-xl border border-border bg-card shadow-sm">
+              <section className="rounded-2xl border border-border bg-card shadow-sm">
                 <header className="border-b border-border px-5 py-4">
                   <h2 className="text-sm font-semibold tracking-tight text-foreground">{t("heatmapTitle")}</h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">{t("heatmapDesc")}</p>
@@ -394,7 +400,7 @@ export default function HorariosContactoPage() {
               </section>
 
               {/* Bars per hour */}
-              <section className="rounded-xl border border-border bg-card shadow-sm">
+              <section className="rounded-2xl border border-border bg-card shadow-sm">
                 <header className="border-b border-border px-5 py-4">
                   <h2 className="text-sm font-semibold tracking-tight text-foreground">{t("barsTitle")}</h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">{t("barsDesc")}</p>
