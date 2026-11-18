@@ -94,6 +94,8 @@ export const MEDIA_CAPTION_MAX = 1024;
 /** Hard cap on a single voice recording so it can't blow the upload/
  *  transcode limits — auto-stops the recorder when reached. */
 const MAX_RECORDING_SECONDS = 5 * 60;
+/** Below this an Ogg/Opus voice note is just headers (no sound was captured). */
+const MIN_VOICE_NOTE_BYTES = 1024;
 
 /** Press-and-hold (touch): how far left the finger slides to cancel. */
 const CANCEL_SLIDE_PX = 110;
@@ -810,6 +812,12 @@ export function MessageComposer({
         type: "audio/ogg",
       });
       if (file.size === 0) return; // cancelled / empty take
+      // Only the Ogg headers (~128 bytes) and no audio pages: the mic gave
+      // no sound. Don't send the client an empty voice note.
+      if (file.size < MIN_VOICE_NOTE_BYTES) {
+        toast.error(t("recordingEmpty"));
+        return;
+      }
       if (file.size > MEDIA_MAX_BYTES_BY_KIND.audio) {
         toast.error(t("recordingTooLong"));
         return;
