@@ -508,6 +508,7 @@
       "uploadTooLarge": "El archivo pesa {sizeMb} MB — el límite para {kind} es {maxMb} MB.",
       "uploadFailed": "Error al subir el archivo.",
       "recordingTooLong": "La grabación es demasiado larga (más de 16 MB).",
+      "recordingEmpty": "No se grabó sonido. Revisa tu micrófono e inténtalo de nuevo.",
       "voiceNotSupported": "La grabación de voz no es compatible con este navegador.",
       "micBlocked": "El permiso del micrófono está bloqueado. Haz clic en el candado junto a la dirección de la página, permite el micrófono y recarga.",
       "micNotFound": "No se encontró ningún micrófono. Conecta uno (o unos audífonos con micrófono) e inténtalo de nuevo.",

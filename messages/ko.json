@@ -508,6 +508,7 @@
       "uploadTooLarge": "파일이 {sizeMb}MB입니다 — {kind} 제한은 {maxMb}MB입니다.",
       "uploadFailed": "업로드에 실패했습니다.",
       "recordingTooLong": "녹음이 너무 깁니다 (16MB 초과).",
+      "recordingEmpty": "소리가 녹음되지 않았습니다. 마이크를 확인하고 다시 시도하세요.",
       "voiceNotSupported": "이 브라우저에서는 음성 녹음을 지원하지 않습니다.",
       "micBlocked": "마이크 권한이 차단되었습니다. 주소 옆의 자물쇠를 클릭해 마이크를 허용한 뒤 새로고침하세요.",
       "micNotFound": "마이크를 찾을 수 없습니다. 마이크(또는 마이크가 있는 헤드셋)를 연결한 뒤 다시 시도하세요.",

@@ -508,6 +508,7 @@
       "uploadTooLarge": "File is {sizeMb} MB — {kind} limit is {maxMb} MB.",
       "uploadFailed": "Upload failed.",
       "recordingTooLong": "Recording is too long (over 16 MB).",
+      "recordingEmpty": "No sound was recorded. Check your microphone and try again.",
       "voiceNotSupported": "Voice recording isn't supported in this browser.",
       "micBlocked": "Microphone permission is blocked. Click the lock next to the page address, allow the microphone and reload.",
       "micNotFound": "No microphone found. Connect one (or a headset with a mic) and try again.",
