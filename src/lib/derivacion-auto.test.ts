@@ -14,6 +14,7 @@ import {
   NOTA_EN_ESPERA,
   NOTA_EN_TURNO,
   esNumeroExtranjero,
+  origenGoogle,
   celularDerivacion,
   conservarNotasDerivacion,
   derivacionConfigurada,
@@ -655,6 +656,14 @@ describe('clasificación lead / ATC', () => {
     expect(clasificar).toHaveBeenCalledWith({ accountId: 'acc-1', conversationId: 'conv-1', numeroExtranjero: false })
     expect(bodyDe(fetchFn)).toMatchObject({ destino: 'ASESOR', motivo_atc: '' })
     expect(store.appendNote).toHaveBeenCalledWith('conv-1', 'Derivado automáticamente a Luis (XLR8)')
+  })
+
+  it('origenGoogle: lee el primer mensaje del cliente', () => {
+    expect(origenGoogle('Te escribo desde Google')).toBe('Seo')
+    expect(origenGoogle('Hola, le escribo desde su página de Google https://sagama-retail.com/')).toBe('Seo')
+    expect(origenGoogle('Hola, vi su anuncio de Google')).toBe('Anuncio')
+    expect(origenGoogle('Quiero visitar la planta de producción')).toBe('')
+    expect(origenGoogle(null)).toBe('')
   })
 
   it('busca trabajo → destino ATC con el motivo legible', async () => {
