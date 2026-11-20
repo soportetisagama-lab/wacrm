@@ -246,7 +246,6 @@ export function horarioAbierto(
   return sinHorario || dentroDeHorario(date, horario)
 }
 
-/** True si el número no es peruano (ni 9 dígitos ni 51 + 9 dígitos). Solo contexto para la IA. */
 /**
  * Origen Google según el PRIMER mensaje del cliente (botón de WhatsApp de
  * la web o de un anuncio de Google): "anuncio de Google" → 'Anuncio';
@@ -259,6 +258,7 @@ export function origenGoogle(primerMensaje: string | null | undefined): '' | 'Se
   return /\banuncio/.test(t) ? 'Anuncio' : 'Seo'
 }
 
+/** True si el número no es peruano (ni 9 dígitos ni 51 + 9 dígitos). Solo contexto para la IA. */
 export function esNumeroExtranjero(phone: string | null | undefined): boolean {
   const digits = (phone ?? '').replace(/\D/g, '')
   return digits.length > 0 && celularNueveDigitos(digits) === null
