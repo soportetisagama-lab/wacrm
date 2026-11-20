@@ -228,6 +228,18 @@ export function dentroDeHorario(date: Date, horario: HorarioDerivacion = HORARIO
 }
 
 /** True si el número no es peruano (ni 9 dígitos ni 51 + 9 dígitos). Solo contexto para la IA. */
+/**
+ * Origen Google según el PRIMER mensaje del cliente (botón de WhatsApp de
+ * la web o de un anuncio de Google): "anuncio de Google" → 'Anuncio';
+ * "desde Google" / "página de Google" → 'Seo'; si no menciona Google, ''.
+ * El PHP guarda el lead como GOOGLE / <origen> / WHATSAPP.
+ */
+export function origenGoogle(primerMensaje: string | null | undefined): '' | 'Seo' | 'Anuncio' {
+  const t = (primerMensaje ?? '').toLowerCase()
+  if (!/\bgoogle\b/.test(t)) return ''
+  return /\banuncio/.test(t) ? 'Anuncio' : 'Seo'
+}
+
 export function esNumeroExtranjero(phone: string | null | undefined): boolean {
   const digits = (phone ?? '').replace(/\D/g, '')
   return digits.length > 0 && celularNueveDigitos(digits) === null
@@ -337,6 +349,8 @@ export interface DerivacionStore {
   claim(conversationId: string): Promise<boolean>
   /** ID del anuncio de Meta (click-to-WhatsApp) de la conversación, o ''. */
   loadAdId(conversationId: string): Promise<string>
+  /** Texto del primer mensaje del cliente en la conversación, o ''. Sin implementar = ''. */
+  loadPrimerMensaje?(conversationId: string): Promise<string>
   /** user_id del perfil con ese ID XLR8 en la cuenta, o null. */
   findAgentByXlr8(accountId: string, xlr8UserId: number): Promise<string | null>
   /**
@@ -588,6 +602,7 @@ export async function derivarAuto(
     reclamada = true
 
     const codigoAnuncio = await store.loadAdId(conversationId).catch(() => '')
+    const primerMensaje = (await store.loadPrimerMensaje?.(conversationId).catch(() => '')) ?? ''
     // Reintento tras cupo lleno: reutiliza la clasificación guardada.
     let clasificacion = clasificacionGuardada(conv.derivacion_clasificacion)
     if (!clasificacion) {
@@ -620,6 +635,7 @@ export async function derivarAuto(
           destino: clasificacion.tipo === 'atc' ? 'ATC' : 'ASESOR',
           motivo_atc: motivoAtc,
           historico: conv.derivacion_historica === true,
+          origen_google: origenGoogle(primerMensaje),
         }),
         signal: AbortSignal.timeout(DERIVAR_TIMEOUT_MS),
         cache: 'no-store',
@@ -793,6 +809,17 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         .limit(1)
         .maybeSingle()
       return ((data as { source_id?: string | null } | null)?.source_id ?? '').trim()
+    },
+    async loadPrimerMensaje(conversationId) {
+      const { data } = await db
+        .from('messages')
+        .select('content_text')
+        .eq('conversation_id', conversationId)
+        .eq('sender_type', 'customer')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      return ((data as { content_text?: string | null } | null)?.content_text ?? '').trim()
     },
     async findAgentByXlr8(accountId, xlr8UserId) {
       const { data, error } = await db
