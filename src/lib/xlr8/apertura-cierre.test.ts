@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { envApertura, enviarTarea, tareasPendientes } from './apertura-cierre'
+import { envApertura, enviarTarea, rangoCierre, tareasPendientes } from './apertura-cierre'
 
 /** Hora de Lima (UTC-5). 2026-11-16 es lunes; 2026-11-21 sábado; 2026-11-22 domingo. */
 function lima(isoLocal: string): Date {
@@ -93,5 +93,23 @@ describe('enviarTarea', () => {
     const fetchImpl = vi.fn()
     expect(await enviarTarea('cierre', '2026-11-16', { env: { url: null, secret: 's', linea: 'INOX' }, contarSinDerivar: async () => 0, fetchImpl: fetchImpl as unknown as typeof fetch })).toBe(false)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('rangoCierre', () => {
+  it('del inicio del día al fin del horario de derivación', () => {
+    expect(rangoCierre(lima('2026-11-16T17:30'))).toEqual({ desde: '2026-11-16T05:00:00.000Z', hasta: '2026-11-16T22:00:00.000Z' })
+    expect(rangoCierre(lima('2026-11-20T17:30')).hasta).toBe('2026-11-20T22:30:00.000Z')
+    expect(rangoCierre(lima('2026-11-21T13:00'))).toEqual({ desde: '2026-11-21T05:00:00.000Z', hasta: '2026-11-21T17:30:00.000Z' })
+  })
+
+  it('el cierre cuenta con el rango; la apertura sin rango', async () => {
+    const env = { url: 'https://x/apertura_cierre_api.php', secret: 's', linea: 'INOX' }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }))) as unknown as typeof fetch
+    const contar = vi.fn(async () => 3)
+    const rango = rangoCierre(lima('2026-11-16T17:30'))
+    await enviarTarea('cierre', '2026-11-16', { env, contarSinDerivar: contar, rangoCierre: rango, fetchImpl })
+    await enviarTarea('apertura', '2026-11-16', { env, contarSinDerivar: contar, rangoCierre: rango, fetchImpl })
+    expect(contar.mock.calls).toEqual([[rango], []])
   })
 })

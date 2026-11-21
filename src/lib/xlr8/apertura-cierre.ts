@@ -10,7 +10,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //   - Cierre: de lunes a viernes a las 17:30 y el sábado a las 13:00
 //     avisa al PHP para que guarde la copia del flotante de la línea, con
 //     la cantidad de chats sin derivar en ese momento ("leads que no se
-//     derivaron"; si no se puede contar, el cierre va sin ella).
+//     derivaron"; si no se puede contar, el cierre va sin ella). Solo
+//     cuenta los que llegaron ese día antes del fin del horario de
+//     derivación (L–J 17:00, viernes 17:30, sábado 12:30): los que
+//     llegan después quedan en cola para el día siguiente.
 //     Feriados incluidos.
 //
 // Va montado en el cron de flujos (cada minuto). Dentro de cada ventana
@@ -37,6 +40,17 @@ const VENTANAS: Record<TareaApertura, Record<number, [string, string] | null>> =
 }
 
 const LIMA_OFFSET_MS = -5 * 60 * 60_000 // Perú no tiene horario de verano
+
+/** Fin del horario de derivación por día (Lima): corte de "leads que no se derivaron". */
+const FIN_DERIVACION: Record<number, string> = { 0: '00:00', 1: '17:00', 2: '17:00', 3: '17:00', 4: '17:00', 5: '17:30', 6: '12:30' }
+
+/** Pura: [desde, hasta) en ISO UTC: inicio del día de Lima hasta el fin del horario de derivación. */
+export function rangoCierre(now: Date): { desde: string; hasta: string } {
+  const { fecha, dia } = limaParts(now)
+  const desde = new Date(`${fecha}T00:00:00-05:00`)
+  const hasta = new Date(`${fecha}T${FIN_DERIVACION[dia]}:00-05:00`)
+  return { desde: desde.toISOString(), hasta: hasta.toISOString() }
+}
 
 function limaParts(now: Date): { fecha: string; dia: number; minuto: number } {
   const d = new Date(now.getTime() + LIMA_OFFSET_MS)
@@ -91,7 +105,9 @@ export function tareasPendientes(
 
 export interface AperturaDeps {
   env: EnvApertura
-  contarSinDerivar: () => Promise<number>
+  contarSinDerivar: (rango?: { desde: string; hasta: string }) => Promise<number>
+  /** Rango del cierre (rangoCierre); sin él, el cierre cuenta todo. */
+  rangoCierre?: { desde: string; hasta: string }
   fetchImpl?: typeof fetch
 }
 
@@ -106,7 +122,7 @@ export async function enviarTarea(tarea: TareaApertura, fecha: string, deps: Ape
     } else {
       // El cierre no depende del conteo: si falla, se envía sin cantidad.
       try {
-        body.cantidad = await deps.contarSinDerivar()
+        body.cantidad = await deps.contarSinDerivar(deps.rangoCierre)
       } catch (err) {
         console.error(`${LOG} cierre ${fecha}: no se pudo contar sin derivar:`, err instanceof Error ? err.message : err)
       }
@@ -131,8 +147,11 @@ export async function enviarTarea(tarea: TareaApertura, fecha: string, deps: Ape
   }
 }
 
-/** Chats de WhatsApp sin derivar (definición de /api/leads/pending). */
-export async function contarSinDerivar(db: SupabaseClient): Promise<number> {
+/**
+ * Chats de WhatsApp sin derivar (definición de /api/leads/pending). Con
+ * `rango`, solo los que tuvieron su último mensaje dentro de [desde, hasta).
+ */
+export async function contarSinDerivar(db: SupabaseClient, rango?: { desde: string; hasta: string }): Promise<number> {
   let q = db
     .from('conversations')
     .select('id', { count: 'exact', head: true })
@@ -142,6 +161,7 @@ export async function contarSinDerivar(db: SupabaseClient): Promise<number> {
     .is('assigned_agent_id', null)
   const accountId = process.env.LEADS_PENDING_ACCOUNT_ID?.trim()
   if (accountId) q = q.eq('account_id', accountId)
+  if (rango) q = q.gte('last_message_at', rango.desde).lt('last_message_at', rango.hasta)
   const { count, error } = await q
   if (error) throw new Error(error.message)
   return count ?? 0
@@ -168,7 +188,12 @@ export async function runAperturaCierreSiToca(db: SupabaseClient, now: Date = ne
   s.corriendo = true
   try {
     for (const tarea of tareas) {
-      if (await enviarTarea(tarea, fecha, { env, contarSinDerivar: () => contarSinDerivar(db) })) {
+      const deps: AperturaDeps = {
+        env,
+        contarSinDerivar: (rango) => contarSinDerivar(db, rango),
+        rangoCierre: rangoCierre(now),
+      }
+      if (await enviarTarea(tarea, fecha, deps)) {
         s.hechas[tarea] = fecha
       }
     }
