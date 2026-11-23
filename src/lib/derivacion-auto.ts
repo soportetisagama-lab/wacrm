@@ -636,6 +636,9 @@ export async function derivarAuto(
           motivo_atc: motivoAtc,
           historico: conv.derivacion_historica === true,
           origen_google: origenGoogle(primerMensaje),
+          // Turno compartido con las hojas de leads (derivar_auto.php): desde
+          // cuándo espera este chat (su hora de entrada a la cola, o ahora).
+          espera_desde: (opciones.desdeCola?.at ?? now).toISOString(),
         }),
         signal: AbortSignal.timeout(DERIVAR_TIMEOUT_MS),
         cache: 'no-store',
