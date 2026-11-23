@@ -225,6 +225,8 @@ describe('llamada y mapeo de asesor', () => {
       destino: 'ASESOR',
       motivo_atc: '',
       historico: false,
+      origen_google: '',
+      espera_desde: '2026-11-02T15:00:00.000Z',
     })
     expect(store.findAgentByXlr8).toHaveBeenCalledWith('acc-1', 42)
     expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
