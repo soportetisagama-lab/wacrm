@@ -39,6 +39,7 @@ import {
   esNumeroExtranjero,
   numeroSeDerivara,
   programarDerivacionAuto,
+  programarDerivacionExtranjero,
 } from '@/lib/derivacion-auto'
 import { asesorReal, asignarPerfilSinNumero } from '@/lib/conversations/perfil-sin-numero'
 import { routeInboundAfterOutboundTransfer } from '@/lib/line-transfer-outbound'
@@ -2094,6 +2095,15 @@ async function processMessage(
     numeroSeDerivara(telefonoDerivacion)
   ) {
     programarDerivacionAuto(supabaseAdmin(), conversation.id, { soloSinAsesor: true })
+  }
+  // Número extranjero sin asesor (o enviado a ATC por ser extranjero): si
+  // ya confirmó que su pedido es para Perú, se deriva ya a un asesor.
+  if (
+    !derivedFromPhone &&
+    esNumeroExtranjero(telefonoDerivacion) &&
+    numeroSeDerivara(telefonoDerivacion)
+  ) {
+    programarDerivacionExtranjero(supabaseAdmin(), conversation.id)
   }
   // new_contact_created fires only when the webhook just auto-created the
   // contact row. first_inbound_message fires whenever this is the contact's
