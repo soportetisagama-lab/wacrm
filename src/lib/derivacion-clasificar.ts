@@ -204,3 +204,76 @@ export function clasificadorOpenAi(db: SupabaseClient): ClasificadorDerivacion {
     }
   }
 }
+
+// ============================================================
+// Número extranjero que confirma que su pedido es para Perú
+// (derivarExtranjeroSiParaPeru en lib/derivacion-auto.ts): en cada
+// mensaje de un extranjero sin asesor, o ya enviado a ATC por ser
+// extranjero, la IA (solo OpenAI) revisa si el cliente ya dijo que es
+// para Perú. Si falla o duda, responde false (no se deriva todavía).
+// ============================================================
+
+const TOOL_PERU = 'confirmar_peru'
+
+/** Verificador inyectable (los tests lo mockean). Nunca debe lanzar. */
+export type VerificadorPeru = (input: { accountId: string; conversationId: string }) => Promise<boolean>
+
+const SCHEMA_PERU = {
+  type: 'object',
+  properties: {
+    para_peru: {
+      type: 'boolean',
+      description: 'true solo si el cliente confirmó que su pedido es para Perú.',
+    },
+  },
+  required: ['para_peru'],
+  additionalProperties: false,
+} as const
+
+export function buildPeruPrompt(): string {
+  return [
+    'Eres un verificador. Recibes la conversación de WhatsApp entre un cliente con número extranjero y el bot ' +
+      'de una empresa peruana. Decide si el cliente ya confirmó que su pedido es para Perú.\n' +
+      '- true: el cliente dijo que vive, está o tiene su empresa en Perú, o que la entrega, la obra o el uso ' +
+      'es en Perú (o en una ciudad, provincia o distrito de Perú, por ejemplo Lima, Arequipa o Miraflores).\n' +
+      '- false: no lo dice, es ambiguo, o el pedido es para fuera de Perú.\n' +
+      'Ante la duda, responde false. Responde siempre llamando a la tool con `para_peru`.',
+    UNTRUSTED_CUSTOMER_CONTENT_GUARD,
+  ].join('\n\n')
+}
+
+/** Verificador real: OpenAI con la configuración de IA de la cuenta. Nunca lanza. */
+export function verificadorPeruOpenAi(db: SupabaseClient): VerificadorPeru {
+  return async ({ accountId, conversationId }) => {
+    try {
+      const config = await loadAiConfig(db, accountId)
+      if (!config || config.provider !== 'openai') return false
+      const lineas = await cargarLineas(db, conversationId, CLASIFICAR_LINEAS)
+      if (!lineas.some((l) => l.de === 'Cliente')) return false
+      const result = await generateOpenAiStructured({
+        apiKey: config.apiKey,
+        model: config.model,
+        systemPrompt: buildPeruPrompt(),
+        messages: [{ role: 'user', content: armarTranscripcion(lineas, true) }],
+        timeoutMs: CLASIFICAR_TIMEOUT_MS,
+        schema: SCHEMA_PERU as unknown as Record<string, unknown>,
+        toolName: TOOL_PERU,
+        temperature: CLASIFICAR_TEMPERATURA,
+      })
+      void logAiUsage(db, {
+        accountId,
+        conversationId,
+        mode: 'context_classification',
+        provider: config.provider,
+        model: config.model,
+        usage: result.usage,
+      })
+      const ok = (result.data as { para_peru?: unknown } | null)?.para_peru === true
+      if (ok) console.log(LOG, 'extranjero: confirmó que es para Perú', { conversationId })
+      return ok
+    } catch (err) {
+      console.error(LOG, 'verificación de Perú falló:', err instanceof Error ? err.message : err, { conversationId })
+      return false
+    }
+  }
+}

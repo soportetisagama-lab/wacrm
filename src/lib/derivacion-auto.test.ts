@@ -19,6 +19,9 @@ import {
   HORARIO_DERIVACION,
   NOTA_ERROR_PHP,
   reiniciarReintentosPhp,
+  derivarExtranjeroSiParaPeru,
+  atcExtranjeroDe,
+  NOTA_EXTRANJERO_PERU,
   type DerivacionStore,
 } from './derivacion-auto'
 import type { Clasificacion, ClasificadorDerivacion } from './derivacion-clasificar'
@@ -1089,5 +1092,118 @@ describe('cliente con asesor en XLR8 (regla de los 30 días)', () => {
   it('las notas nuevas se conservan en un traspaso posterior', () => {
     const anterior = 'Cliente ya registrado en XLR8 el 01/01/2026; se mantiene con Pedro'
     expect(conservarNotasDerivacion(anterior, 'Resumen nuevo')).toBe(`Resumen nuevo\n${anterior}`)
+  })
+})
+
+describe('extranjero que confirma que es para Perú', () => {
+  const EXT = '+39 333 886 6681'
+  const conv = (over: Record<string, unknown> = {}) =>
+    vi.fn(async () => ({
+      account_id: 'acc-1',
+      channel: 'whatsapp',
+      contact_id: 'ct-1',
+      assigned_agent_id: null,
+      status: 'open',
+      ...over,
+    }))
+  const lead: Clasificacion = { tipo: 'lead', motivo: '' }
+
+  it('sin asesor y sin confirmar: no deriva', async () => {
+    const store = makeStore({ loadConversation: conv() }, EXT)
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    const verificarPeru = vi.fn(async () => false)
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, verificarPeru })).toBe(
+      'sin_confirmar',
+    )
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('sin asesor y confirma Perú: deriva ya como lead a un asesor', async () => {
+    const store = makeStore({ loadConversation: conv() }, EXT)
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Rosa' })
+    const clasificar = vi.fn(async () => lead)
+    const verificarPeru = vi.fn(async () => true)
+    expect(
+      await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, verificarPeru, clasificar }),
+    ).toBe('asignada')
+    expect(store.saveClasificacion).toHaveBeenCalledWith('conv-1', lead)
+    expect(store.appendNote).toHaveBeenCalledWith('conv-1', NOTA_EXTRANJERO_PERU)
+    const body = JSON.parse((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
+    expect(body.destino).toBe('ASESOR')
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+  })
+
+  it('número peruano o con asesor: no aplica y no llama a la IA', async () => {
+    const verificarPeru = vi.fn(async () => true)
+    const peruano = makeStore({ loadConversation: conv() })
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: peruano, env: ENV, now: DENTRO, verificarPeru })).toBe(
+      'no_aplica',
+    )
+    const conAsesor = makeStore({ loadConversation: conv({ assigned_agent_id: 'user-7' }) }, EXT)
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: conAsesor, env: ENV, now: DENTRO, verificarPeru })).toBe(
+      'no_aplica',
+    )
+    const yaLead = makeStore({ loadConversation: conv({ derivacion_clasificacion: lead }) }, EXT)
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: yaLead, env: ENV, now: DENTRO, verificarPeru })).toBe(
+      'no_aplica',
+    )
+    expect(verificarPeru).not.toHaveBeenCalled()
+  })
+
+  it('enviado a ATC por extranjero y luego confirma Perú: se reabre y pasa a un asesor', async () => {
+    const marca = { tipo: 'atc', motivo: 'extranjero', atc_user: 'user-atc' }
+    const reabrirAtcExtranjero = vi.fn(async () => true)
+    const store = makeStore(
+      {
+        loadConversation: conv({ assigned_agent_id: 'user-atc', derivado_auto_at: '2026-11-24T10:00:00Z', derivacion_clasificacion: marca }),
+        reabrirAtcExtranjero,
+      },
+      EXT,
+    )
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'Rosa' })
+    const verificarPeru = vi.fn(async () => true)
+    // Tras reabrir, la conversación guardada ya es lead: no se reclasifica.
+    store.loadConversation = vi
+      .fn()
+      .mockResolvedValueOnce({ account_id: 'acc-1', channel: 'whatsapp', contact_id: 'ct-1', assigned_agent_id: 'user-atc', status: 'open', derivado_auto_at: '2026-11-24T10:00:00Z', derivacion_clasificacion: marca })
+      .mockResolvedValue({ account_id: 'acc-1', channel: 'whatsapp', contact_id: 'ct-1', assigned_agent_id: 'user-atc', status: 'open', derivacion_clasificacion: lead })
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, verificarPeru })).toBe(
+      'asignada',
+    )
+    expect(reabrirAtcExtranjero).toHaveBeenCalledWith('conv-1', 'user-atc')
+    const body = JSON.parse((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
+    expect(body.destino).toBe('ASESOR')
+    expect(store.assign).toHaveBeenCalledWith('conv-1', 'user-42')
+  })
+
+  it('en ATC pero ya reasignado a mano, o enviado a ATC por otro motivo: no aplica', async () => {
+    const verificarPeru = vi.fn(async () => true)
+    const marca = { tipo: 'atc', motivo: 'extranjero', atc_user: 'user-atc' }
+    const reasignado = makeStore(
+      { loadConversation: conv({ assigned_agent_id: 'user-7', derivado_auto_at: 'x', derivacion_clasificacion: marca }) },
+      EXT,
+    )
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: reasignado, env: ENV, now: DENTRO, verificarPeru })).toBe(
+      'no_aplica',
+    )
+    const spam = makeStore(
+      { loadConversation: conv({ assigned_agent_id: 'user-atc', derivado_auto_at: 'x', derivacion_clasificacion: { tipo: 'atc', motivo: 'spam' } }) },
+      EXT,
+    )
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: spam, env: ENV, now: DENTRO, verificarPeru })).toBe(
+      'no_aplica',
+    )
+    expect(verificarPeru).not.toHaveBeenCalled()
+  })
+
+  it('al enviarlo a ATC por extranjero guarda el usuario ATC', async () => {
+    const marcarAtcExtranjero = vi.fn(async () => undefined)
+    const store = makeStore({ marcarAtcExtranjero }, EXT)
+    const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'ATC' })
+    const clasificar = vi.fn(async (): Promise<Clasificacion> => ({ tipo: 'atc', motivo: 'extranjero' }))
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, clasificar })).toBe('asignada')
+    expect(marcarAtcExtranjero).toHaveBeenCalledWith('conv-1', 'user-42')
+    expect(atcExtranjeroDe({ tipo: 'atc', motivo: 'extranjero', atc_user: 'user-42' })).toBe('user-42')
+    expect(atcExtranjeroDe({ tipo: 'atc', motivo: 'extranjero' })).toBeNull()
   })
 })
