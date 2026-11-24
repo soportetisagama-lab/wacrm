@@ -414,6 +414,11 @@ export interface DerivacionStore {
    * derivarla de nuevo. false si ya no aplica u otro proceso la tomó.
    */
   reabrirAtcExtranjero?(conversationId: string, atcUser: string): Promise<boolean>
+  /**
+   * Extranjero sin asesor que confirmó Perú: guarda la clasificación lead
+   * solo si sigue sin reclamar (`derivado_auto_at` null). false si no.
+   */
+  marcarLeadSinReclamo?(conversationId: string): Promise<boolean>
   /** Conversaciones en cola, la más antigua primero. */
   listQueue(limit: number): Promise<ColaItem[]>
   /**
@@ -982,6 +987,19 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
       }
       return (data ?? []).length > 0
     },
+    async marcarLeadSinReclamo(conversationId) {
+      const { data, error } = await db
+        .from('conversations')
+        .update({ derivacion_clasificacion: CLASIFICACION_LEAD })
+        .eq('id', conversationId)
+        .is('derivado_auto_at', null)
+        .select('id')
+      if (error) {
+        console.error(LOG, 'no se pudo marcar el extranjero como lead:', error.message, { conversationId })
+        return false
+      }
+      return (data ?? []).length > 0
+    },
     async saveClasificacion(conversationId, clasificacion) {
       const { error } = await db
         .from('conversations')
@@ -1231,20 +1249,31 @@ export async function derivarExtranjeroSiParaPeru(
     if (clasificacionGuardada(conv.derivacion_clasificacion)?.tipo === 'lead') return 'no_aplica'
     const atcUser = atcExtranjeroDe(conv.derivacion_clasificacion)
     const enAtc = !!conv.derivado_auto_at && !!atcUser && conv.assigned_agent_id === atcUser
+    if (enAtc && conv.status === 'closed') return 'no_aplica'
     if (!enAtc) {
       if (conv.derivado_auto_at) return 'no_aplica'
       if (conv.assigned_agent_id && !(await store.esPerfilSinNumero?.(conv.assigned_agent_id))) return 'no_aplica'
     }
     if (!(await deps.verificarPeru({ accountId: conv.account_id, conversationId }))) return 'sin_confirmar'
+    let r: DerivacionResultado
     if (enAtc && atcUser) {
       // Atómico: si dos mensajes llegan juntos, solo uno la reabre.
       if (!(await store.reabrirAtcExtranjero?.(conversationId, atcUser))) return 'no_aplica'
-      await store.appendNote(conversationId, NOTA_EXTRANJERO_PERU)
-      return await derivarAuto(conversationId, deps)
+      r = await derivarAuto(conversationId, deps)
+    } else {
+      // Solo si nadie la reclamó entretanto (p. ej. el traspaso del mismo
+      // mensaje ya la envió a ATC): no pisa la marca atc_user.
+      if (store.marcarLeadSinReclamo) {
+        if (!(await store.marcarLeadSinReclamo(conversationId))) return 'no_aplica'
+      } else {
+        await store.saveClasificacion(conversationId, CLASIFICACION_LEAD).catch(() => undefined)
+      }
+      r = await derivarAuto(conversationId, deps, { soloSinAsesor: true })
     }
-    await store.saveClasificacion(conversationId, CLASIFICACION_LEAD).catch(() => undefined)
-    await store.appendNote(conversationId, NOTA_EXTRANJERO_PERU)
-    return await derivarAuto(conversationId, deps, { soloSinAsesor: true })
+    if (r === 'asignada' || r === 'en_cola' || r === 'espera_asesor') {
+      await store.appendNote(conversationId, NOTA_EXTRANJERO_PERU)
+    }
+    return r
   } catch (err) {
     console.error(LOG, 'extranjero:', err instanceof Error ? err.message : err, { conversationId })
     return 'error_php'

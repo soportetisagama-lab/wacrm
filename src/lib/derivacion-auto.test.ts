@@ -1236,6 +1236,32 @@ describe('extranjero que confirma que es para Perú', () => {
     expect(verificarPeru).not.toHaveBeenCalled()
   })
 
+  it('si el traspaso la reclamó entretanto (ya en ATC), no pisa la marca ni deriva', async () => {
+    const marcarLeadSinReclamo = vi.fn(async () => false)
+    const store = makeStore({ loadConversation: conv(), marcarLeadSinReclamo }, EXT)
+    const fetchFn = okFetch({ ok: true, asesor_id: 42 })
+    const verificarPeru = vi.fn(async () => true)
+    expect(
+      await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru }),
+    ).toBe('no_aplica')
+    expect(fetchFn).not.toHaveBeenCalled()
+    expect(store.saveClasificacion).not.toHaveBeenCalled()
+    expect(store.appendNote).not.toHaveBeenCalled()
+  })
+
+  it('en ATC pero cerrado: no se reabre', async () => {
+    const marca = { tipo: 'atc', motivo: 'extranjero', atc_user: 'user-atc' }
+    const verificarPeru = vi.fn(async () => true)
+    const store = makeStore(
+      { loadConversation: conv({ status: 'closed', assigned_agent_id: 'user-atc', derivado_auto_at: 'x', derivacion_clasificacion: marca }) },
+      EXT,
+    )
+    expect(
+      await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru }),
+    ).toBe('no_aplica')
+    expect(verificarPeru).not.toHaveBeenCalled()
+  })
+
   it('al enviarlo a ATC por extranjero guarda el usuario ATC', async () => {
     const marcarAtcExtranjero = vi.fn(async () => undefined)
     const store = makeStore({ marcarAtcExtranjero }, EXT)
