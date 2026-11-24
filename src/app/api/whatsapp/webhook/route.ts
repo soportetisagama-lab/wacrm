@@ -2098,8 +2098,10 @@ async function processMessage(
   }
   // Número extranjero sin asesor (o enviado a ATC por ser extranjero): si
   // ya confirmó que su pedido es para Perú, se deriva ya a un asesor.
+  // Solo mensajes con texto (la IA no revisa stickers ni fotos sin texto).
   if (
     !derivedFromPhone &&
+    inboundText.trim() !== '' &&
     esNumeroExtranjero(telefonoDerivacion) &&
     numeroSeDerivara(telefonoDerivacion)
   ) {
