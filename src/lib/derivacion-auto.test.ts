@@ -1112,7 +1112,7 @@ describe('extranjero que confirma que es para Perú', () => {
     const store = makeStore({ loadConversation: conv() }, EXT)
     const fetchFn = okFetch({ ok: true, asesor_id: 42 })
     const verificarPeru = vi.fn(async () => false)
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'sin_confirmar',
     )
     expect(fetchFn).not.toHaveBeenCalled()
@@ -1124,7 +1124,7 @@ describe('extranjero que confirma que es para Perú', () => {
     const clasificar = vi.fn(async () => lead)
     const verificarPeru = vi.fn(async () => true)
     expect(
-      await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: [], verificarPeru, clasificar }),
+      await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru, clasificar }),
     ).toBe('asignada')
     expect(store.saveClasificacion).toHaveBeenCalledWith('conv-1', lead)
     expect(store.appendNote).toHaveBeenCalledWith('conv-1', NOTA_EXTRANJERO_PERU)
@@ -1136,15 +1136,15 @@ describe('extranjero que confirma que es para Perú', () => {
   it('número peruano o con asesor: no aplica y no llama a la IA', async () => {
     const verificarPeru = vi.fn(async () => true)
     const peruano = makeStore({ loadConversation: conv() })
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: peruano, env: ENV, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: peruano, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'no_aplica',
     )
     const conAsesor = makeStore({ loadConversation: conv({ assigned_agent_id: 'user-7' }) }, EXT)
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: conAsesor, env: ENV, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: conAsesor, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'no_aplica',
     )
     const yaLead = makeStore({ loadConversation: conv({ derivacion_clasificacion: lead }) }, EXT)
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: yaLead, env: ENV, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: yaLead, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'no_aplica',
     )
     expect(verificarPeru).not.toHaveBeenCalled()
@@ -1167,7 +1167,7 @@ describe('extranjero que confirma que es para Perú', () => {
       .fn()
       .mockResolvedValueOnce({ account_id: 'acc-1', channel: 'whatsapp', contact_id: 'ct-1', assigned_agent_id: 'user-atc', status: 'open', derivado_auto_at: '2026-11-24T10:00:00Z', derivacion_clasificacion: marca })
       .mockResolvedValue({ account_id: 'acc-1', channel: 'whatsapp', contact_id: 'ct-1', assigned_agent_id: 'user-atc', status: 'open', derivacion_clasificacion: lead })
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'asignada',
     )
     expect(reabrirAtcExtranjero).toHaveBeenCalledWith('conv-1', 'user-atc')
@@ -1183,14 +1183,14 @@ describe('extranjero que confirma que es para Perú', () => {
       { loadConversation: conv({ assigned_agent_id: 'user-7', derivado_auto_at: 'x', derivacion_clasificacion: marca }) },
       EXT,
     )
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: reasignado, env: ENV, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: reasignado, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'no_aplica',
     )
     const spam = makeStore(
       { loadConversation: conv({ assigned_agent_id: 'user-atc', derivado_auto_at: 'x', derivacion_clasificacion: { tipo: 'atc', motivo: 'spam' } }) },
       EXT,
     )
-    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: spam, env: ENV, now: DENTRO, numerosPrueba: [], verificarPeru })).toBe(
+    expect(await derivarExtranjeroSiParaPeru('conv-1', { store: spam, env: ENV, now: DENTRO, numerosPrueba: ['393338866681'], verificarPeru })).toBe(
       'no_aplica',
     )
     expect(verificarPeru).not.toHaveBeenCalled()
@@ -1201,7 +1201,7 @@ describe('extranjero que confirma que es para Perú', () => {
     const store = makeStore({ marcarAtcExtranjero }, EXT)
     const fetchFn = okFetch({ ok: true, asesor_id: 42, asesor_nombre: 'ATC' })
     const clasificar = vi.fn(async (): Promise<Clasificacion> => ({ tipo: 'atc', motivo: 'extranjero' }))
-    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: [], clasificar })).toBe('asignada')
+    expect(await derivarAuto('conv-1', { store, env: ENV, fetchFn, now: DENTRO, numerosPrueba: ['393338866681'], clasificar })).toBe('asignada')
     expect(marcarAtcExtranjero).toHaveBeenCalledWith('conv-1', 'user-42')
     expect(atcExtranjeroDe({ tipo: 'atc', motivo: 'extranjero', atc_user: 'user-42' })).toBe('user-42')
     expect(atcExtranjeroDe({ tipo: 'atc', motivo: 'extranjero' })).toBeNull()
