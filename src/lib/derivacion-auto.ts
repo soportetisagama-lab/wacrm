@@ -7,8 +7,10 @@ import {
   CLASIFICACION_LEAD,
   MOTIVO_ATC_TEXTO,
   clasificadorOpenAi,
+  verificadorPeruOpenAi,
   type Clasificacion,
   type ClasificadorDerivacion,
+  type VerificadorPeru,
 } from '@/lib/derivacion-clasificar'
 import { esFeriado, feriadosPausanDerivacion } from '@/lib/feriados-peru'
 
@@ -334,6 +336,8 @@ export interface ConversacionDerivacion {
   derivacion_historica?: boolean | null
   /** Clasificación guardada en un intento anterior (migración 096). */
   derivacion_clasificacion?: unknown
+  /** Ya reclamada por la derivación automática (migración 088). */
+  derivado_auto_at?: string | null
 }
 
 /** Conversación en cola con su hora de entrada (su turno). */
@@ -380,6 +384,17 @@ export interface DerivacionStore {
    * su mismo asesor): esa conversación no frena a las demás de la cola.
    */
   marcarEsperaAsesor?(conversationId: string, clasificacion: Clasificacion): Promise<void>
+  /**
+   * Enviada a ATC por número extranjero: guarda a qué usuario (atc_user)
+   * para reabrirla si después confirma que es para Perú.
+   */
+  marcarAtcExtranjero?(conversationId: string, userId: string): Promise<void>
+  /**
+   * Extranjero en ATC que confirmó Perú: si sigue con ese usuario ATC,
+   * la deja como lead y quita el reclamo (`derivado_auto_at = null`) para
+   * derivarla de nuevo. false si ya no aplica u otro proceso la tomó.
+   */
+  reabrirAtcExtranjero?(conversationId: string, atcUser: string): Promise<boolean>
   /** Conversaciones en cola, la más antigua primero. */
   listQueue(limit: number): Promise<ColaItem[]>
   /**
@@ -746,6 +761,9 @@ export async function derivarAuto(
           : `Derivado automáticamente a ${nombre} (XLR8)`
     if (userId && (await store.assign(conversationId, userId))) {
       await store.appendNote(conversationId, nota)
+      if (clasificacion.tipo === 'atc' && clasificacion.motivo === 'extranjero') {
+        await store.marcarAtcExtranjero?.(conversationId, userId).catch(() => undefined)
+      }
       return 'asignada'
     }
     console.error(LOG, `sin usuario del CRM con ID XLR8 ${String(body.asesor_id)}; queda sin asignar`, {
@@ -775,7 +793,7 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
       const base = 'account_id, channel, contact_id, assigned_agent_id, status'
       const full = await db
         .from('conversations')
-        .select(`${base}, derivacion_historica, derivacion_clasificacion`)
+        .select(`${base}, derivacion_historica, derivacion_clasificacion, derivado_auto_at`)
         .eq('id', id)
         .maybeSingle()
       if (!full.error) return (full.data as ConversacionDerivacion | null) ?? null
@@ -923,6 +941,27 @@ export function supabaseDerivacionStore(db: SupabaseClient): DerivacionStore {
         .update({ derivacion_clasificacion: { ...clasificacion, espera_asesor: true } })
         .eq('id', conversationId)
       if (error) console.error(LOG, 'no se pudo marcar la espera de su asesor:', error.message, { conversationId })
+    },
+    async marcarAtcExtranjero(conversationId, userId) {
+      const { error } = await db
+        .from('conversations')
+        .update({ derivacion_clasificacion: { tipo: 'atc', motivo: 'extranjero', atc_user: userId } })
+        .eq('id', conversationId)
+      if (error) console.error(LOG, 'no se pudo marcar el extranjero en ATC:', error.message, { conversationId })
+    },
+    async reabrirAtcExtranjero(conversationId, atcUser) {
+      const { data, error } = await db
+        .from('conversations')
+        .update({ derivado_auto_at: null, derivacion_clasificacion: CLASIFICACION_LEAD })
+        .eq('id', conversationId)
+        .eq('assigned_agent_id', atcUser)
+        .eq('derivacion_clasificacion->>atc_user', atcUser)
+        .select('id')
+      if (error) {
+        console.error(LOG, 'no se pudo reabrir el extranjero en ATC:', error.message, { conversationId })
+        return false
+      }
+      return (data ?? []).length > 0
     },
     async saveClasificacion(conversationId, clasificacion) {
       const { error } = await db
@@ -1134,6 +1173,81 @@ export async function runColaDerivacionSiToca(
     console.error(LOG, err)
   } finally {
     colaEnCurso = false
+  }
+}
+
+/** Nota cuando un número extranjero confirma que su pedido es para Perú. */
+export const NOTA_EXTRANJERO_PERU = 'El cliente confirmó que su pedido es para Perú: se deriva a un asesor'
+
+/** Usuario ATC al que se envió por ser extranjero (marcarAtcExtranjero), o null. */
+export function atcExtranjeroDe(valor: unknown): string | null {
+  if (!valor || typeof valor !== 'object') return null
+  const { tipo, motivo, atc_user } = valor as { tipo?: unknown; motivo?: unknown; atc_user?: unknown }
+  return tipo === 'atc' && motivo === 'extranjero' && typeof atc_user === 'string' && atc_user ? atc_user : null
+}
+
+export type ExtranjeroResultado = DerivacionResultado | 'no_aplica' | 'sin_confirmar'
+
+/**
+ * Número extranjero (en cada mensaje del cliente): si no tiene asesor, o
+ * la derivación lo envió a ATC por ser extranjero y sigue con ATC, la IA
+ * revisa si ya confirmó que su pedido es para Perú. Si confirma, se
+ * deriva ya como lead (sin esperar al traspaso); el de ATC se reabre y
+ * pasa a un asesor. Nunca lanza.
+ */
+export async function derivarExtranjeroSiParaPeru(
+  conversationId: string,
+  deps: DerivacionDeps & { verificarPeru: VerificadorPeru },
+): Promise<ExtranjeroResultado> {
+  const env = deps.env ?? derivacionEnv()
+  if (!envListo(env) || !lineaDe(env)) return 'no_aplica'
+  const { store } = deps
+  try {
+    const conv = await store.loadConversation(conversationId)
+    if (!conv || (conv.channel ?? 'whatsapp') !== 'whatsapp') return 'no_aplica'
+    const contact = await store.loadContact(conv.contact_id)
+    if (!esNumeroExtranjero(contact?.phone) || !celularDerivacion(contact?.phone)) return 'no_aplica'
+    if (!debeDerivarCelular(contact?.phone, deps.numerosPrueba)) return 'no_aplica'
+    // Ya decidido como lead (va o irá a un asesor): nada que revisar.
+    if (clasificacionGuardada(conv.derivacion_clasificacion)?.tipo === 'lead') return 'no_aplica'
+    const atcUser = atcExtranjeroDe(conv.derivacion_clasificacion)
+    const enAtc = !!conv.derivado_auto_at && !!atcUser && conv.assigned_agent_id === atcUser
+    if (!enAtc) {
+      if (conv.derivado_auto_at) return 'no_aplica'
+      if (conv.assigned_agent_id && !(await store.esPerfilSinNumero?.(conv.assigned_agent_id))) return 'no_aplica'
+    }
+    if (!(await deps.verificarPeru({ accountId: conv.account_id, conversationId }))) return 'sin_confirmar'
+    if (enAtc && atcUser) {
+      // Atómico: si dos mensajes llegan juntos, solo uno la reabre.
+      if (!(await store.reabrirAtcExtranjero?.(conversationId, atcUser))) return 'no_aplica'
+      await store.appendNote(conversationId, NOTA_EXTRANJERO_PERU)
+      return await derivarAuto(conversationId, deps)
+    }
+    await store.saveClasificacion(conversationId, CLASIFICACION_LEAD).catch(() => undefined)
+    await store.appendNote(conversationId, NOTA_EXTRANJERO_PERU)
+    return await derivarAuto(conversationId, deps, { soloSinAsesor: true })
+  } catch (err) {
+    console.error(LOG, 'extranjero:', err instanceof Error ? err.message : err, { conversationId })
+    return 'error_php'
+  }
+}
+
+/** Enganche del webhook para números extranjeros (en segundo plano, como programarDerivacionAuto). */
+export function programarDerivacionExtranjero(db: SupabaseClient, conversationId: string): void {
+  if (!envListo(derivacionEnv())) return
+  const task = () =>
+    derivarExtranjeroSiParaPeru(conversationId, {
+      store: supabaseDerivacionStore(db),
+      clasificar: clasificadorOpenAi(db),
+      verificarPeru: verificadorPeruOpenAi(db),
+    }).then(
+      () => undefined,
+      (err: unknown) => console.error(LOG, err),
+    )
+  try {
+    after(task)
+  } catch {
+    void task()
   }
 }
 
